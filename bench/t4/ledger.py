@@ -34,7 +34,7 @@ emitted message's hash. Each transfer then ends in exactly one outcome:
 
 import math
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -82,6 +82,7 @@ class External:
     tx_utime: int | None = None
     fee_bound: int | None = None  # the external's derived fee bound, storage aside
     tx_fee: int | None = None  # total_fees of its transaction, when the node reports it
+    expired: bool = False  # journaled as past its deadline with no transaction
     failure: list[str | None] = field(default_factory=list)
     emitted: list[str | None] = field(default_factory=list)
     recipient_tx: list[str | None] = field(default_factory=list)
@@ -155,6 +156,8 @@ class Ledger:
         self.anomalies: list[dict[str, Any]] = []
         self.duplicates = 0
         self.foreign_externals = 0
+        # Called with (external, action) when an action's recipient transaction is bound.
+        self.on_delivery: Callable[[External, int], None] | None = None
 
     # ─── what the sender did ────────────────────────────────────────
 
@@ -174,6 +177,10 @@ class Ledger:
             raise ValueError("this message was already submitted; it is never resent")
         ext.msg_hash, ext.endpoint, ext.sent_at = msg_hash, endpoint, sent_at
         self._by_hash[msg_hash] = ext
+
+    def known(self, msg_hash: str) -> bool:
+        """Whether an external with this message hash was already submitted."""
+        return msg_hash in self._by_hash
 
     def accept(self, ext: External) -> None:
         self._settle(ext, ACCEPTED, None)
@@ -282,6 +289,8 @@ class Ledger:
             self._anomaly("a delivery does not match its action", msg=message.hash, tx=tx.hash)
             return
         ext.recipient_tx[i], ext.recipient_mc[i], ext.recipient_utime[i] = tx.hash, mc, utime
+        if self.on_delivery is not None:
+            self.on_delivery(ext, i)
 
     # ─── reports ────────────────────────────────────────────────────
 

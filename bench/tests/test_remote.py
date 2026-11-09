@@ -27,7 +27,16 @@ sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src")]
 
 import base64  # noqa: E402
 
-from pytosiq_core import Builder, Cell, HashMap  # noqa: E402
+from pytosiq_core import (  # noqa: E402
+    Address,
+    Builder,
+    Cell,
+    ExternalMsgInfo,
+    HashMap,
+    InternalMsgInfo,
+    MessageAny,
+)
+from shard import journal as jr  # noqa: E402
 from shard import remote  # noqa: E402
 
 NANO = remote.NANO
@@ -355,6 +364,8 @@ class Key(unittest.TestCase):
 FAKE_CONFIG = {18: storage_cell(STORAGE_ENTRIES), 21: gas_cell(), 25: fwd_cell()}
 
 ROOT_SHARD = -(1 << 63)
+# A send whose answer the fake node holds (``hang_on``).
+HELD: Any = object()
 
 
 def b64h(*parts: object) -> str:
@@ -400,6 +411,103 @@ def tx_json(account: str, lt: int, in_msg: dict[str, Any], out: list[dict[str, A
     }
 
 
+def parse_external(boc: str) -> tuple[bytes, str, int, list[tuple[str, int, bool, int]]]:
+    """(message hash, account, nonce, actions as (destination, value, has init, mode))."""
+    cell = Cell.one_from_boc(base64.b64decode(boc))
+    message = MessageAny.deserialize(cell.begin_parse())
+    info = message.info
+    assert isinstance(info, ExternalMsgInfo) and isinstance(info.dest, Address)
+    account = remote.raw(info.dest)
+    body = message.body
+    assert isinstance(body, Cell)
+    s = body.refs[0].begin_parse()
+    s.skip_bits(32 + 32 + 256)
+    s.load_address()
+    s.skip_bits(256 + 8 + 64)
+    nonce = s.load_uint(64)
+    s.skip_bits(32 + 8)
+    payload = s.load_ref().begin_parse()
+    payload.skip_bits(32)
+    cur = payload.load_ref()
+    actions = []
+    while cur.begin_parse().remaining_bits:
+        a = cur.begin_parse()
+        a.skip_bits(32)
+        mode = a.load_uint(8)
+        prev, msg = a.load_ref(), a.load_ref()
+        m = MessageAny.deserialize(msg.begin_parse())
+        assert isinstance(m.info, InternalMsgInfo) and isinstance(m.info.dest, Address)
+        actions.append((remote.raw(m.info.dest), int(m.info.value.tomis), m.init is not None, mode))
+        cur = prev
+    actions.reverse()
+    return cell.hash, account, nonce, actions
+
+
+class History:
+    """getTransactions over per-account histories: newest first, paged by (lt, hash) as the
+    node pages, each entry carrying its serialized prefix so a reader can find its predecessor."""
+
+    def __init__(self) -> None:
+        self.txs: dict[str, list[dict[str, Any]]] = {}  # raw account -> oldest first
+
+    def add(self, account: str, tx: dict[str, Any], seqno: int, utime: int) -> None:
+        mine = self.txs.setdefault(account, [])
+        prev_lt, prev_hash = 0, bytes(32)
+        if mine:
+            prev_lt = int(mine[-1]["transaction_id"]["lt"])
+            prev_hash = base64.b64decode(mine[-1]["transaction_id"]["hash"])
+        lt = int(tx["lt"])
+        data = (
+            Builder()
+            .store_uint(0b0111, 4)
+            .store_bytes(bytes.fromhex(account.split(":", 1)[1]))
+            .store_uint(lt, 64)
+            .store_bytes(prev_hash)
+            .store_uint(prev_lt, 64)
+            .end_cell()
+        )
+        mine.append(
+            {
+                **tx,
+                "transaction_id": {
+                    "@type": "internal.transactionId",
+                    "lt": str(lt),
+                    "hash": tx["hash"],
+                },
+                "utime": utime,
+                "block_id": block_id(0, seqno),
+                "data": base64.b64encode(data.to_boc()).decode(),
+                "seqno": seqno,
+            }
+        )
+
+    def answer(self, p: dict[str, Any], head: int) -> list[dict[str, Any]]:
+        items = [x for x in reversed(self.txs.get(p["address"], [])) if x["seqno"] <= head]
+        if "lt" in p:
+            items = [x for x in items if int(x["transaction_id"]["lt"]) <= int(p["lt"])]
+        return items[: int(p.get("limit", 10))]
+
+
+def journal_has(path: Path, digest: bytes) -> bool:
+    """Whether the journal on disk already holds the attempt record of this external."""
+    if not path.exists():
+        return False
+    for line in path.read_bytes().split(b"\n"):
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if record.get("type") == "attempt" and record.get("external") == digest.hex():
+            return True
+    return False
+
+
+def hold(event: threading.Event, release: threading.Event) -> None:
+    """Signal that a send is being held, then hold it until released."""
+    event.set()
+    release.wait(120)
+
+
 class FakeNode:
     """One basechain shard, one masterchain block per masterchain-info read.
 
@@ -408,8 +516,14 @@ class FakeNode:
     blocks, masterchain blocks included, carry no transactions.
 
     Every wallet external costs the wallet ``fee`` on top of the value it
-    attaches. With ``stall``, chain time stops at the first send, as on a
-    network whose block production has stopped.
+    attaches, and executes in a wallet transaction reported with that fee and
+    one message per action (getTransactions serves it). With ``stall``,
+    chain time stops at the first send, as on a network whose block
+    production has stopped. With ``foreign_bump``, the first external is
+    taken but never executed, while an unrelated request moves the wallet's
+    nonce. With ``hang_on`` set to a send's number, that send executes and
+    its answer is held until ``release`` is set. ``journal`` names the run
+    journal each send checks for its attempt record.
     """
 
     def __init__(
@@ -421,8 +535,17 @@ class FakeNode:
         fee: int = NANO // 100,
         stall: bool = False,
         launch: bool = True,
+        foreign_bump: bool = False,
     ):
         self.lock = threading.Lock()
+        self.history = History()
+        self.lt = 10
+        self.foreign_bump = foreign_bump
+        self.hang_on: int | None = None
+        self.held, self.release = threading.Event(), threading.Event()
+        self.journal: Path | None = None
+        self.journaled: list[bool] = []
+        self.executed: list[bytes] = []
         self.fee, self.stall = fee, stall
         # With launch=False the start is imported but launches no hop, as when its
         # action phase fails.
@@ -446,10 +569,15 @@ class FakeNode:
         self.bodies: list[bytes] = []
         self.methods: list[str] = []
 
+    def utime(self, seqno: int) -> int:
+        return self.frozen_time if self.frozen_time is not None else 1_000_000 + 5 * seqno
+
     def answer(self, method: str, p: dict[str, Any]) -> Any:
         if method == "getMasterchainInfo":
             self.mc += 1
             return {"last": block_id(-1, self.mc)}
+        if method == "getTransactions":
+            return self.history.answer(p, self.mc)
         if method == "getBlockHeader":
             seqno, wc = p["seqno"], p["workchain"]
             out: dict[str, Any] = {"id": block_id(wc, seqno), "gen_utime": 1_000_000 + 5 * seqno}
@@ -514,27 +642,50 @@ class FakeNode:
                 "state": "active" if deployed else "uninitialized",
             }
         if method == "sendBoc":
+            digest, account, _, actions = parse_external(p["boc"])
+            if self.journal is not None:
+                self.journaled.append(journal_has(self.journal, digest))
             self.sends.append(p["boc"])
             if self.stall and self.frozen_time is None:
                 self.frozen_time = self.last_time
-            if len(self.sends) == 2 and self.hop0:
-                self.start_traffic()
             self.nonce = (self.nonce or 0) + 1
-            self.wallet_balance -= self.fee + (
-                8 * self.account_funding if len(self.sends) == 1 else 10 * NANO
-            )
+            at = self.mc + 1
+            if self.foreign_bump and len(self.sends) == 1:
+                # Another request consumed the nonce; this external never executes.
+                self.lt += 1
+                other = {"hash": b64h("a concurrent request"), "kind": "external"}
+                self.history.add(account, tx_json(account, self.lt, other, []), at, self.utime(at))
+                return {"@type": "ok"}
+            self.executed.append(digest)
+            self.wallet_balance -= self.fee + sum(v for _, v, _, _ in actions)
+            external = {"hash": base64.b64encode(digest).decode(), "kind": "external"}
+            emitted = [
+                {
+                    "hash": b64h("out", digest, i),
+                    "kind": "internal",
+                    "source": account,
+                    "destination": dest,
+                    "value": str(value),
+                    "bounced": False,
+                }
+                for i, (dest, value, _, _) in enumerate(actions)
+            ]
+            is_start = len(self.sends) == 2
+            if is_start and not self.hop0:
+                emitted = []  # the start's send is skipped: the nonce moves, no message leaves
+            self.lt += 1
+            tx = tx_json(account, self.lt, external, emitted) | {"fee": str(self.fee)}
+            if is_start and not emitted:
+                tx["action"] = {"success": True, "skipped_actions": 1, "messages_created": 0}
+            self.history.add(account, tx, at, self.utime(at))
+            if is_start and self.hop0:
+                self.start_traffic(tx, emitted[0])
+            if self.hang_on == len(self.sends):
+                return HELD
             return {"@type": "ok"}
         raise KeyError(method)
 
-    def start_traffic(self) -> None:
-        start = {
-            "hash": b64h("start message"),
-            "kind": "internal",
-            "source": self.wallet,
-            "destination": self.hop0,
-            "bounced": False,
-        }
-        external = {"hash": b64h("start external"), "kind": "external"}
+    def start_traffic(self, wallet_tx: dict[str, Any], start: dict[str, Any]) -> None:
         hop = {
             "hash": b64h("first hop"),
             "kind": "internal",
@@ -542,7 +693,7 @@ class FakeNode:
             "destination": self.hop0,
             "bounced": False,
         }
-        self.txs[(0, self.mc + 1)] = [tx_json(self.wallet, 1, external, [start])]
+        self.txs[(0, self.mc + 1)] = [wallet_tx]
         self.txs[(0, self.mc + 2)] = [tx_json(self.hop0, 2, start, [hop] if self.launch else [])]
         if self.launch:
             self.txs[(0, self.mc + 3)] = [tx_json(self.hop0, 3, hop, [])]
@@ -560,14 +711,22 @@ class FakeNode:
                     node.methods.append(request["method"])
                     try:
                         result = node.answer(request["method"], request.get("params") or {})
-                        reply = {"jsonrpc": "2.0", "id": request["id"], "result": result}
                     except KeyError:
+                        result = None
                         reply = {"jsonrpc": "2.0", "id": request["id"], "error": {"code": -32601}}
+                    else:
+                        reply = {"jsonrpc": "2.0", "id": request["id"], "result": result}
+                if result is HELD:
+                    hold(node.held, node.release)
+                    reply["result"] = {"@type": "ok"}
                 data = json.dumps(reply).encode()
-                self.send_response(200)
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except OSError:
+                    pass  # the client was killed while its send was held
 
             def log_message(self, format: str, *args: Any) -> None:
                 pass
@@ -600,10 +759,11 @@ finally:
 
 
 class RemoteRun(unittest.TestCase):
-    def run_remote(self, d: Path, url: str, extra: list[str] | None = None, timeout: float = 300):
+    def argv(self, d: Path, url: str, extra: list[str] | None = None, out: str = "out"):
         signer = d / "signer.py"
-        signer.write_text(FAKE_SIGNER)
-        signer.chmod(0o700)
+        if not signer.exists():
+            signer.write_text(FAKE_SIGNER)
+            signer.chmod(0o700)
         (d / "hop.boc").write_bytes(HOP_CODE.to_boc())
         (d / "wallet.boc").write_bytes(WALLET_CODE.to_boc())
         driver = d / "driver.py"
@@ -617,7 +777,7 @@ class RemoteRun(unittest.TestCase):
             "--rpc-share",
             "0.5",
             "--out",
-            str(d / "out"),
+            str(d / out),
             "--key-file",
             str(write_key(d)),
             "--signer",
@@ -650,9 +810,19 @@ class RemoteRun(unittest.TestCase):
             "0",
             *(extra or []),
         ]
+        return [sys.executable, str(driver), *argv]
+
+    def run_remote(
+        self,
+        d: Path,
+        url: str,
+        extra: list[str] | None = None,
+        timeout: float = 300,
+        out: str = "out",
+    ):
         env = os.environ | {"PYTHONDONTWRITEBYTECODE": "1"}
         return subprocess.run(
-            [sys.executable, str(driver), *argv],
+            self.argv(d, url, extra, out),
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -678,16 +848,35 @@ class RemoteRun(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 d = Path(tmp)
+                node.journal = d / "out" / jr.NAME
                 result = self.run_remote(d, url)
                 self.assertEqual(result.returncode, 0, result.stderr[-3000:])
                 self.assertIn("LOADED-BLOCKED-MODULES []", result.stderr)
                 record = json.loads((d / "out/results.json").read_text())
                 verdict = (d / "out/t2/t2-verdict.json").read_text()
+                journal = jr.read_journal(d / "out" / jr.NAME)
                 written = {p: p.read_bytes() for p in (d / "out").rglob("*") if p.is_file()}
         finally:
             server.shutdown()
             server.server_close()
         self.assertEqual(len(node.sends), 2)
+        # Each external's attempt record was on disk when its send arrived.
+        self.assertEqual(node.journaled, [True, True])
+        self.assertEqual(journal.errors, [])
+        self.assertFalse(journal.torn_tail)
+        self.assertIsNotNone(journal.end)
+        self.assertEqual(
+            [a["external"] for a in journal.attempts.values()],
+            [parse_external(b)[0].hex() for b in node.sends],
+        )
+        for key in journal.attempts:
+            self.assertEqual((journal.sent(key) or {}).get("state"), "accepted")
+            self.assertTrue(journal.settled(key))
+        # Settled by the transaction that consumed each external, in distinct states.
+        self.assertEqual([x["state"] for x in record["externals"]], ["settled", "settled"])
+        for x, digest in zip(record["externals"], node.executed, strict=True):
+            self.assertEqual(x["external"], digest.hex())
+            self.assertEqual(x["tx"]["fee"], node.fee)
         self.assertEqual(record["t2_status"], "PASS", verdict)
         # Counted by the chain walk: the funder's start message, the hop it launched,
         # and their imports.
@@ -846,13 +1035,132 @@ class RemoteRun(unittest.TestCase):
         return result, record
 
     def test_a_consumed_nonce_without_a_start_message_is_inconclusive(self):
-        # The wallet's nonce advances, but no start message enters the network.
+        # The start's transaction runs, but its send is skipped: no start message leaves.
         node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, hop0="")
         result, record = self.run_counted(node)
         self.assertEqual(result.returncode, remote.INCONCLUSIVE, result.stderr[-2000:])
-        self.assertEqual(record["t2_status"], "INCONCLUSIVE")
-        self.assertEqual(record["start_delivered"], 0)
-        self.assertIn("start message", record["load_note"])
+        self.assertEqual(record["outcome"], "INCONCLUSIVE")
+        self.assertIn("the start is failed", record["stopped"])
+        self.assertIn("emitted no message", record["stopped"])
+        self.assertNotIn("counts", record)
+
+    def test_a_concurrent_nonce_bump_does_not_settle_the_request(self):
+        # The nonce moves, but by another request: the deployment is never shown executed.
+        node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, self.hop0(), foreign_bump=True)
+        result, record = self.run_counted(node, ["--deploy-wait", "1"])
+        self.assertEqual(result.returncode, remote.INCONCLUSIVE, result.stderr[-2000:])
+        self.assertEqual(record["outcome"], "STOPPED")
+        [deployment] = record["externals"]
+        self.assertEqual(deployment["state"], "unknown")
+        self.assertIn("the deployment is unknown", record["stopped"])
+        self.assertNotIn("deployment_wallet_fee", record)
+        self.assertEqual(len(node.sends), 1)  # never resent
+
+    def test_a_second_invocation_on_a_locked_wallet_is_refused(self):
+        node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, self.hop0())
+        server, url = node.serve()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                held = jr.WalletState(jr.default_state_dir(write_key(d)), self.wallet_address())
+                try:
+                    result = self.run_remote(d, url)
+                finally:
+                    held.release()
+                out_exists = (d / "out").exists()
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(result.returncode, remote.REFUSED, result.stderr[-2000:])
+        self.assertIn("holds the lock", result.stderr)
+        self.assertFalse(out_exists)
+        self.assertNotIn("sendBoc", node.methods)
+
+    def test_a_kill_after_the_send_is_reconciled_before_any_new_signature(self):
+        node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, self.hop0())
+        node.hang_on = 1  # the deployment executes; its answer never reaches the run
+        server, url = node.serve()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                child = subprocess.Popen(
+                    self.argv(d, url),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    cwd=d,
+                    env=os.environ | {"PYTHONDONTWRITEBYTECODE": "1"},
+                )
+                try:
+                    self.assertTrue(node.held.wait(120), "the deployment was never sent")
+                    child.kill()
+                    self.assertEqual(child.wait(30), -9)
+                finally:
+                    node.release.set()
+                journal = jr.read_journal(d / "out" / jr.NAME)
+                results_written = (d / "out/results.json").exists()
+                again = self.run_remote(d, url, out="out2")
+                resolved = jr.read_state(
+                    jr.default_state_dir(d / "bench-wallet.json")
+                    / self.wallet_address().replace(":", "_")
+                    / "resolved"
+                )
+                third = self.run_remote(d, url, out="out3")
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertFalse(results_written)
+        [(key, attempt)] = journal.attempts.items()
+        self.assertEqual(attempt["external"], node.executed[0].hex())
+        self.assertIsNone(journal.sent(key))  # killed before the answer
+        # The next invocation finds the transaction, records it and refuses to sign.
+        self.assertEqual(again.returncode, remote.REFUSED, again.stderr[-2000:])
+        self.assertIn("needed reconciling (1 executed)", again.stderr)
+        self.assertEqual([(r["id"], r["verdict"]) for r in resolved], [(key, "executed")])
+        self.assertEqual(
+            resolved[0]["tx"], b64_hex(node.history.txs[self.wallet_address()][0]["hash"])
+        )
+        # Accounted for: the next one goes on, and refuses the tree that already exists.
+        self.assertEqual(third.returncode, remote.REFUSED, third.stderr[-2000:])
+        self.assertIn("already deployed", third.stderr)
+        self.assertEqual(len(node.sends), 1)
+
+    def run_hanging_signer(
+        self, hang_at: int
+    ) -> tuple[Any, dict[str, Any], FakeNode, jr.JournalRead]:
+        node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, self.hop0())
+        server, url = node.serve()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                signer = d / "signer.py"
+                signer.write_text(hanging_signer(d, hang_at))
+                signer.chmod(0o700)
+                result = self.run_remote(d, url, ["--signer-timeout", "2"], timeout=120)
+                record = json.loads((d / "out/results.json").read_text())
+                journal = jr.read_journal(d / "out" / jr.NAME)
+                pid = int((d / "signer.pid").read_text())
+        finally:
+            server.shutdown()
+            server.server_close()
+        with self.assertRaises(ProcessLookupError):  # killed, never left running
+            os.kill(pid, 0)
+        return result, record, node, journal
+
+    def test_a_hung_signer_before_any_send_is_killed_and_refused(self):
+        result, record, node, journal = self.run_hanging_signer(1)
+        self.assertEqual(result.returncode, remote.REFUSED, result.stderr[-2000:])
+        self.assertEqual(record["outcome"], "REFUSED")
+        self.assertIn("did not answer within 2 s", record["stopped"])
+        self.assertEqual(journal.attempts, {})
+        self.assertEqual(node.sends, [])
+
+    def test_a_hung_signer_after_a_send_is_killed_and_stops(self):
+        result, record, node, journal = self.run_hanging_signer(2)
+        self.assertEqual(result.returncode, remote.INCONCLUSIVE, result.stderr[-2000:])
+        self.assertEqual(record["outcome"], "STOPPED")
+        self.assertIn("start: the bench signer did not answer", record["stopped"])
+        self.assertEqual(len(node.sends), 1)
+        self.assertEqual([a["role"] for a in journal.attempts.values()], ["deployment"])
 
     def test_a_start_that_launches_no_hop_is_inconclusive(self):
         node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, self.hop0(), launch=False)
@@ -921,8 +1229,29 @@ class LocalAndWaits(unittest.TestCase):
         self.assertEqual(asyncio.run(ticking.wait_past(1_000, 0)), 1_005)
 
 
+def b64_hex(value: str) -> str:
+    return base64.b64decode(value).hex()
+
+
+def hanging_signer(d: Path, hang_at: int) -> str:
+    """A fake signer whose ``hang_at``-th signing call records its pid and hangs."""
+    count, pid = d / "signs.txt", d / "signer.pid"
+    return FAKE_SIGNER.replace(
+        "args = sys.argv[1:]\n",
+        "args = sys.argv[1:]\n"
+        "import os, time\n"
+        "if args[0] == 'sign':\n"
+        f"    n = len(open({str(count)!r}).read()) + 1 if os.path.exists({str(count)!r}) else 1\n"
+        f"    open({str(count)!r}, 'a').write('x')\n"
+        f"    if n == {hang_at}:\n"
+        f"        open({str(pid)!r}, 'w').write(str(os.getpid()))\n"
+        "        time.sleep(60)\n",
+    )
+
+
 def FakeNode_methods() -> list[str]:
     return [
+        "getTransactions",
         "getMasterchainInfo",
         "getBlockHeader",
         "getShards",

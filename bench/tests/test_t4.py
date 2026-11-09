@@ -21,8 +21,10 @@ import tempfile
 import threading
 import time
 import unittest
+from collections import Counter
 from pathlib import Path
 from typing import Any, cast
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src")]
@@ -31,11 +33,9 @@ from contract.pq_auth import transfer_message  # noqa: E402
 from pytosiq_core import (  # noqa: E402
     Address,
     Cell,
-    ExternalMsgInfo,
-    InternalMsgInfo,
-    MessageAny,
 )
-from shard import remote  # noqa: E402
+from shard import journal as jr  # noqa: E402
+from shard import remote, t2collect  # noqa: E402
 from shard.rpc import PacedRpc  # noqa: E402
 from shard.t2check import McRecord, Msg, Tx  # noqa: E402
 from t4 import ramp  # noqa: E402
@@ -588,8 +588,16 @@ def rpc_error(code: int, message: str) -> tuple[int, dict[str, Any]]:
     return 200, {"error": {"code": code, "message": message}}
 
 
+# Every test ramp journals into its own directory under this one.
+JOURNALS = tempfile.TemporaryDirectory()
+
+
+def new_journal() -> jr.Journal:
+    return jr.Journal(Path(tempfile.mkdtemp(dir=JOURNALS.name)) / jr.NAME)
+
+
 def make_ramp(
-    transport: Transport,
+    transport: Any,
     wallets: int = 2,
     horizon: int = 1 << 31,
     fee_bound: int = NANO,
@@ -619,6 +627,7 @@ def make_ramp(
         horizon,
         {3: fee_bound},
         [storage] * wallets,
+        new_journal(),
     )
     r.follower = ramp.Follower(reader, lg, r.included, McRecord(1, 1000, "00" * 32, ()), 0.0)
     return r
@@ -751,6 +760,228 @@ class Submissions(unittest.TestCase):
         self.assertTrue(definite)
 
 
+# ─── the journal ─────────────────────────────────────────────────────
+
+
+class JournalTransport(Transport):
+    """On every sendBoc, checks that the external's attempt record is on disk and fsynced."""
+
+    def __init__(self, answers: list[Any], path: Path, synced: dict[int, int]):
+        super().__init__(answers)
+        self.path, self.synced = path, synced
+        self.checks: list[tuple[bool, bool]] = []
+
+    async def __call__(self, url: str, body: bytes, timeout: float) -> tuple[int, bytes]:
+        request = json.loads(body)
+        if request["method"] == "sendBoc":
+            boc = request["params"]["boc"]
+            digest = Cell.one_from_boc(base64.b64decode(boc)).hash.hex()
+            data = self.path.read_bytes()
+            end = 0
+            for line in data.split(b"\n"):
+                end += len(line) + 1
+                if b'"type":"attempt"' in line and digest.encode() in line:
+                    break
+            else:
+                end = -1
+            self.checks.append((end > 0, end > 0 and max(self.synced.values(), default=0) >= end))
+        return await super().__call__(url, body, timeout)
+
+
+class JournalBeforeSend(unittest.TestCase):
+    def test_every_attempt_is_on_disk_and_fsynced_before_its_send(self):
+        synced: dict[int, int] = {}
+        real = os.fsync
+
+        def fsync(fd: int) -> None:
+            real(fd)
+            synced[fd] = os.fstat(fd).st_size
+
+        journal = new_journal()
+        transport = JournalTransport([], journal.path, synced)
+        r = make_ramp(transport, wallets=3)
+        r.journal = journal
+        with mock.patch.object(jr.os, "fsync", fsync):
+            exts = asyncio.run(issue_and_wait(r, count=2))
+        self.assertEqual(transport.checks, [(True, True), (True, True)])
+        read = jr.read_journal(journal.path)
+        self.assertEqual(
+            [a["external"] for a in read.attempts.values()], [e.msg_hash for e in exts]
+        )
+        for ext in exts:
+            key = ramp.attempt_of(ext)
+            attempt = read.attempts[key]
+            self.assertEqual((attempt["wallet"], attempt["nonce"]), (ext.wallet, ext.nonce))
+            self.assertEqual(attempt["deadline"], ext.deadline)
+            self.assertEqual(attempt["fee_bound"], NANO)
+            self.assertEqual(
+                [(a["destination"], a["value"]) for a in attempt["actions"]],
+                list(zip(ext.destinations, ext.values)),
+            )
+            self.assertEqual((read.sent(key) or {}).get("state"), "accepted")
+
+    def test_three_rate_gate_refusals_on_two_wallets_never_repeat_an_external(self):
+        transport = Transport([(429, {}), rpc_error(-32005, "rate limited"), (429, {})])
+        r = make_ramp(transport, wallets=2)
+        exts = [asyncio.run(issue_and_wait(r))[0] for _ in range(3)]
+        for ext in exts:
+            self.assertEqual(ext.outcome(0, 99)[0], REFUSED)
+            self.assertTrue((ext.reason or "").startswith("rate gate"), ext.reason)
+        self.assertEqual(len(transport.sends), 3)
+        self.assertEqual(len(set(transport.sends)), 3)
+        self.assertEqual(len({e.msg_hash for e in exts}), 3)
+        # The third reuses the first one's wallet and nonce before chain time moved.
+        first, _, third = exts
+        self.assertEqual((third.wallet, third.nonce), (first.wallet, first.nonce))
+        self.assertGreater(third.deadline, first.deadline)
+        self.assertEqual(r.ledger.anomalies, [])
+        read = jr.read_journal(r.journal.path)
+        self.assertEqual(read.attempts[ramp.attempt_of(third)]["prior"], ramp.attempt_of(first))
+        for ext in exts:
+            self.assertEqual((read.sent(ramp.attempt_of(ext)) or {}).get("state"), "refused")
+
+
+def attempt_cell(n: int) -> Cell:
+    from pytosiq_core import Builder
+
+    return Builder().store_uint(n, 32).end_cell()
+
+
+def write_journal(path: Path, attempts: int) -> None:
+    journal = jr.Journal(path)
+    journal.append({"type": "run", "version": jr.VERSION, "mc_start": 1})
+    for n in range(attempts):
+        journal.append(
+            jr.attempt_record(
+                role="transfer",
+                sender=SENDER,
+                wallet=0,
+                seqno=n,
+                nonce=n,
+                deadline=1000 + n,
+                cell=attempt_cell(n),
+                actions=[(PEERS[0], 1000, 3)],
+            )
+        )
+    journal.close()
+
+
+class JournalReader(unittest.TestCase):
+    def test_a_torn_last_line_is_dropped_and_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / jr.NAME
+            write_journal(path, 2)
+            with path.open("ab") as f:
+                f.write(b'{"type":"sent","id":"transfer:0:1","sta')
+            read = jr.read_journal(path)
+            self.assertTrue(read.torn_tail)
+            self.assertEqual(read.errors, [])
+            self.assertEqual(list(read.attempts), ["transfer:0:0", "transfer:0:1"])
+            self.assertIsNone(read.sent("transfer:0:1"))
+            # Reopened for append, the torn line is closed off and the next record is whole.
+            again = jr.Journal(path, create=False)
+            again.event("sent", "transfer:0:1", state="refused", reason="rate gate: HTTP 429")
+            again.close()
+            reread = jr.read_journal(path)
+            self.assertFalse(reread.torn_tail)
+            self.assertEqual(len(reread.errors), 1)  # the closed-off fragment, now a line
+            self.assertEqual((reread.sent("transfer:0:1") or {}).get("state"), "refused")
+
+    def test_a_malformed_middle_line_or_a_wrong_hash_is_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / jr.NAME
+            write_journal(path, 1)
+            lines = path.read_bytes().split(b"\n")
+            path.write_bytes(b"\n".join([lines[0], b"{not json", *lines[1:]]))
+            self.assertEqual(jr.read_journal(path).errors, ["line 2: not JSON"])
+            record = json.loads(lines[1])
+            record["external"] = "00" * 32
+            path.write_bytes(lines[0] + b"\n" + json.dumps(record).encode() + b"\n")
+            read = jr.read_journal(path)
+            self.assertEqual(read.attempts, {})
+            self.assertIn("hashes to", read.errors[0])
+
+    def test_a_new_journal_never_reuses_a_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / jr.NAME
+            write_journal(path, 0)
+            with self.assertRaises(FileExistsError):
+                jr.Journal(path)
+
+
+# ─── the follower: incomplete reads ──────────────────────────────────
+
+
+class ChainTransport:
+    """A FakeChain answered in process, without HTTP."""
+
+    def __init__(self, chain: "FakeChain"):
+        self.chain = chain
+
+    async def __call__(self, url: str, body: bytes, timeout: float) -> tuple[int, bytes]:
+        request = json.loads(body)
+        with self.chain.lock:
+            status, reply = self.chain.answer(request["method"], request.get("params") or {})
+        if isinstance(reply, dict):
+            return status, json.dumps({"jsonrpc": "2.0", "id": request["id"], **reply}).encode()
+        return status, reply
+
+
+class IncompleteReads(unittest.TestCase):
+    def follow(self, failure: tuple[str, int]) -> tuple[ramp.Ramp, External, int]:
+        """Send one external, make ``failure[0]`` fail ``failure[1]`` times on the block that
+        executes it, and follow the chain until it completes or the follower gives up."""
+        chain = FakeChain("0:" + "ee" * 32, {})
+        r = make_ramp(ChainTransport(chain), wallets=3)
+        for w in r.wallets:
+            chain.wallets[w.address] = 0
+
+        async def scenario() -> tuple[External, int]:
+            head = await r.head()
+            [first] = await t2collect.read_masterchain(r.reader, head, head)
+            r.follower = ramp.Follower(r.reader, r.ledger, r.included, first, 0.01)
+            [ext] = await issue_and_wait(r)
+            at = min(chain.txs)  # the shard block that executes the external
+            chain.fail_reads[(failure[0], 0, at)] = failure[1]
+            give_up = time.monotonic() + 20
+            while time.monotonic() < give_up and r.follower.failed is None:
+                await r.follower.round()
+                if all(x is not None for x in ext.recipient_tx):
+                    break
+                await asyncio.sleep(0.05)
+            return ext, at
+
+        ext, at = asyncio.run(scenario())
+        return r, ext, at
+
+    def test_a_transaction_list_that_fails_once_is_read_again(self):
+        r, ext, at = self.follow(("getBlockTransactionsExt", 1))
+        assert r.follower is not None
+        self.assertIsNone(r.follower.failed)
+        self.assertEqual({ext.outcome(i, 10**9)[0] for i in range(ext.size)}, {COMPLETED})
+        self.assertIn(at, [k[2] for k in r.follower.incomplete_blocks])
+
+    def test_a_header_that_fails_once_is_read_again(self):
+        r, ext, at = self.follow(("getBlockHeader", 1))
+        assert r.follower is not None
+        self.assertIsNone(r.follower.failed)
+        self.assertEqual({ext.outcome(i, 10**9)[0] for i in range(ext.size)}, {COMPLETED})
+        self.assertIn(at, [k[2] for k in r.follower.incomplete_blocks])
+
+    def test_a_block_that_stays_unreadable_stops_the_ramp_inconclusive(self):
+        for method in ("getBlockTransactionsExt", "getBlockHeader"):
+            with self.subTest(method):
+                r, ext, at = self.follow((method, 10**6))
+                assert r.follower is not None
+                self.assertIn("unreadable after 3 attempts", r.follower.failed or "")
+                # The frontier never moved past the unread block, and nothing was bound.
+                self.assertLess(r.follower.last.seqno, at)
+                self.assertIsNone(ext.tx_hash)
+                r.check_stop()
+                self.assertIn("incomplete chain reads", r.stop_reason or "")
+                self.assertEqual(ramp.exit_status(r.stop_reason, 0, 0), ramp.STOPPED)
+
+
 # ─── exit statuses ───────────────────────────────────────────────────
 
 
@@ -811,36 +1042,7 @@ def b64(raw: bytes) -> str:
     return base64.b64encode(raw).decode()
 
 
-def parse_external(boc: str) -> tuple[bytes, str, int, list[tuple[str, int, bool, int]]]:
-    """(message hash, account, nonce, actions as (destination, value, has init, mode))."""
-    cell = Cell.one_from_boc(base64.b64decode(boc))
-    message = MessageAny.deserialize(cell.begin_parse())
-    info = message.info
-    assert isinstance(info, ExternalMsgInfo) and isinstance(info.dest, Address)
-    account = remote.raw(info.dest)
-    body = message.body
-    assert isinstance(body, Cell)
-    s = body.refs[0].begin_parse()
-    s.skip_bits(32 + 32 + 256)
-    s.load_address()
-    s.skip_bits(256 + 8 + 64)
-    nonce = s.load_uint(64)
-    s.skip_bits(32 + 8)
-    payload = s.load_ref().begin_parse()
-    payload.skip_bits(32)
-    cur = payload.load_ref()
-    actions = []
-    while cur.begin_parse().remaining_bits:
-        a = cur.begin_parse()
-        a.skip_bits(32)
-        mode = a.load_uint(8)
-        prev, msg = a.load_ref(), a.load_ref()
-        m = MessageAny.deserialize(msg.begin_parse())
-        assert isinstance(m.info, InternalMsgInfo) and isinstance(m.info.dest, Address)
-        actions.append((remote.raw(m.info.dest), int(m.info.value.tomis), m.init is not None, mode))
-        cur = prev
-    actions.reverse()
-    return cell.hash, account, nonce, actions
+parse_external = tr.parse_external
 
 
 # What the fake chain charges a load external, reported as the transaction's total_fees.
@@ -870,6 +1072,16 @@ class FakeChain:
         self.methods: list[str] = []
         self.bocs: list[str] = []
         self.lt = 0
+        self.history = tr.History()
+        self.executed: set[str] = set()  # message hashes of every executed external
+        # Reads that fail with an RPC error: (method, workchain, seqno) -> failures left.
+        self.fail_reads: dict[tuple[str, int, int], int] = {}
+        self.hang_load: int | None = None  # the load send whose answer is held
+        # From this load send on, the basechain blocks it executes in cannot be read.
+        self.break_reads_at: int | None = None
+        self.broken_from: int | None = None
+        self.hang_now = False
+        self.held, self.release = threading.Event(), threading.Event()
 
     def head(self) -> int:
         return self.base + int((time.time() - self.t0) / BLOCK_INTERVAL)
@@ -884,9 +1096,10 @@ class FakeChain:
         out: list[dict[str, Any]],
         skipped: int = 0,
         fee: int = 0,
+        at: int | None = None,
     ):
         self.lt += 1
-        return {
+        tx = {
             "account": account.split(":", 1)[1],
             "lt": str(self.lt),
             "hash": b64(hashlib.sha256(f"tx{self.lt}".encode()).digest()),
@@ -897,6 +1110,9 @@ class FakeChain:
             "compute": {"skipped": False, "success": True, "account_activated": False},
             "action": {"success": True, "skipped_actions": skipped, "messages_created": len(out)},
         }
+        if at is not None:
+            self.history.add(account, tx, at, self.utime(at))
+        return tx
 
     def execute(
         self,
@@ -920,9 +1136,10 @@ class FakeChain:
                 "bounced": False,
             }
             out.append(m)
-            self.txs.setdefault(at + 1, []).append(self.tx(dest, m, []))
+            self.txs.setdefault(at + 1, []).append(self.tx(dest, m, [], at=at + 1))
         external = {"hash": b64(digest), "kind": "external"}
-        self.txs.setdefault(at, []).append(self.tx(account, external, out, len(skip), fee))
+        self.txs.setdefault(at, []).append(self.tx(account, external, out, len(skip), fee, at=at))
+        self.executed.add(digest.hex())
 
     def send(self, boc: str) -> tuple[int, Any]:
         digest, account, nonce, actions = parse_external(boc)
@@ -932,7 +1149,24 @@ class FakeChain:
             for dest, value, _, _ in actions:
                 self.wallets.setdefault(dest, 0)
                 self.bench_balance -= value
-            self.bench_balance -= self.scenario.get("bench_fee", NANO // 100)
+            fee = self.scenario.get("bench_fee", NANO // 100)
+            self.bench_balance -= fee
+            # Funding is confirmed by its transaction; it is served by getTransactions only.
+            at = self.head() + 1
+            out = [
+                {
+                    "hash": b64(hashlib.sha256(digest + bytes([i])).digest()),
+                    "kind": "internal",
+                    "source": account,
+                    "destination": dest,
+                    "value": str(value),
+                    "bounced": False,
+                }
+                for i, (dest, value, _, _) in enumerate(actions)
+            ]
+            external = {"hash": b64(digest), "kind": "external"}
+            self.tx(account, external, out, fee=fee, at=at)
+            self.executed.add(digest.hex())
             return 200, {"result": {"status": 1}}
         k = self.load_sends
         self.load_sends += 1
@@ -952,9 +1186,28 @@ class FakeChain:
         fee = self.scenario.get("overcharge", {}).get(k, LOAD_FEE)
         self.charged.append(fee)
         self.execute(digest, account, actions, skip, fee)
+        if k == self.hang_load:
+            self.hang_now = True
+        if k == self.break_reads_at:
+            self.broken_from = self.head() + 1
         if k in self.scenario.get("ambiguous", set()):
             return 502, b"bad gateway"
         return 200, {"result": {"status": 1}}
+
+    def failing(self, method: str, p: dict[str, Any]) -> bool:
+        if (
+            self.broken_from is not None
+            and method == "getBlockTransactionsExt"
+            and p.get("workchain") == 0
+            and p.get("seqno", -1) >= self.broken_from
+        ):
+            return True
+        key = (method, p.get("workchain", 0), p.get("seqno", -1))
+        left = self.fail_reads.get(key, 0)
+        if left <= 0:
+            return False
+        self.fail_reads[key] = left - 1
+        return True
 
     def state(self, address: str) -> dict[str, Any]:
         if address == self.bench:
@@ -973,11 +1226,21 @@ class FakeChain:
             }
         if address in self.wallets:
             data = b64(tr.wallet_data(self.wallets[address]).to_boc())
-            return {"balance": str(10 * NANO), "state": "active", "data": data}
+            stat = {"used_cells": "3", "used_bits": "900", "last_paid": int(self.t0)}
+            return {
+                "balance": str(10 * NANO),
+                "state": "active",
+                "data": data,
+                "storage_stat": stat,
+            }
         return {"balance": "0", "state": "uninitialized"}
 
     def answer(self, method: str, p: dict[str, Any]) -> tuple[int, Any]:
         head = self.head()
+        if self.failing(method, p):
+            return 200, {"error": {"code": -32603, "message": "block not ready"}}
+        if method == "getTransactions":
+            return 200, {"result": self.history.answer(p, head)}
         if method == "getMasterchainInfo":
             return 200, {"result": {"last": tr.block_id(-1, head)}}
         if method == "getBlockHeader":
@@ -1023,14 +1286,20 @@ class FakeChain:
                     chain.bodies.append(body)
                     chain.methods.append(request["method"])
                     status, reply = chain.answer(request["method"], request.get("params") or {})
+                    held, chain.hang_now = chain.hang_now, False
+                if held:
+                    tr.hold(chain.held, chain.release)
                 if isinstance(reply, dict):
                     data = json.dumps({"jsonrpc": "2.0", "id": request["id"], **reply}).encode()
                 else:
                     data = reply
-                self.send_response(status)
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+                try:
+                    self.send_response(status)
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except OSError:
+                    pass  # the client was killed while its send was held
 
             def log_message(self, format: str, *args: Any) -> None:
                 pass
@@ -1041,6 +1310,7 @@ class FakeChain:
 
 
 METHODS = {
+    "getTransactions",
     "getMasterchainInfo",
     "getBlockHeader",
     "getShards",
@@ -1053,19 +1323,24 @@ METHODS = {
 
 
 class RemoteRun(unittest.TestCase):
-    def run_ramp(self, d: Path, url: str, extra: list[str] | None = None):
-        signer = d / "signer.py"
-        signer.write_text(FAKE_BATCH_SIGNER)
-        signer.chmod(0o700)
-        (d / "wallet.boc").write_bytes(tr.WALLET_CODE.to_boc())
+    def driver(self, d: Path) -> Path:
         driver = d / "driver.py"
         driver.write_text(
             tr.DRIVER.format(blocked=tr.BLOCKED, script=str(ROOT / "bench/run_t4_ramp.py"))
         )
+        return driver
+
+    def argv(
+        self, d: Path, url: str, extra: list[str] | None = None, out: str = "out"
+    ) -> list[str]:
+        signer = d / "signer.py"
+        signer.write_text(FAKE_BATCH_SIGNER)
+        signer.chmod(0o700)
+        (d / "wallet.boc").write_bytes(tr.WALLET_CODE.to_boc())
         argv = [
             "--rpc", url,
             "--rpc-share", "1",
-            "--out", str(d / "out"),
+            "--out", str(d / out),
             "--key-file", str(tr.write_key(d)),
             "--signer", str(signer),
             "--auth-tag", tr.AUTH.hex(),
@@ -1091,8 +1366,23 @@ class RemoteRun(unittest.TestCase):
             "--tick", "0.02",
             *(extra or []),
         ]  # fmt: skip
+        return [sys.executable, str(self.driver(d)), *argv]
+
+    def run_ramp(
+        self, d: Path, url: str, extra: list[str] | None = None, out: str = "out"
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, str(driver), *argv],
+            self.argv(d, url, extra, out),
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=os.environ | {"PYTHONDONTWRITEBYTECODE": "1"},
+            cwd=d,
+        )
+
+    def reconcile(self, d: Path, url: str, out: str = "out") -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(self.driver(d)), "reconcile", "--out", str(d / out), "--rpc", url],
             capture_output=True,
             text=True,
             timeout=300,
@@ -1126,9 +1416,23 @@ class RemoteRun(unittest.TestCase):
                 record = json.loads((d / "out/results.json").read_text())
                 rows = [json.loads(x) for x in (d / "out/ledger.jsonl").read_text().splitlines()]
                 written = {p: p.read_bytes() for p in (d / "out").rglob("*") if p.is_file()}
+                journal = jr.read_journal(d / "out" / jr.NAME)
         finally:
             server.shutdown()
             server.server_close()
+        # The journal holds every external the node received, and ended cleanly.
+        self.assertEqual(journal.errors, [])
+        self.assertIsNotNone(journal.end)
+        journaled = {a["external"] for a in journal.attempts.values()}
+        received = {parse_external(b)[0].hex() for b in chain.bocs}
+        self.assertEqual(received, journaled)
+        roles = Counter(a["role"] for a in journal.attempts.values())
+        self.assertEqual(
+            roles, {"funding": 1, "transfer": sum(1 for r in rows if r["external"]), "sweep": 6}
+        )
+        for key, attempt in journal.attempts.items():
+            self.assertIsNotNone(journal.sent(key), key)
+            self.assertTrue(journal.settled(key), (key, journal.events.get(key)))
         self.assertEqual(len(record["steps"]), 2, json.dumps(record["steps"], indent=1)[:3000])
         for step in record["steps"]:
             self.assertTrue(step["layout"]["stable"])
@@ -1292,8 +1596,122 @@ class RemoteRun(unittest.TestCase):
         self.assertIn("work_bound", over_cost.stdout)
         self.assertEqual(chain.methods, [])
 
+    def test_a_kill_after_a_send_leaves_a_journal_reconcile_classifies(self):
+        chain = FakeChain(self.bench_address(), {})
+        chain.hang_load = 3  # the fourth transfer external executes; its answer never returns
+        server, url = chain.serve()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                child = subprocess.Popen(
+                    self.argv(d, url),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    cwd=d,
+                    env=os.environ | {"PYTHONDONTWRITEBYTECODE": "1"},
+                )
+                try:
+                    self.assertTrue(chain.held.wait(120), "the fourth transfer was never sent")
+                    child.kill()
+                    self.assertEqual(child.wait(30), -9)
+                finally:
+                    chain.release.set()
+                journal = jr.read_journal(d / "out" / jr.NAME)
+                summaries = [(d / "out" / x).exists() for x in ("results.json", "ledger.jsonl")]
+                latest = max(a["deadline"] for a in journal.attempts.values())
+                give_up = time.monotonic() + 60
+                while chain.utime(chain.head()) <= latest + 3 and time.monotonic() < give_up:
+                    time.sleep(0.25)
+                result = self.reconcile(d, url)
+                bocs = len(chain.bocs)
+                again = self.run_ramp(d, url, out="out2")
+                bocs_after = len(chain.bocs)
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(summaries, [False, False])
+        self.assertEqual(journal.errors, [])
+        # Journaled before it was sent: every external the node received is in the journal.
+        received = {parse_external(b)[0].hex() for b in chain.bocs[:bocs]}
+        self.assertLessEqual(received, {a["external"] for a in journal.attempts.values()})
+        self.assertEqual(result.returncode, jr.RECONCILED, result.stderr[-3000:])
+        report = json.loads(result.stdout)
+        self.assertEqual(report["anomalies"], [])
+        self.assertFalse(report["ended"])
+        rows = {r["external"]: r for r in report["attempts"]}
+        self.assertEqual(set(rows), {a["external"] for a in journal.attempts.values()})
+        for digest, row in rows.items():
+            expected = "executed" if digest in chain.executed else "not_executed"
+            self.assertEqual(row["verdict"], expected, row)
+        hung = parse_external(chain.bocs[1 + 3])[0].hex()  # after the one funding external
+        self.assertIsNone(rows[hung]["journaled"])
+        self.assertEqual(rows[hung]["verdict"], "executed")
+        self.assertEqual(rows[hung]["problems"], [])
+        self.assertEqual({x["delivery"] for x in rows[hung]["deliveries"]}, {"delivered"})
+        self.assertEqual(len(rows[hung]["deliveries"]), 4)
+        # A new run first reconciles, records it, and refuses to sign anything.
+        self.assertEqual(again.returncode, remote.REFUSED, again.stderr[-3000:])
+        self.assertIn("needed reconciling", again.stderr)
+        self.assertEqual(bocs_after, bocs)
+
+    def test_a_second_invocation_on_a_locked_wallet_is_refused(self):
+        chain = FakeChain(self.bench_address(), {})
+        server, url = chain.serve()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                held = jr.WalletState(jr.default_state_dir(tr.write_key(d)), self.bench_address())
+                try:
+                    result = self.run_ramp(d, url)
+                finally:
+                    held.release()
+                out_exists = (d / "out").exists()
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(result.returncode, remote.REFUSED, result.stderr[-2000:])
+        self.assertIn("holds the lock", result.stderr)
+        self.assertFalse(out_exists)
+        self.assertEqual(chain.bocs, [])
+
+    def test_shard_reads_that_never_complete_stop_the_ramp_inconclusive(self):
+        chain = FakeChain(self.bench_address(), {})
+        chain.break_reads_at = 0  # from the first transfer on, its blocks cannot be read
+        server, url = chain.serve()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                result = self.run_ramp(d, url)
+                record = json.loads((d / "out/results.json").read_text())
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(result.returncode, ramp.STOPPED, result.stderr[-3000:])
+        self.assertIn("incomplete chain reads", record["stopped"])
+        self.assertIn("unreadable after 3 attempts", record["follower"]["failed"])
+        self.assertEqual(len(record["steps"]), 1)
+
 
 class Signing(unittest.TestCase):
+    def test_a_hung_batch_signer_is_killed_at_its_deadline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            script = d / "signer.py"
+            script.write_text(
+                "#!/usr/bin/env python3\nimport os, time\n"
+                f"open({str(d / 'pid')!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n"
+            )
+            script.chmod(0o700)
+            signer = ramp.BatchSigner(script, 1, timeout=1.0)
+            seed = ramp.load_seed(remote.Secret(tr.TEST_SEED), 0)
+            started = time.monotonic()
+            with self.assertRaises(remote.SignerTimeout) as caught:
+                signer.sign([(seed, b"m" * 32)])
+            self.assertLess(time.monotonic() - started, 30)
+            self.assertNotIn(seed.reveal().hex(), str(caught.exception))
+            with self.assertRaises(ProcessLookupError):
+                os.kill(int((d / "pid").read_text()), 0)
+
     def test_load_seeds_are_distinct_and_hidden(self):
         bench = remote.Secret(tr.TEST_SEED)
         seeds = [ramp.load_seed(bench, i) for i in range(64)]

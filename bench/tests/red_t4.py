@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""Red controls for test_t4: each guarded behaviour is broken in a copy, and its test must fail.
+"""Red controls for test_t4 and test_remote: each guarded behaviour is broken in a copy,
+and its test must fail.
 
 Run: uv run python bench/tests/red_t4.py [--only NAME]
+
+A mutant's test names a test of test_t4.py, or of another test file as
+``test_remote.py::Class.test``.
 
 Every mutant runs in its own copy of the bench tree under a temporary
 directory, with its own empty PYTHONPYCACHEPREFIX, so neither the worktree
@@ -23,6 +27,8 @@ COPIED = ["bench/t4", "bench/shard", "bench/pqbench", "bench/run_t4_ramp.py", "b
 L = "bench/t4/ledger.py"
 R = "bench/t4/ramp.py"
 RM = "bench/shard/remote.py"
+J = "bench/shard/journal.py"
+TR = "test_remote.py::"
 LO = "LedgerOutcomes"
 SUB = "Submissions"
 PASS = "PassRule"
@@ -32,6 +38,17 @@ FEE_CAP = "RemoteRun.test_a_fee_bound_over_max_cost_is_refused_before_any_send"
 OVERCHARGE = "RemoteRun.test_a_fee_over_its_bound_stops_the_ramp"
 FUNDING = "RemoteRun.test_a_funding_fee_over_its_bound_stops_before_the_ramp"
 HAND = "FeeBound.test_a_100_action_external_matches_a_hand_computation"
+ORDER = "JournalBeforeSend.test_every_attempt_is_on_disk_and_fsynced_before_its_send"
+DISTINCT = "JournalBeforeSend.test_three_rate_gate_refusals_on_two_wallets_never_repeat_an_external"
+KILL = "RemoteRun.test_a_kill_after_a_send_leaves_a_journal_reconcile_classifies"
+TORN = "JournalReader.test_a_torn_last_line_is_dropped_and_reported"
+INC = "IncompleteReads"
+R_E2E = TR + "RemoteRun.test_remote_run_uses_json_rpc_only_and_never_leaks_the_key"
+R_KILL = TR + "RemoteRun.test_a_kill_after_the_send_is_reconciled_before_any_new_signature"
+R_LOCK = TR + "RemoteRun.test_a_second_invocation_on_a_locked_wallet_is_refused"
+R_BUMP = TR + "RemoteRun.test_a_concurrent_nonce_bump_does_not_settle_the_request"
+R_HANG = TR + "RemoteRun.test_a_hung_signer_before_any_send_is_killed_and_refused"
+R_HANG2 = TR + "RemoteRun.test_a_hung_signer_after_a_send_is_killed_and_stops"
 
 # (name, file, old, new, test)
 MUTANTS: list[tuple[str, str, str, str, str]] = [
@@ -66,9 +83,8 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     (
         "ambiguous: release the wallet on no answer",
         R,
-        'self.ledger.ambiguous(ext, f"no answer: {type(error).__name__}")',
-        'self.ledger.ambiguous(ext, f"no answer: {type(error).__name__}")\n'
-        "            self.release(ext, False)",
+        'self.ledger.ambiguous(ext, reason or "ambiguous")',
+        'self.ledger.ambiguous(ext, reason or "ambiguous")\n            self.release(ext, False)',
         f"{SUB}.test_an_ambiguous_submission_stays_unknown_and_is_never_resent",
     ),
     (
@@ -80,23 +96,23 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ),
     (
         "refused: an external rejection is ambiguous",
-        R,
+        J,
         'return True, f"external rejected: {message}"',
         'return False, f"external rejected: {message}"',
         f"{SUB}.test_a_refused_external_marks_every_action_refused_with_its_reason",
     ),
     (
         "refused: a seqno conflict is ambiguous",
-        R,
+        J,
         'return True, "seqno conflict: the wallet\'s nonce moved"',
         'return False, "seqno conflict: the wallet\'s nonce moved"',
         f"{SUB}.test_a_refused_external_marks_every_action_refused_with_its_reason",
     ),
     (
         "refused: a rate-gate refusal is ambiguous",
-        R,
-        'self.ledger.refuse(ext, f"rate gate: {error.reason}")',
-        'self.ledger.ambiguous(ext, f"rate gate: {error.reason}")',
+        J,
+        'return "refused", f"rate gate: {error.reason}"',
+        'return "ambiguous", f"rate gate: {error.reason}"',
         f"{SUB}.test_a_refused_external_marks_every_action_refused_with_its_reason",
     ),
     (
@@ -172,8 +188,8 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     (
         "key: load seeds written to the results",
         R,
-        '"load_wallets": [w.address for w in wallets],',
-        '"load_wallets": [w.seed.reveal().hex() for w in wallets],',
+        '"load_wallets": [w.address for w in wallets],\n    }',
+        '"load_wallets": [w.seed.reveal().hex() for w in wallets],\n    }',
         E2E,
     ),
     (
@@ -256,8 +272,8 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     (
         "horizon: deadlines not capped",
         R,
-        "ext.deadline = min(now + self.a.lifetime, self.horizon)",
-        "ext.deadline = now + self.a.lifetime",
+        "max(min(now + self.a.lifetime, self.horizon), w.last_deadline + 1)",
+        "max(now + self.a.lifetime, w.last_deadline + 1)",
         f"{SUB}.test_request_deadlines_are_capped_at_the_fee_horizon",
     ),
     (
@@ -295,6 +311,157 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
         "    if False:\n        return STOPPED\n",
         OVERCHARGE,
     ),
+    # ── the journal (both users) ──
+    (
+        "journal: transfer attempts never written",
+        R,
+        "        try:\n            self.journal.append(*records)\n",
+        "        try:\n            pass\n",
+        ORDER,
+    ),
+    (
+        "journal: written but not fsynced",
+        J,
+        "            view = view[written:]\n        os.fsync(self.fd)\n",
+        "            view = view[written:]\n",
+        ORDER,
+    ),
+    (
+        "journal: a torn tail is an error",
+        J,
+        "    tail = lines.pop()  # what follows",
+        "    tail = b''; lines = lines[:-1] if not lines[-1] else lines  # what follows",
+        TORN,
+    ),
+    (
+        "journal: the remote attempt written after its send",
+        RM,
+        "        journal.append(record)\n        try:\n            await self.remote.send(external)\n",
+        "        try:\n            await self.remote.send(external)\n            journal.append(record)\n",
+        R_E2E,
+    ),
+    (
+        "reconcile: an attempt without an answer is skipped",
+        J,
+        "        verdict = await find_attempt(rpc, attempt, now, grace)\n        sent = read.sent(key)\n",
+        "        sent = read.sent(key)\n        if sent is None:\n            continue\n"
+        "        verdict = await find_attempt(rpc, attempt, now, grace)\n",
+        KILL,
+    ),
+    (
+        "reconcile: a new T4 run signs without accounting for earlier attempts",
+        J,
+        "                    if read.settled(key):\n                        continue\n",
+        "                    if True:\n                        continue\n",
+        KILL,
+    ),
+    (
+        "reconcile: a new remote run signs without accounting for earlier attempts",
+        J,
+        "                    if read.settled(key):\n                        continue\n",
+        "                    if True:\n                        continue\n",
+        R_KILL,
+    ),
+    (
+        "remote: a deployed hop tree is funded again",
+        RM,
+        '    if root.get("state") == "active":\n',
+        "    if False:\n",
+        R_KILL,
+    ),
+    (
+        "lock: the wallet lock is not taken",
+        J,
+        "            fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n",
+        "            pass\n",
+        R_LOCK,
+    ),
+    (
+        "lock: the T4 ramp signs under a held lock",
+        J,
+        "            fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n",
+        "            pass\n",
+        "RemoteRun.test_a_second_invocation_on_a_locked_wallet_is_refused",
+    ),
+    (
+        "confirmation: any external of the wallet settles the request",
+        J,
+        '        and t.tx.in_msg.hash == attempt["external"]\n',
+        "",
+        R_BUMP,
+    ),
+    (
+        "confirmation: a skipped start message settles the start",
+        J,
+        "        if match is None:\n",
+        "        if False:\n",
+        TR + "RemoteRun.test_a_consumed_nonce_without_a_start_message_is_inconclusive",
+    ),
+    (
+        "signer: no deadline before the first send",
+        RM,
+        "            out, err = process.communicate(text, timeout=timeout)\n",
+        "            out, err = process.communicate(text, timeout=None)\n",
+        R_HANG,
+    ),
+    (
+        "signer: a hung start signer is not a stop",
+        RM,
+        '        return stop("STOPPED", f"start: {error}", INCONCLUSIVE)\n',
+        '        return stop("REFUSED", f"start: {error}", REFUSED)\n',
+        R_HANG2,
+    ),
+    (
+        "signer: the hung signer is left running",
+        RM,
+        "                os.killpg(process.pid, signal.SIGKILL)\n",
+        "                pass\n",
+        "Signing.test_a_hung_batch_signer_is_killed_at_its_deadline",
+    ),
+    # ── distinct attempts ──
+    (
+        "distinct: a refused request is rebuilt with the same deadline",
+        R,
+        "max(min(now + self.a.lifetime, self.horizon), w.last_deadline + 1)",
+        "max(min(now + self.a.lifetime, self.horizon), w.last_deadline)",
+        DISTINCT,
+    ),
+    # ── incomplete reads ──
+    (
+        "follower: an incomplete transaction list counts as read",
+        R,
+        "                if block.complete:\n",
+        "                if True:\n",
+        f"{INC}.test_a_transaction_list_that_fails_once_is_read_again",
+    ),
+    (
+        "follower: an unread header is ignored",
+        R,
+        "            missing = unread_blocks(blocks, self.last, cur)\n",
+        "            missing = []\n",
+        f"{INC}.test_a_header_that_fails_once_is_read_again",
+    ),
+    (
+        "follower: no second read",
+        R,
+        "READ_ATTEMPTS = 3\n",
+        "READ_ATTEMPTS = 1\n",
+        f"{INC}.test_a_transaction_list_that_fails_once_is_read_again",
+    ),
+    (
+        "follower: an unreadable block does not stop the ramp",
+        R,
+        "        elif self.follower is not None and self.follower.failed is not None:\n",
+        "        elif False:\n",
+        f"{INC}.test_a_block_that_stays_unreadable_stops_the_ramp_inconclusive",
+    ),
+    (
+        "follower: an unreadable block does not stop the ramp (end to end)",
+        R,
+        "        elif self.follower is not None and self.follower.failed is not None:\n",
+        "        elif False:\n",
+        "RemoteRun.test_shard_reads_that_never_complete_stop_the_ramp_inconclusive",
+    ),
 ]
 
 
@@ -311,16 +478,26 @@ def tree(dest: Path) -> None:
 
 
 def run_tests(dest: Path, tests: list[str]) -> subprocess.CompletedProcess[str]:
-    with tempfile.TemporaryDirectory() as cache:
-        env = os.environ | {"PYTHONPYCACHEPREFIX": cache, "PYTHONDONTWRITEBYTECODE": "1"}
-        return subprocess.run(
-            [sys.executable, str(dest / "bench/tests/test_t4.py"), *tests],
-            capture_output=True,
-            text=True,
-            timeout=600,
-            env=env,
-            cwd=dest,
-        )
+    """Run the named tests, each file's in one process with a fresh, empty bytecode cache."""
+    by_file: dict[str, list[str]] = {}
+    for test in tests:
+        name, _, rest = test.rpartition("::")
+        by_file.setdefault(name or "test_t4.py", []).append(rest)
+    result = subprocess.CompletedProcess[str]([], 0, "", "")
+    for name, names in sorted(by_file.items()):
+        with tempfile.TemporaryDirectory() as cache:
+            env = os.environ | {"PYTHONPYCACHEPREFIX": cache, "PYTHONDONTWRITEBYTECODE": "1"}
+            result = subprocess.run(
+                [sys.executable, str(dest / "bench/tests" / name), *names],
+                capture_output=True,
+                text=True,
+                timeout=600,
+                env=env,
+                cwd=dest,
+            )
+        if result.returncode != 0:
+            return result
+    return result
 
 
 def main() -> int:

@@ -23,8 +23,12 @@ liteserver connection or boots a node. A run:
    the bench wallet's fee bound exceeds ``--max-cost``, or the load wallets'
    fee bound exceeds their funding. Nothing is written or sent before this
    step either;
-3. deploys or tops up the load wallets from the bench wallet in
-   multi-action externals, and checks each one's real fee against its bound;
+3. takes the bench wallet's lock and reconciles every earlier attempt of
+   this wallet and its load wallets (``shard.journal``), refusing when any
+   needed it; then opens the run journal (``<out>/journal.jsonl``) and
+   deploys or tops up the load wallets from the bench wallet in
+   multi-action externals, each confirmed by its transaction and its real
+   fee checked against its bound;
 4. runs the steps: from ``--start-rate`` transfers/s, multiplied by
    ``--factor`` per step, ``--step-seconds`` each. Every external carries up to
    ``--batch`` transfers, one send action each (mode 3: pay fees separately,
@@ -40,15 +44,27 @@ liteserver connection or boots a node. A run:
    results, then returns what is left in the load wallets to ``--return-to``
    (default: the bench wallet).
 
+Every signed external is in the journal, fsynced, before its send starts,
+and every later fact about it follows as it is learnt; ``ledger.jsonl`` and
+``results.json`` are summaries. ``run_t4_ramp.py reconcile --out DIR --rpc
+URL`` classifies a journal's attempts against the chain after a crash, and
+reads only.
+
 A load wallet carries one external at a time. An ambiguous submission is
 never resent: its wallet is held until the request's deadline has passed on
 chain, and then the wallet's nonce is read again before it sends new
-transfers.
+transfers. Each request a wallet signs has a deadline above its last one, so
+a refused request rebuilt before chain time moves is still a new message.
+The follower advances past a masterchain block only once all of its shard
+blocks are read in full; a block still unread after ``READ_ATTEMPTS`` reads
+stops the measurement.
 
 Exit statuses (``exit_status``): 0 when the ramp ran as specified (every
 step passed, or it ended at the first counted failing step), 1 when the
 ledger saw an anomaly or a duplicate, 3 when it was refused before anything
-was sent, 4 when it stopped after sending without an answer.
+was sent (a locked wallet, or earlier attempts that needed reconciling,
+included), 4 when it stopped after sending without an answer (incomplete
+chain reads included).
 
 Run: ``bench/run_t4_ramp.py --help``.
 """
@@ -61,7 +77,6 @@ import json
 import logging
 import math
 import os
-import subprocess
 import sys
 import tempfile
 import time
@@ -81,9 +96,10 @@ from pqbench.workload import (
 )
 from pytosiq_core import Address, Cell, MessageAny
 from shard import hopbench, remote, t2collect
+from shard import journal as jr
 from shard.remote import BenchWallet, Remote, Secret, raw
 from shard.rpc import PacedRpc, RateLimited, RpcError
-from shard.t2check import McRecord
+from shard.t2check import BlockRecord, BlockRef, McRecord, below_frontier
 
 from t4.ledger import NO_WALLET, External, Ledger, StepRule, step_layout, step_metrics
 
@@ -91,14 +107,14 @@ NANO = remote.NANO
 REFUSED = remote.REFUSED
 # The node refuses externals above 64 KiB; keep the local bench's headroom.
 EXT_MESSAGE_BUDGET = 60_000
-# The wallet's error code for a request whose nonce is not the current one.
-BAD_NONCE = 1804
 SEND_MODE = 3  # pay fees separately, ignore errors: a failing action is skipped
 SWEEP_MODE = 130  # carry the whole remaining balance, ignore errors
 LOAD_TAG = b"tos-t4-load-wallet"
 # Chain seconds past a request's deadline after which no block can still execute it.
-DEADLINE_GRACE = 30.0
+DEADLINE_GRACE = jr.DEADLINE_GRACE
 STALL_SECONDS = 120.0
+# Reads of one masterchain block's shard blocks before the follower gives up on it.
+READ_ATTEMPTS = 3
 MAX_WALLETS = 65_536
 log = logging.getLogger("t4-ramp")
 
@@ -270,17 +286,18 @@ def load_seed(bench_seed: Secret, index: int) -> Secret:
 
 
 def run_signer(
-    executable: Path, args: list[str], lines: list[str], size: int, threads: int
+    executable: Path,
+    args: list[str],
+    lines: list[str],
+    size: int,
+    threads: int,
+    timeout: float = remote.SIGNER_TIMEOUT,
 ) -> list[bytes]:
-    """One bench signer call over stdin; errors carry only the exit status, never the input."""
+    """One bench signer call over stdin, killed after ``timeout``; errors never carry the input."""
     if not lines:
         return []
-    result = subprocess.run(
-        [str(executable), *args, "--threads", str(threads)],
-        input="\n".join(lines) + "\n",
-        capture_output=True,
-        text=True,
-        check=False,
+    result = remote.run_signer_process(
+        [str(executable), *args, "--threads", str(threads)], "\n".join(lines) + "\n", timeout
     )
     if result.returncode:
         raise RuntimeError(f"bench signer failed with exit status {result.returncode}")
@@ -300,15 +317,19 @@ class Signs(Protocol):
 
 
 class BatchSigner:
-    def __init__(self, executable: Path, threads: int):
+    def __init__(self, executable: Path, threads: int, timeout: float = remote.SIGNER_TIMEOUT):
         if not executable.is_file():
             raise FileNotFoundError(f"bench signer not found: {executable}")
         _int_in("signer threads", threads, 1, 256)
-        self.executable, self.threads = executable.resolve(), threads
+        if not (math.isfinite(timeout) and timeout > 0):
+            raise ValueError("the signer timeout must be a positive number of seconds")
+        self.executable, self.threads, self.timeout = executable.resolve(), threads, timeout
 
     def public_keys(self, seeds: list[Secret]) -> list[bytes]:
         lines = [s.reveal().hex() for s in seeds]
-        return run_signer(self.executable, ["public"], lines, PUBLIC_KEY_BYTES, self.threads)
+        return run_signer(
+            self.executable, ["public"], lines, PUBLIC_KEY_BYTES, self.threads, self.timeout
+        )
 
     def sign(self, jobs: list[tuple[Secret, bytes]]) -> list[bytes]:
         lines = [f"{s.reveal().hex()} {m.hex()}" for s, m in jobs]
@@ -318,6 +339,7 @@ class BatchSigner:
             lines,
             SIGNATURE_BYTES,
             self.threads,
+            self.timeout,
         )
 
 
@@ -339,6 +361,10 @@ class LoadWallet:
     busy: External | None = None
     resync: bool = False
     resyncing: bool = False
+    # Every request this wallet signs has a deadline above the last one, so no two of its
+    # requests are the same message even when a refusal leaves the nonce where it was.
+    last_deadline: int = 0
+    last: External | None = None  # the last external signed for this wallet
 
     @property
     def address(self) -> str:
@@ -585,31 +611,49 @@ def derive_fees(
 
 # ─── send outcomes ───────────────────────────────────────────────────
 
+classify_send_error = jr.classify_send_error
 
-def classify_send_error(error: RpcError) -> tuple[bool, str]:
-    """(definitely refused, reason) for an error answer to sendBoc.
 
-    Only answers that say the node did not take the message are refusals: an
-    invalid request, or the node's external check rejecting it. Anything
-    else could have reached the network and is ambiguous.
-    """
-    detail = error.error if isinstance(error.error, dict) else {}
-    code = detail.get("code")
-    message = str(detail.get("message", ""))[:300]
-    if code == -32602:
-        return True, f"invalid request: {message}"
-    if "cannot apply external message" in message:
-        if f"exitcode={BAD_NONCE}," in message:
-            return True, "seqno conflict: the wallet's nonce moved"
-        return True, f"external rejected: {message}"
-    return False, f"unclassified error: HTTP {error.status}, code {code}: {message}"
+def attempt_of(ext: External) -> str:
+    """The journal id of a load wallet's transfer external."""
+    return jr.attempt_id("transfer", ext.wallet, ext.seqno)
 
 
 # ─── the follower ────────────────────────────────────────────────────
 
 
+def unread_blocks(blocks: dict[Any, BlockRecord], last: McRecord, cur: McRecord) -> list[BlockRef]:
+    """Blocks between ``last``'s tops and ``cur``'s tops that the walk did not read.
+
+    The walk skips what lies at or below the opening tops and reads the rest
+    by back-links, so every top of ``cur`` and every predecessor of a block it
+    read is either read, an opening top, or below one. Anything else is a
+    header the walk could not read, or one it left at its block bound.
+    """
+    frontier = {t.key: t for t in last.tops}
+    wanted = list(cur.tops) + [p for b in blocks.values() for p in b.prev]
+    seen: set[Any] = set()
+    out = []
+    for ref in wanted:
+        if ref.key in blocks or ref.key in frontier or ref.key in seen:
+            continue
+        if below_frontier(ref, frontier) is not None:
+            continue
+        seen.add(ref.key)
+        out.append(ref)
+    return out
+
+
 class Follower:
-    """Walks every masterchain block and the shard blocks it commits, feeding the ledger."""
+    """Walks every masterchain block and the shard blocks it commits, feeding the ledger.
+
+    The frontier advances past a masterchain block only once every shard
+    block it commits has been walked and every transaction list read in
+    full. A missing header or an incomplete list is read again, up to
+    ``read_attempts`` times; when it is still missing the follower stops for
+    good (``failed``) and the measurement is INCONCLUSIVE, since a skipped
+    block would hide its transfers.
+    """
 
     def __init__(
         self,
@@ -619,13 +663,16 @@ class Follower:
         first: McRecord,
         poll: float,
         per_round: int = 16,
+        read_attempts: int = READ_ATTEMPTS,
     ):
         self.rpc, self.ledger, self.on_included = rpc, ledger, on_included
         self.mcs: list[McRecord] = [first]
         self.poll, self.per_round = poll, per_round
+        self.read_attempts = _int_in("read attempts", read_attempts, 1, 100)
         self.last_advance = time.monotonic()
         self.errors = 0
-        self.incomplete_blocks: list[list[int]] = []
+        self.incomplete_blocks: list[list[int]] = []  # every read that had to be repeated
+        self.failed: str | None = None
         self.closed = False
 
     @property
@@ -636,31 +683,78 @@ class Follower:
     def chain_now(self) -> int:
         return self.last.gen_utime
 
+    async def _pause(self) -> None:
+        await asyncio.sleep(max(self.poll, 0.02))
+
+    async def read_window(self, cur: McRecord) -> list[Any] | None:
+        """Every transaction of the shard blocks between the frontier and ``cur``.
+
+        None when a header or a transaction list is still unread after the
+        bounded attempts.
+        """
+        blocks: dict[Any, BlockRecord] = {}
+        for attempt in range(self.read_attempts):
+            blocks = await t2collect.walk_blocks(self.rpc, [self.last, cur], max_blocks=4096)
+            missing = unread_blocks(blocks, self.last, cur)
+            if not missing:
+                break
+            self.incomplete_blocks += [list(r.key) for r in missing]
+            if attempt + 1 == self.read_attempts:
+                self.failed = (
+                    f"shard block headers unreadable after {self.read_attempts} attempts:"
+                    f" {[list(r.key) for r in missing[:4]]} (masterchain block {cur.seqno})"
+                )
+                return None
+            await self._pause()
+        refs = [b.ref for b in blocks.values()]
+        # Load wallets are basechain accounts, so masterchain transactions are not read.
+        done: dict[Any, Any] = {}
+        for attempt in range(self.read_attempts):
+            todo = [r for r in refs if r.key not in done]
+            if not todo:
+                break
+            read = await t2collect.read_all_transactions(self.rpc, todo)
+            for key, block in read.items():
+                if block.complete:
+                    done[key] = block
+                else:
+                    self.incomplete_blocks.append(list(key))
+            left = [list(r.key) for r in refs if r.key not in done]
+            if left and attempt + 1 == self.read_attempts:
+                self.failed = (
+                    f"shard block transactions unreadable after {self.read_attempts} attempts:"
+                    f" {left[:4]} (masterchain block {cur.seqno})"
+                )
+                return None
+            if left:
+                await self._pause()
+        return [tx for block in done.values() for tx in block.txs]
+
     async def round(self) -> int:
+        if self.failed is not None:
+            return 0
         info = await self.rpc.call("getMasterchainInfo")
         head = t2collect.parse_block_id(info.get("last")).seqno
         if head <= self.last.seqno:
             return 0
         hi = min(head, self.last.seqno + self.per_round)
         fresh = await t2collect.read_masterchain(self.rpc, self.last.seqno + 1, hi)
+        advanced = 0
         for cur in fresh:
-            blocks = await t2collect.walk_blocks(self.rpc, [self.last, cur], max_blocks=4096)
-            # Load wallets are basechain accounts, so masterchain transactions are not read.
-            txs = await t2collect.read_all_transactions(self.rpc, [b.ref for b in blocks.values()])
-            for key, block in txs.items():
-                if not block.complete:
-                    self.incomplete_blocks.append(list(key))
-            included = self.ledger.observe(
-                (tx, cur.seqno, cur.gen_utime) for block in txs.values() for tx in block.txs
-            )
+            txs = await self.read_window(cur)
+            if txs is None:
+                log.error("follower stopped: %s", self.failed)
+                return advanced
+            included = self.ledger.observe((tx, cur.seqno, cur.gen_utime) for tx in txs)
             for ext in included:
                 self.on_included(ext)
             self.mcs.append(cur)
             self.last_advance = time.monotonic()
-        return len(fresh)
+            advanced += 1
+        return advanced
 
     async def run(self) -> None:
-        while not self.closed:
+        while not self.closed and self.failed is None:
             try:
                 if await self.round():
                     continue
@@ -671,7 +765,7 @@ class Follower:
 
     async def reach(self, seqno: int, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
-        while self.last.seqno < seqno and time.monotonic() < deadline:
+        while self.last.seqno < seqno and time.monotonic() < deadline and self.failed is None:
             await asyncio.sleep(self.poll or 0.05)
         return self.last.seqno >= seqno
 
@@ -698,6 +792,7 @@ class Ramp:
     horizon: int  # no request may expire after this chain time (``fee_horizon``)
     fee_bounds: dict[int, int]  # one load external's fee bound by action count, storage aside
     storage_bounds: list[int]  # each load wallet's storage bound over the whole run
+    journal: jr.Journal  # every signed attempt is on disk here before its send starts
     follower: Follower | None = None
     stop_reason: str | None = None
     fee_overruns: list[dict[str, Any]] = field(default_factory=list)
@@ -708,9 +803,56 @@ class Ramp:
     _cursor: int = 0
     _send_cursor: int = 0
 
+    def __post_init__(self) -> None:
+        self.ledger.on_delivery = self.delivered
+
     @property
     def reader(self) -> PacedRpc:
         return self.endpoints[0].rpc
+
+    # ── the journal ──
+
+    def record(self, kind: str, ext: External, **fields: Any) -> None:
+        """Append one fact about a journaled external; a failed write stops the ramp."""
+        try:
+            self.journal.event(kind, attempt_of(ext), **fields)
+        except OSError as error:
+            self.stop(f"the journal write failed: {error}")
+
+    def stop(self, why: str) -> None:
+        if self.stop_reason is None:
+            self.stop_reason = why
+            log.error("stopping new submissions: %s", why)
+
+    def delivered(self, ext: External, action: int) -> None:
+        if ext.wallet == NO_WALLET or not ext.msg_hash:
+            return
+        self.record(
+            "delivered",
+            ext,
+            action=action,
+            recipient_tx=ext.recipient_tx[action],
+            recipient_mc=ext.recipient_mc[action],
+            recipient_utime=ext.recipient_utime[action],
+        )
+
+    def expire_unseen(self) -> int:
+        """Journal every sent external the complete walk proves can no longer execute."""
+        if self.follower is None or self.follower.failed is not None:
+            return 0
+        now, count = self.chain_now(), 0
+        for ext in self.ledger.externals:
+            if (
+                ext.msg_hash
+                and ext.submission in ("accepted", "ambiguous")
+                and ext.tx_hash is None
+                and not ext.expired
+                and now > ext.deadline + self.a.deadline_grace
+            ):
+                ext.expired = True
+                self.record("expired", ext, chain_now=now)
+                count += 1
+        return count
 
     def chain_now(self) -> int:
         assert self.follower is not None
@@ -721,6 +863,15 @@ class Ramp:
     def included(self, ext: External) -> None:
         if ext.wallet == NO_WALLET:
             return
+        self.record(
+            "observed",
+            ext,
+            tx=ext.tx_hash,
+            tx_mc=ext.tx_mc,
+            utime=ext.tx_utime,
+            fee=ext.tx_fee,
+            failure=ext.failure,
+        )
         w = self.wallets[ext.wallet]
         w.nonce = max(w.nonce, ext.nonce + 1)
         if w.busy is ext:
@@ -767,6 +918,9 @@ class Ramp:
             ):
                 # Past its deadline nothing can execute it any more; learn the nonce again.
                 w.busy, w.resync = None, True
+                if not ext.expired and self.follower is not None and self.follower.failed is None:
+                    ext.expired = True
+                    self.record("expired", ext, chain_now=now)
             if w.resync and not w.resyncing and w.busy is None:
                 w.resyncing = True
                 self._spawn(self.resync(w))
@@ -784,11 +938,26 @@ class Ramp:
         finally:
             w.resyncing = False
 
-    def next_free(self) -> LoadWallet | None:
+    def distinct_deadline(self, w: LoadWallet, now: int) -> int | None:
+        """The deadline of ``w``'s next request: above every earlier one, or None when none fits.
+
+        The request is fully determined by nonce, deadline and actions, so a
+        refused request rebuilt before chain time moves would otherwise be the
+        same message. The deadline stays within the fee horizon and the
+        wallet's own limit of ``jr.MAX_REQUEST_LIFETIME`` past chain time.
+        """
+        deadline = max(min(now + self.a.lifetime, self.horizon), w.last_deadline + 1)
+        if deadline > self.horizon or deadline > now + jr.MAX_REQUEST_LIFETIME:
+            return None
+        return deadline
+
+    def next_free(self, now: int | None = None) -> LoadWallet | None:
         n = len(self.wallets)
         for k in range(n):
             w = self.wallets[(self._cursor + k) % n]
-            if w.free:
+            if w.free and (
+                now is None or w.last_deadline < min(self.horizon, now + jr.MAX_REQUEST_LIFETIME)
+            ):
                 self._cursor = (w.index + 1) % n
                 return w
         return None
@@ -807,6 +976,8 @@ class Ramp:
             self.stop_reason = f"stop file {self.a.stop_file} present"
         elif self.ledger.duplicates:
             self.stop_reason = "the ledger saw a duplicate"
+        elif self.follower is not None and self.follower.failed is not None:
+            self.stop_reason = f"incomplete chain reads: {self.follower.failed}"
         elif (
             self.follower is not None
             and time.monotonic() - self.follower.last_advance > STALL_SECONDS
@@ -851,11 +1022,17 @@ class Ramp:
         return self.ledger.add(ext)
 
     async def issue(self, step: int, due: list[tuple[float, int]]) -> None:
-        """Build, sign and submit the externals that are due now."""
+        """Build, sign, journal and submit the externals that are due now.
+
+        Every attempt record is written and fsynced before any of these
+        sends starts. A refused request is followed on the same wallet only
+        by a distinct one (``distinct_deadline``), linked to it as ``prior``.
+        """
         room = self.send_room()
-        ready: list[tuple[External, LoadWallet, Endpoint, Cell]] = []
+        ready: list[tuple[External, LoadWallet, Endpoint, Cell, str | None]] = []
         for intended, size in due:
-            w = self.next_free()
+            now = self.chain_now()
+            w = self.next_free(now)
             if w is None:
                 self.ledger.refuse(self.build(step, intended, size, None), "local: no free wallet")
                 continue
@@ -864,15 +1041,16 @@ class Ramp:
             if endpoint is None:
                 self.ledger.refuse(ext, "local: no send budget")
                 continue
-            now = self.chain_now()
             # Capped at the fee horizon, so the storage bound covers every execution.
-            ext.deadline = min(now + self.a.lifetime, self.horizon)
-            if ext.deadline <= now:
+            if min(now + self.a.lifetime, self.horizon) <= now:
                 self.ledger.refuse(ext, "local: past the fee horizon")
-                if self.stop_reason is None:
-                    self.stop_reason = f"chain time {now} reached the fee horizon {self.horizon}"
-                    log.error("stopping new submissions: %s", self.stop_reason)
+                self.stop(f"chain time {now} reached the fee horizon {self.horizon}")
                 continue
+            deadline = self.distinct_deadline(w, now)
+            if deadline is None:
+                self.ledger.refuse(ext, "local: no distinct deadline left")
+                continue
+            ext.deadline = deadline
             ext.fee_bound = self.fee_bounds.get(size)
             if ext.fee_bound is None:
                 self.ledger.refuse(ext, f"local: no fee bound for {size} actions")
@@ -881,44 +1059,86 @@ class Ramp:
                 w.wallet.address, [Address(d) for d in ext.destinations], list(ext.values)
             )
             request = w.wallet.request(ext.nonce, actions, ext.deadline, mode=SEND_MODE)
-            w.busy = ext
-            ready.append((ext, w, endpoint, request))
+            prior = w.last
+            link = attempt_of(prior) if prior is not None and prior.nonce == ext.nonce else None
+            w.last_deadline, w.last, w.busy = ext.deadline, ext, ext
+            ready.append((ext, w, endpoint, request, link))
         if not ready:
             return
+        # The follower's chain time lags the chain's, so no transaction can be older.
+        signed_at = self.chain_now()
         try:
             signatures = await asyncio.to_thread(
-                self.signer.sign, [(w.seed, request.hash) for _, w, _, request in ready]
+                self.signer.sign, [(w.seed, request.hash) for _, w, _, request, _ in ready]
             )
         except Exception as error:
             for ext, *_ in ready:
                 self.ledger.refuse(ext, f"local: signing failed ({type(error).__name__})")
                 self.release(ext, False)
+            if isinstance(error, remote.SignerTimeout):
+                self.stop(str(error))
             return
-        for (ext, w, endpoint, request), signature in zip(ready, signatures):
-            message = w.wallet.external(request, signature)
-            cell = message.serialize()
-            boc = base64.b64encode(cell.to_boc()).decode()
-            self.ledger.submitted(ext, cell.hash.hex(), endpoint.url, time.time())
+        records: list[dict[str, Any]] = []
+        sends: list[tuple[External, Endpoint, str]] = []
+        for (ext, w, endpoint, request, link), signature in zip(ready, signatures, strict=True):
+            cell = w.wallet.external(request, signature).serialize()
+            digest = cell.hash.hex()
+            if self.ledger.known(digest):
+                # Distinct deadlines make this unreachable; refuse rather than resend.
+                self.ledger.refuse(ext, "local: identical external already submitted")
+                self.ledger.anomalies.append(
+                    {"reason": "identical external rebuilt", "msg": digest}
+                )
+                self.release(ext, False)
+                continue
+            self.ledger.submitted(ext, digest, endpoint.url, time.time())
+            records.append(
+                jr.attempt_record(
+                    role="transfer",
+                    sender=ext.sender,
+                    wallet=ext.wallet,
+                    seqno=ext.seqno,
+                    nonce=ext.nonce,
+                    deadline=ext.deadline,
+                    cell=cell,
+                    actions=[(d, v, SEND_MODE) for d, v in zip(ext.destinations, ext.values)],
+                    fee_bound=ext.fee_bound,
+                    prior=link,
+                    signed_at=signed_at,
+                    step=ext.step,
+                    intended=ext.intended,
+                    endpoint=endpoint.url,
+                )
+            )
+            sends.append((ext, endpoint, base64.b64encode(cell.to_boc()).decode()))
+        try:
+            self.journal.append(*records)
+        except OSError as error:
+            # Not on disk, so never sent: each stays a local refusal.
+            for ext, _, _ in sends:
+                self.ledger.refuse(ext, f"local: journal write failed ({error})")
+                self.release(ext, False)
+            self.stop(f"the journal write failed: {error}")
+            return
+        for ext, endpoint, boc in sends:
             self._spawn(self.submit(ext, endpoint, boc))
 
     async def submit(self, ext: External, endpoint: Endpoint, boc: str) -> None:
         try:
             await endpoint.send.call("sendBoc", {"boc": boc})
-        except RateLimited as error:
-            self.ledger.refuse(ext, f"rate gate: {error.reason}")
-            self.release(ext, False)
-        except RpcError as error:
-            definite, reason = classify_send_error(error)
-            if definite:
-                self.ledger.refuse(ext, reason)
-                self.release(ext, reason.startswith("seqno conflict"))
-            else:
-                # Held until its deadline passes: it may still execute, and is never resent.
-                self.ledger.ambiguous(ext, reason)
-        except Exception as error:  # no answer: the message may have reached the network
-            self.ledger.ambiguous(ext, f"no answer: {type(error).__name__}")
-        else:
+            error: BaseException | None = None
+        except Exception as caught:  # classified below; the message is never resent
+            error = caught
+        state, reason = jr.send_outcome(error)
+        if state == "accepted":
             self.ledger.accept(ext)
+        elif state == "refused":
+            self.ledger.refuse(ext, reason or "refused")
+            self.release(ext, (reason or "").startswith("seqno conflict"))
+        else:
+            # Held until its deadline passes: it may still execute, and is never resent.
+            self.ledger.ambiguous(ext, reason or "ambiguous")
+        self.record("sent", ext, state=state, reason=reason)
         if ext.submission == "refused" and ext.tx_hash is not None:
             self.ledger.anomalies.append(
                 {"reason": "a refused external executed", "msg": ext.msg_hash}
@@ -968,10 +1188,15 @@ class Ramp:
             self.housekeeping()
             self.check_stop()
             await asyncio.sleep(self.a.tick)
+        self.check_stop()
         mc_to = await self.head()
         mine = [e for e in self.ledger.externals if e.step == step_id]
         drain_until = time.monotonic() + self.a.drain
-        while time.monotonic() < drain_until and not all(e.settled() for e in mine):
+        while (
+            time.monotonic() < drain_until
+            and not all(e.settled() for e in mine)
+            and self.follower.failed is None
+        ):
             self.housekeeping()
             await asyncio.sleep(self.a.tick)
         await self.follower.reach(mc_to, self.a.drain)
@@ -1048,6 +1273,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--key-file", type=Path, required=True, help="bench wallet key (JSON, 0600)")
     p.add_argument("--signer", type=Path, required=True, help="bench-pq-signer executable")
     p.add_argument("--signer-threads", type=int, default=4)
+    p.add_argument(
+        "--signer-timeout",
+        type=float,
+        default=remote.SIGNER_TIMEOUT,
+        help="seconds one signer call may take before it is killed",
+    )
+    p.add_argument(
+        "--state-dir",
+        type=Path,
+        help="the wallet lock and journal registry (default: <key-file>.state next to the key)",
+    )
     p.add_argument("--auth-tag", required=True, help="the network's 32-byte AUTH tag (hex)")
     p.add_argument("--build", type=Path, default=hopbench.ROOT / "build")
     p.add_argument("--wallet-code", type=Path, help="precompiled wallet BOC instead of --build")
@@ -1090,6 +1326,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         value = getattr(a, name)
         if not (math.isfinite(value) and value >= 0):
             p.error(f"--{name.replace('_', '-')} must be a finite non-negative number")
+    if not (math.isfinite(a.signer_timeout) and a.signer_timeout > 0):
+        p.error("--signer-timeout must be a positive number of seconds")
     try:
         a.auth = bytes.fromhex(a.auth_tag)
     except ValueError:
@@ -1137,9 +1375,11 @@ def plan_of(a: argparse.Namespace, deploy_batch: int) -> Plan:
 # 3 REFUSED  refused before anything was sent (shard.remote.REFUSED): a plan
 #            or bound over its limit, or no fee bound, with no out directory;
 # 4 STOPPED  stopped after sending without an answer (shard.remote.INCONCLUSIVE):
-#            a stop file, a stalled head, no stable layout within the repeats,
-#            the fee horizon reached, a real fee over its derived bound, a
-#            funding or activation failure, or an unexpected error.
+#            a stop file, a stalled head, a shard block still unreadable after
+#            its bounded reads, no stable layout within the repeats, the fee
+#            horizon reached, a real fee over its derived bound, a signer
+#            timeout, a journal write failure, a funding or activation
+#            failure, or an unexpected error.
 PASSED = 0
 FAILED = 1
 STOPPED = remote.INCONCLUSIVE
@@ -1211,17 +1451,26 @@ async def fund(
     found: Survey,
     fees: RampFees,
     deploy_wait: float,
+    journal: jr.Journal,
 ) -> dict[str, Any]:
-    """Send the surveyed funding, checking every external's real fee against its bound."""
+    """Send the surveyed funding, each external confirmed by its transaction and its fee
+    checked against its bound."""
     paid: list[int] = []
+    sent: list[dict[str, Any]] = []
     for k, i in enumerate(range(0, len(found.actions), plan.deploy_batch)):
         chunk = found.actions[i : i + plan.deploy_batch]
-        attached = sum(found.amounts[i : i + plan.deploy_batch])
         try:
-            spent = await bench.send(chunk, "load-wallet funding", deploy_wait, fees.horizon)
-        except (remote.HorizonPassed, RuntimeError, ValueError, RpcError, RateLimited) as error:
+            result = await bench.send(
+                chunk, "load-wallet funding", deploy_wait, fees.horizon, journal, "funding"
+            )
+        except (remote.HorizonPassed, RuntimeError, ValueError, OSError) as error:
             raise Stopped(f"funding external {k}: {error}") from error
-        fee = spent - attached
+        sent.append(result.as_dict())
+        if result.state != "settled":
+            raise Stopped(f"funding external {k} is {result.state}: {result.reason}")
+        fee = result.fee
+        if fee is None:
+            raise Stopped(f"the node reported no fee for funding external {k}")
         paid.append(fee)
         # Cross-check the fee model on a real transaction: no funding external may
         # cost more than its own bound plus all the storage the bench wallet may owe.
@@ -1239,56 +1488,83 @@ async def fund(
         "funding_attached": sum(found.amounts),
         "funding_fees": paid,
         "funding_fee_bounds": [x.total + fees.bench_storage.fee for x in fees.funding],
+        "funding_externals": sent,
     }
 
 
 async def sweep(ramp: Ramp, target: Address) -> dict[str, Any]:
-    """Return each load wallet's balance to ``target`` with one external (mode 130)."""
+    """Return each load wallet's balance to ``target`` with one external (mode 130).
+
+    Every sweep is journaled before it is sent and confirmed by the
+    transaction that consumed it; an unanswered one is never resent.
+    """
     await asyncio.gather(*(ramp.resync(w) for w in ramp.wallets))
     out: dict[str, Any] = {"accepted": 0, "refused": 0, "ambiguous": 0, "skipped": 0}
-    ready: list[tuple[LoadWallet, Cell]] = []
+    ready: list[tuple[LoadWallet, Cell, int]] = []
     now = ramp.chain_now()
-    deadline = min(now + ramp.a.lifetime, ramp.horizon)
-    if deadline <= now:
+    if min(now + ramp.a.lifetime, ramp.horizon) <= now:
         out |= {"skipped": len(ramp.wallets), "not_executed": 0, "reason": "past the fee horizon"}
         return out
     for w in ramp.wallets:
-        if w.resync:
+        deadline = ramp.distinct_deadline(w, now)
+        if w.resync or deadline is None:
             out["skipped"] += 1
             continue
         message = transfer_message(w.wallet.address, target, 0)
-        ready.append((w, w.wallet.request(w.nonce, [message], deadline, mode=SWEEP_MODE)))
-    signatures = await asyncio.to_thread(
-        ramp.signer.sign, [(w.seed, request.hash) for w, request in ready]
-    )
-    sent: list[LoadWallet] = []
-    for (w, request), signature in zip(ready, signatures):
-        boc = base64.b64encode(w.wallet.external(request, signature).serialize().to_boc())
+        w.last_deadline = deadline
+        request = w.wallet.request(w.nonce, [message], deadline, mode=SWEEP_MODE)
+        ready.append((w, request, deadline))
+    try:
+        signatures = await asyncio.to_thread(
+            ramp.signer.sign, [(w.seed, request.hash) for w, request, _ in ready]
+        )
+    except Exception as error:
+        out |= {"skipped": len(ramp.wallets), "not_executed": 0, "reason": type(error).__name__}
+        return out
+    attempts: list[tuple[LoadWallet, dict[str, Any], str]] = []
+    for (w, request, deadline), signature in zip(ready, signatures, strict=True):
+        cell = w.wallet.external(request, signature).serialize()
+        record = jr.attempt_record(
+            role="sweep",
+            sender=w.address,
+            wallet=w.index,
+            seqno=w.seqno,
+            nonce=w.nonce,
+            deadline=deadline,
+            cell=cell,
+            actions=[(raw(target), 0, SWEEP_MODE)],
+            signed_at=now,
+        )
+        w.seqno += 1
+        attempts.append((w, record, base64.b64encode(cell.to_boc()).decode()))
+    ramp.journal.append(*(record for _, record, _ in attempts))
+    sent: list[dict[str, Any]] = []
+    for _, record, boc in attempts:
         try:
-            await ramp.reader.call("sendBoc", {"boc": boc.decode()})
-            out["accepted"] += 1
-            sent.append(w)
-        except RpcError as error:
-            definite = classify_send_error(error)[0]
-            out["refused" if definite else "ambiguous"] += 1
-            if not definite:
-                sent.append(w)
-        except Exception:
-            out["ambiguous"] += 1
-            sent.append(w)
-    # Wait until every sweep that may have reached the network has executed or expired.
-    pending = {w.index: w.nonce for w in sent}
-    give_up = time.monotonic() + ramp.a.drain + ramp.a.lifetime
-    while pending and time.monotonic() < give_up:
-        for w in [ramp.wallets[i] for i in pending]:
-            state = await ramp.reader.call("getAddressInformation", {"address": w.address})
-            data = state.get("data") if isinstance(state, dict) else None
-            if isinstance(data, str) and data:
-                if primary_nonce(Cell.one_from_boc(base64.b64decode(data))) > pending[w.index]:
-                    pending.pop(w.index)
-        if pending:
-            await asyncio.sleep(ramp.a.poll or 0.05)
-    out["not_executed"] = len(pending)
+            await ramp.reader.call("sendBoc", {"boc": boc})
+            error: BaseException | None = None
+        except Exception as caught:  # classified below; the sweep is never resent
+            error = caught
+        state, reason = jr.send_outcome(error)
+        ramp.journal.event("sent", record["id"], state=state, reason=reason)
+        out[state] += 1
+        if state != "refused":
+            sent.append(record)
+    # Wait until every sweep that may have reached the network executed or expired.
+    states: dict[str, int] = {}
+    timeout = ramp.a.drain + ramp.a.lifetime + ramp.a.deadline_grace
+
+    async def now_() -> int:
+        return await jr.now_of(ramp.reader)
+
+    for record in sent:
+        verdict = await jr.confirm(
+            ramp.reader, record, now_, timeout, ramp.a.poll, ramp.a.deadline_grace
+        )
+        state = remote.settle(ramp.journal, record, verdict).state
+        states[state] = states.get(state, 0) + 1
+    out["confirmed"] = states
+    out["not_executed"] = len(sent) - states.get("settled", 0) - states.get("failed", 0)
     return out
 
 
@@ -1330,8 +1606,8 @@ async def run(a: argparse.Namespace) -> int:
 
     try:
         key = remote.load_key(a.key_file)
-        bench_signer = remote.Signer(a.signer, key)
-        signer = BatchSigner(a.signer, a.signer_threads)
+        bench_signer = remote.Signer(a.signer, key, a.signer_timeout)
+        signer = BatchSigner(a.signer, a.signer_threads, a.signer_timeout)
     except (ValueError, OSError) as error:
         return refuse(str(error))
     endpoints = []
@@ -1402,6 +1678,48 @@ async def run(a: argparse.Namespace) -> int:
             f"the bench wallet holds {balance_before} nanotos; the run may cost {bound.cost}"
         )
 
+    # One invocation per bench wallet (and the load wallets derived from its key): the
+    # lock is held until the process ends, and every earlier attempt is accounted for
+    # before a new signature.
+    try:
+        state = jr.WalletState(a.state_dir or jr.default_state_dir(a.key_file), raw(bench.address))
+    except (jr.WalletLocked, OSError) as error:
+        return refuse(str(error))
+    try:
+        report = await state.reconcile(remote_.rpc, remote_.now)
+        why = jr.refusal_of(report)
+        if why is not None:
+            print(json.dumps({"reconciled": report}, indent=2), flush=True)
+            return refuse(why)
+        return await run_locked(
+            a, plan, rule, bound, sizes, fees, config, horizon, global_id, code, bench,
+            remote_, endpoints, signer, wallets, found, balance_before, return_to, state,
+        )  # fmt: skip
+    finally:
+        state.release()
+
+
+async def run_locked(
+    a: argparse.Namespace,
+    plan: Plan,
+    rule: StepRule,
+    bound: Bound,
+    sizes: dict[str, int],
+    fees: RampFees,
+    config: remote.FeeConfig,
+    horizon: int,
+    global_id: int,
+    code: Cell,
+    bench: BenchWallet,
+    remote_: Remote,
+    endpoints: list[Endpoint],
+    signer: Signs,
+    wallets: list[LoadWallet],
+    found: Survey,
+    balance_before: int,
+    return_to: Address | None,
+    state: jr.WalletState,
+) -> int:
     a.out = a.out.resolve()
     a.out.mkdir(parents=True, exist_ok=False)
     logging.basicConfig(
@@ -1428,17 +1746,34 @@ async def run(a: argparse.Namespace) -> int:
         "load_wallets": [w.address for w in wallets],
     }
     out_record = a.out / "results.json"
+    journal = jr.Journal(a.out / jr.NAME)
+    journal.append(
+        {
+            "type": "run",
+            "version": jr.VERSION,
+            "tool": "t4-ramp",
+            "wallet": raw(bench.address),
+            "load_wallets": [w.address for w in wallets],
+            "mc_start": await jr.head_of(remote_.rpc),
+            "deadline_grace": a.deadline_grace,
+            "fee_horizon": horizon,
+            "time": time.time(),
+        }
+    )
+    state.register(journal.path)
+    record["journal"] = jr.NAME
 
     def write() -> None:
         out_record.write_text(json.dumps(record, indent=2) + "\n")
 
     try:
         record["preparation"] = await fund(
-            bench, remote_, wallets, plan, found, fees, a.deploy_wait
+            bench, remote_, wallets, plan, found, fees, a.deploy_wait, journal
         )
     except Stopped as error:
         record |= {"stopped": str(error), "exit_status": STOPPED}
         write()
+        journal.append({"type": "end", "exit_status": STOPPED, "time": time.time()})
         log.error(record["stopped"])
         return STOPPED
 
@@ -1454,6 +1789,7 @@ async def run(a: argparse.Namespace) -> int:
         horizon,
         {k: x.total for k, x in fees.transfers.items()},
         [x.fee for x in fees.load_storage],
+        journal,
     )
     first = (await t2collect.read_masterchain(ramp.reader, (h := await ramp.head()), h))[0]
     ramp.follower = Follower(ramp.reader, ledger, ramp.included, first, a.poll)
@@ -1467,7 +1803,11 @@ async def run(a: argparse.Namespace) -> int:
             await asyncio.gather(*list(ramp.tasks), return_exceptions=True)
         latest = max([e.deadline for e in ledger.externals] or [0])
         wait_until = time.monotonic() + a.drain + a.lifetime + a.deadline_grace
-        while ramp.chain_now() <= latest + a.deadline_grace and time.monotonic() < wait_until:
+        while (
+            ramp.chain_now() <= latest + a.deadline_grace
+            and time.monotonic() < wait_until
+            and ramp.follower.failed is None
+        ):
             await asyncio.sleep(a.poll or 0.05)
         needed = max(
             [ramp.follower.last.seqno, *(m for e in ledger.externals for m in e.recipient_mc if m)]
@@ -1477,6 +1817,8 @@ async def run(a: argparse.Namespace) -> int:
         )
         ramp.follower.closed = True
         await follower_task
+        ramp.expire_unseen()
+        ramp.check_stop()
     with (a.out / "ledger.jsonl").open("w") as f:
         for row in ledger.rows(finalized):
             f.write(json.dumps(row) + "\n")
@@ -1505,7 +1847,8 @@ async def run(a: argparse.Namespace) -> int:
         },
         "follower": {
             "errors": ramp.follower.errors,
-            "incomplete_blocks": ramp.follower.incomplete_blocks,
+            "incomplete_blocks": ramp.follower.incomplete_blocks[:1000],
+            "failed": ramp.follower.failed,
             "mc_from": ramp.follower.mcs[0].seqno,
             "mc_to": ramp.follower.last.seqno,
         },
@@ -1523,12 +1866,15 @@ async def run(a: argparse.Namespace) -> int:
     }
     record["rpc"] = [e.rpc.stats() for e in endpoints]
     write()
+    journal.append({"type": "end", "exit_status": status, "time": time.time()})
     log.info("stated rate %s; outcomes %s", ramp.stated_rate, record["outcomes"])
     return status
 
 
 def main(argv: list[str]) -> int:
     os.umask(0o077)
+    if argv[:1] == ["reconcile"]:
+        return jr.reconcile_main(argv[1:], "run_t4_ramp.py")
     try:
         return asyncio.run(run(parse_args(argv)))
     except Exception:
