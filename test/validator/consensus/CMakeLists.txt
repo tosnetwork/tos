@@ -341,6 +341,33 @@ target_link_libraries(test-late-candidate-window PRIVATE
 tos_test(test-late-candidate-window)
 set_tests_properties(test-late-candidate-window PROPERTIES TIMEOUT 300)
 
+# The candidate resolver's node-wide budget for cached finalized payloads: the production
+# resolver, one or two sessions in one process, over a database whose reads and writes the
+# test holds, fails or corrupts.
+add_executable(test-candidate-payload-budget test-candidate-payload-budget.cpp)
+target_link_libraries(test-candidate-payload-budget PRIVATE
+    validator
+    tos_validator
+    tos_block
+    adnl
+    overlay
+    dht
+    tl_api
+    tl-utils
+    tos_crypto
+    tos_pq_consensus_signer
+    tos_pq_consensus
+    tos_mldsa44
+    tdactor
+    tdutils
+)
+foreach(mode bound rehydrate pinned-resolve pinned-reply reenforce oversized persist-cancelled persist-failed
+             external-ref revoke-missing revoke-corrupt revoke-mismatch stale-read shared-budget concurrent
+             session-exit session-overlap cold-same-id cold-many)
+    add_test(NAME candidate-payload-budget-${mode} COMMAND test-candidate-payload-budget ${mode})
+    set_tests_properties(candidate-payload-budget-${mode} PROPERTIES TIMEOUT 120)
+endforeach()
+
 # A group that stops while a finalization is in flight and callers wait on it must release
 # the resolver, its waiters and the bus.
 add_executable(test-state-resolver-teardown test-state-resolver-teardown.cpp)

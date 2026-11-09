@@ -15,6 +15,40 @@
 
 namespace tos::validator {
 
+// The allocator never hands out an exclusive buffer smaller than this.
+constexpr std::size_t kCompactBufferMinAllocation = 512;
+
+// Bytes a compact buffer holding `size` payload bytes occupies: the allocation
+// header and the payload, rounded and padded as the allocator does.
+inline std::size_t compact_buffer_charge(std::size_t size) {
+  std::size_t payload = size < kCompactBufferMinAllocation ? kCompactBufferMinAllocation : size;
+  payload = (payload + 7) & ~static_cast<std::size_t>(7);
+  return sizeof(td::BufferRaw) + payload;
+}
+
+// A copy of a payload in an allocation of its own, and that allocation. The
+// allocation is kept alive by `data` and by every clone of it, so its reference
+// count tells whether anything besides `data` still holds it.
+struct CompactBuffer {
+  td::BufferSlice data;
+  const td::BufferRaw *raw = nullptr;
+};
+
+inline CompactBuffer make_compact_buffer(td::Slice data) {
+  auto writer = td::BufferAllocator::create_writer(data.size());
+  writer->end_.fetch_add((data.size() + 7) & ~static_cast<std::size_t>(7), std::memory_order_relaxed);
+  std::size_t begin = writer->begin_;
+  CompactBuffer result;
+  result.raw = writer.get();
+  result.data = td::BufferSlice(td::BufferAllocator::create_reader(writer), begin, begin + data.size());
+  result.data.as_slice().copy_from(data);
+  return result;
+}
+
+inline bool compact_buffer_is_shared(const td::BufferRaw *raw) {
+  return raw != nullptr && raw->ref_cnt_.load(std::memory_order_acquire) > 1;
+}
+
 struct CandidateDataCacheLimits {
   std::size_t max_entries;
   // Bytes of backing allocations the cache keeps alive, all entries together.
@@ -61,9 +95,7 @@ class CandidateDataCache {
   // Bytes an entry holding `size` payload bytes is charged: the allocation
   // header and the payload, rounded and padded as the allocator does.
   static std::size_t charge_for(std::size_t size) {
-    std::size_t payload = size < kMinAllocation ? kMinAllocation : size;
-    payload = (payload + 7) & ~static_cast<std::size_t>(7);
-    return sizeof(td::BufferRaw) + payload;
+    return compact_buffer_charge(size);
   }
 
   // Stores a compact copy of `data` unless the key is present, the payload
@@ -176,9 +208,6 @@ class CandidateDataCache {
   }
 
  private:
-  // The allocator never hands out an exclusive buffer smaller than this.
-  static constexpr std::size_t kMinAllocation = 512;
-
   struct Entry {
     td::BufferSlice data;
     // The allocation behind `data`, kept alive by `data` itself; used only to
@@ -189,7 +218,7 @@ class CandidateDataCache {
   };
 
   static bool is_shared(const Entry &entry) {
-    return entry.raw->ref_cnt_.load(std::memory_order_acquire) > 1;
+    return compact_buffer_is_shared(entry.raw);
   }
 
   void retire(Entry entry) {
@@ -206,13 +235,10 @@ class CandidateDataCache {
   }
 
   static Entry make_entry(td::Slice data, std::size_t charge) {
-    auto writer = td::BufferAllocator::create_writer(data.size());
-    writer->end_.fetch_add((data.size() + 7) & ~static_cast<std::size_t>(7), std::memory_order_relaxed);
-    std::size_t begin = writer->begin_;
+    auto copy = make_compact_buffer(data);
     Entry entry;
-    entry.raw = writer.get();
-    entry.data = td::BufferSlice(td::BufferAllocator::create_reader(writer), begin, begin + data.size());
-    entry.data.as_slice().copy_from(data);
+    entry.raw = copy.raw;
+    entry.data = std::move(copy.data);
     entry.charge = charge;
     return entry;
   }

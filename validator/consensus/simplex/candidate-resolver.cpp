@@ -4,15 +4,18 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <algorithm>
+#include <cstdlib>
+#include <deque>
+#include <unordered_set>
+
 #include "td/utils/Random.h"
 #include "td/utils/ScopeGuard.h"
 #include "td/utils/memory-tracker.h"
 #include "validator/rate-limiter.h"
 
-#include <cstdlib>
-#include <unordered_set>
-
 #include "bus.h"
+#include "candidate-payload-budget.h"
 #include "candidate-retention.h"
 
 namespace tos::validator::consensus::simplex {
@@ -65,6 +68,22 @@ int candidate_resolve_max_attempts_from_env() {
     return DEFAULT_CANDIDATE_RESOLVE_MAX_ATTEMPTS;
   }
   return parsed.move_as_ok();
+}
+
+// Database reads of candidate payloads one resolver runs at once. Each holds the stored record
+// and the candidate decoded from it until the reader is done, so this bounds the cold-read
+// buffers of a resolver to this many candidates. Readers beyond it wait in arrival order.
+constexpr size_t COLD_READ_CONCURRENCY = 4;
+// Peer requests that may wait for a read slot. A peer request that would wait beyond this is
+// refused as busy, and the peer asks again or asks another validator; local readers always wait,
+// and there is at most one local resolve per candidate.
+constexpr size_t COLD_READ_MAX_REMOTE_WAITERS = 32;
+
+td::uint64 candidate_data_bytes(const Candidate& candidate) {
+  if (const auto* block = std::get_if<BlockCandidate>(&candidate.block)) {
+    return saturating_add(block->data.size(), block->collated_data.size());
+  }
+  return 0;
 }
 
 struct CandidateAndCert {
@@ -150,7 +169,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     params_ = owning_bus()->config.noncritical_params;
     load_from_db();
     LOG(INFO) << "Simplex candidate-resolver retention window: " << retention_policy_.retained_slots()
-              << " finalized slots";
+              << " finalized slots; node-wide finalized payload cache: " << payload_budget_.limit() << " bytes";
     if (td::memory_tracker_enabled()) {
       alarm_timestamp() = td::Timestamp::in(60.0);
     }
@@ -161,19 +180,38 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       schedule_store_notar_cert(id, state);
     }
     prune_finalized();
+    payload_budget_.sweep();
     log_memory_diagnostics();
     alarm_timestamp() = td::Timestamp::in(60.0);
   }
 
   void tear_down() override {
-    for (auto &[_, s] : state_) {
+    // Nothing is cached after this point: an operation that still ends later must not charge
+    // the node-wide allowance for an entry nobody will release.
+    stopped_ = true;
+    for (auto& [id, s] : state_) {
       for (auto &p : s.resolve_awaiters) {
         p.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
       }
       for (auto &p : s.store_awaiters) {
         p.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
       }
+      for (auto& p : s.load_awaiters) {
+        p.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
+      }
+      s.load_awaiters.clear();
+      // Cached payloads go to the node-wide allowance, which keeps any that something still
+      // holds charged after this session is gone.
+      if (s.payload_cached) {
+        drop_cached_payload(id, s);
+      }
     }
+    while (!cold_read_waiters_.empty()) {
+      auto promise = std::move(cold_read_waiters_.front());
+      cold_read_waiters_.pop_front();
+      promise.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
+    }
+    payload_budget_.sweep();
   }
 
   template <>
@@ -203,7 +241,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
         end_operation(id, state);
       };
       if (request->want_candidate_) {
-        co_await try_load_candidate_data_from_db(id, state);
+        co_await try_load_candidate_data_from_db(id, state, /*tracked=*/true, /*remote=*/true);
       }
       if (request->want_notar_) {
         co_await try_load_notar_cert_from_db_or_bootstrap(id, state);
@@ -217,7 +255,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     // durable is still served from the database and bootstrap set.
     CandidateState state;
     if (request->want_candidate_) {
-      co_await try_load_candidate_data_from_db(id, state);
+      co_await try_load_candidate_data_from_db(id, state, /*tracked=*/false, /*remote=*/true);
     }
     if (request->want_notar_) {
       co_await try_load_notar_cert_from_db_or_bootstrap(id, state);
@@ -265,7 +303,11 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       end_operation(request->candidate->id, state);
     };
 
-    state.candidate_and_cert.candidate = request->candidate;
+    // The id commits to the contents, so a payload already held is the same one; keeping it
+    // keeps a cached copy and the allocations it is charged for paired.
+    if (!state.candidate_and_cert.candidate.has_value()) {
+      state.candidate_and_cert.candidate = request->candidate;
+    }
     maybe_resume_resolve_awaiters(state);
 
     if (state.candidate_stored) {
@@ -300,6 +342,21 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   }
 
   template <>
+  td::actor::Task<QueryCandidatePayloadCache::Result> process(BusHandle,
+                                                              std::shared_ptr<QueryCandidatePayloadCache> query) {
+    auto result = payload_cache_state();
+    if (query->id.has_value()) {
+      if (auto it = state_.find(*query->id); it != state_.end()) {
+        result.id_tracked = true;
+        result.id_payload_resident = it->second.candidate_and_cert.candidate.has_value();
+        result.id_payload_cached = it->second.payload_cached;
+        result.id_durable = is_durable(it->second);
+      }
+    }
+    co_return result;
+  }
+
+  template <>
   void handle(BusHandle, std::shared_ptr<const NotarizationObserved> event) {
     auto &state = state_[event->id];
     state.candidate_and_cert.notar_cert = event->certificate;
@@ -309,8 +366,20 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
 
   template <>
   void handle(BusHandle, std::shared_ptr<const FinalizationObserved> event) {
+    auto previous = retention_policy_.latest_finalized_slot();
     retention_policy_.observe_finalized(event->id.slot);
     prune_finalized();
+    // Payloads of the slots finalized just now may be cached from here on, oldest slot first,
+    // so that under pressure the newest ones are the ones kept.
+    auto latest = retention_policy_.latest_finalized_slot();
+    if (latest.has_value() && (!previous.has_value() || *previous < *latest)) {
+      td::uint32 first = previous.has_value() ? *previous + 1 : 0;
+      for (auto it = state_.lower_bound(CandidateId{first, {}}); it != state_.end() && it->first.slot <= *latest;
+           ++it) {
+        admit_payload(it->first, it->second);
+      }
+    }
+    payload_budget_.sweep();
   }
 
  private:
@@ -319,11 +388,20 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     bool candidate_stored = false;
     bool notar_stored = false;
     bool notar_store_in_flight = false;
+    // The payload is the cache's compact copy and is charged to the node-wide allowance.
+    bool payload_cached = false;
+    // A database read of the payload is running; later readers wait for it instead of
+    // starting their own.
+    bool payload_load_in_flight = false;
+    // Counts completed candidate stores, so a database read that started before one can tell
+    // that its result no longer describes the record.
+    td::uint64 store_generation = 0;
     size_t active_operations = 0;
     CandidateAndCert candidate_and_cert;
 
     std::vector<td::Promise<td::Unit>> resolve_awaiters;
     std::vector<td::Promise<td::Unit>> store_awaiters;
+    std::vector<td::Promise<td::Unit>> load_awaiters;
   };
 
   NewConsensusConfig::NoncriticalParams params_;
@@ -331,6 +409,31 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   std::map<adnl::AdnlNodeIdShort, td::RateLimiterWindow> rate_limiter_;
   CandidateRetentionPolicy retention_policy_{candidate_retention_slots_from_env()};
   size_t state_evictions_ = 0;
+
+  // The cached finalized payloads of this resolver, oldest slot first, and the allocations
+  // each is charged for in the node-wide allowance.
+  CandidatePayloadBudget& payload_budget_ = node_candidate_payload_budget();
+  std::map<CandidateId, CachedPayloadAllocations> cached_payloads_;
+  td::uint64 cached_bytes_ = 0;
+  td::uint64 admitted_payloads_ = 0;
+  td::uint64 admitted_bytes_ = 0;
+  td::uint64 dropped_payloads_ = 0;
+  td::uint64 not_cached_payloads_ = 0;
+  bool stopped_ = false;
+
+  td::uint64 db_payload_reads_ = 0;
+  td::uint64 db_payload_read_misses_ = 0;
+  td::uint64 db_payload_read_invalid_ = 0;
+  td::uint64 coalesced_reads_ = 0;
+  td::uint64 durability_revocations_ = 0;
+
+  size_t cold_reads_in_flight_ = 0;
+  size_t cold_reads_in_flight_peak_ = 0;
+  std::deque<td::Promise<td::Unit>> cold_read_waiters_;
+  size_t cold_read_waiters_peak_ = 0;
+  td::uint64 cold_read_bytes_in_flight_ = 0;
+  td::uint64 cold_read_bytes_peak_ = 0;
+  td::uint64 cold_reads_refused_ = 0;
 
   static bool can_evict(const CandidateState& state) {
     const CandidateEvictionState eviction_state{
@@ -349,22 +452,229 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     ++state.active_operations;
   }
 
+  // The last pin of an entry is where an operation may have added a payload (a store, a
+  // database read, a network response) or ended its use of one, so it is where the payload
+  // is cached or let go, whatever path the operation took to get here.
   void end_operation(const CandidateId& id, CandidateState& state) {
     CHECK(state.active_operations > 0);
     --state.active_operations;
-    if (state.active_operations != 0 || !retention_policy_.is_before_retained_window(id) || !can_evict(state)) {
+    if (state.active_operations != 0) {
       return;
     }
-    auto it = state_.find(id);
-    CHECK(it != state_.end());
-    CHECK(&it->second == &state);
-    state_.erase(it);
-    ++state_evictions_;
+    if (retention_policy_.is_before_retained_window(id) && can_evict(state)) {
+      auto it = state_.find(id);
+      CHECK(it != state_.end());
+      CHECK(&it->second == &state);
+      release_entry_payload(id, state);
+      state_.erase(it);
+      ++state_evictions_;
+    } else {
+      admit_payload(id, state);
+    }
+    payload_budget_.sweep();
   }
 
   void prune_finalized() {
-    state_evictions_ += prune_candidate_states(state_, retention_policy_.first_retained_slot(),
-                                               [](const CandidateState& state) { return can_evict(state); });
+    state_evictions_ += prune_candidate_states(
+        state_, retention_policy_.first_retained_slot(), [](const CandidateState& state) { return can_evict(state); },
+        [this](const CandidateId& id, CandidateState& state) { release_entry_payload(id, state); });
+  }
+
+  bool slot_is_finalized(td::uint32 slot) const {
+    auto latest = retention_policy_.latest_finalized_slot();
+    return latest.has_value() && slot <= *latest;
+  }
+
+  static bool is_durable(const CandidateState& state) {
+    return state.candidate_in_db || state.candidate_stored;
+  }
+
+  // Nothing is using the entry's payload: no operation holds the entry and nobody waits on it.
+  static bool payload_unused(const CandidateState& state) {
+    return state.active_operations == 0 && state.resolve_awaiters.empty() && state.store_awaiters.empty() &&
+           state.load_awaiters.empty() && !state.payload_load_in_flight;
+  }
+
+  // Whether a payload the entry holds outside the cache may now go to the cache. Unlike
+  // can_evict(), the notarization certificate does not matter: it stays in the entry.
+  bool payload_cacheable(const CandidateId& id, const CandidateState& state) const {
+    return !stopped_ && state.candidate_and_cert.candidate.has_value() && !state.payload_cached &&
+           slot_is_finalized(id.slot) && is_durable(state) && payload_unused(state);
+  }
+
+  // Whether a cached payload may be dropped to make room.
+  static bool payload_droppable(const CandidateState& state) {
+    return state.payload_cached && payload_unused(state);
+  }
+
+  // Moves a finalized, durable payload nobody uses into the cache, as a compact copy charged
+  // to the node-wide allowance. Room is made by dropping this resolver's own cached payloads
+  // of older slots, oldest first; when that is not enough, because the rest of the allowance
+  // is held by newer payloads, by other sessions or by retired allocations, the payload is
+  // not cached. Either way the resolver lets go of the original, and a later reader loads the
+  // durable record again.
+  void admit_payload(const CandidateId& id, CandidateState& state) {
+    if (!payload_cacheable(id, state)) {
+      return;
+    }
+    const auto& original = **state.candidate_and_cert.candidate;
+    auto charge = compact_candidate_charge(original);
+    // Retired payloads whose last holder is gone give their room back first.
+    payload_budget_.sweep();
+    while (!payload_budget_.try_reserve(charge)) {
+      auto victim = cached_payloads_.end();
+      for (auto it = cached_payloads_.begin(); it != cached_payloads_.end() && it->first < id; ++it) {
+        auto victim_state = state_.find(it->first);
+        if (victim_state != state_.end() && payload_droppable(victim_state->second)) {
+          victim = it;
+          break;
+        }
+      }
+      if (victim == cached_payloads_.end()) {
+        state.candidate_and_cert.candidate.reset();
+        ++not_cached_payloads_;
+        return;
+      }
+      auto victim_id = victim->first;
+      drop_cached_payload(victim_id, state_.find(victim_id)->second);
+    }
+    CachedPayloadAllocations allocations;
+    auto compact = make_compact_candidate(original, allocations);
+    if (allocations.charge != charge) {
+      LOG(ERROR) << "Simplex candidate-resolver: compact copy of " << id << " is charged " << allocations.charge
+                 << " bytes, reserved " << charge;
+    }
+    state.candidate_and_cert.candidate = std::move(compact);
+    state.payload_cached = true;
+    cached_payloads_.emplace(id, allocations);
+    cached_bytes_ = saturating_add(cached_bytes_, charge);
+    ++admitted_payloads_;
+    admitted_bytes_ = saturating_add(admitted_bytes_, charge);
+  }
+
+  // Stops caching the entry's payload. The node-wide allowance keeps it charged while
+  // anything else still holds it.
+  void drop_cached_payload(const CandidateId& id, CandidateState& state) {
+    state.payload_cached = false;
+    auto it = cached_payloads_.find(id);
+    if (it == cached_payloads_.end()) {
+      LOG(ERROR) << "Simplex candidate-resolver: cached payload of " << id << " has no charge";
+      state.candidate_and_cert.candidate.reset();
+      return;
+    }
+    auto allocations = it->second;
+    cached_payloads_.erase(it);
+    cached_bytes_ = saturating_sub(cached_bytes_, allocations.charge);
+    ++dropped_payloads_;
+    CandidateRef payload;
+    if (state.candidate_and_cert.candidate.has_value()) {
+      payload = std::move(*state.candidate_and_cert.candidate);
+      state.candidate_and_cert.candidate.reset();
+    }
+    payload_budget_.retire(std::move(payload), allocations);
+  }
+
+  void release_entry_payload(const CandidateId& id, CandidateState& state) {
+    if (state.payload_cached) {
+      drop_cached_payload(id, state);
+    }
+  }
+
+  QueryCandidatePayloadCache::Result payload_cache_state() const {
+    QueryCandidatePayloadCache::Result result;
+    auto node = payload_budget_.snapshot();
+    result.node_limit = node.limit;
+    result.node_charged_bytes = node.charged_bytes;
+    result.node_charged_peak = node.charged_peak;
+    result.node_retired_bytes = node.retired_bytes;
+    result.node_retired_payloads = node.retired_payloads;
+    result.node_refused_reservations = node.refused_reservations;
+    result.node_accounting_errors = node.accounting_errors;
+    result.entries = state_.size();
+    result.cached_payloads = cached_payloads_.size();
+    result.cached_bytes = cached_bytes_;
+    result.admitted_payloads = admitted_payloads_;
+    result.admitted_bytes = admitted_bytes_;
+    result.dropped_payloads = dropped_payloads_;
+    result.not_cached_payloads = not_cached_payloads_;
+    for (const auto& [id, state] : state_) {
+      if (!state.candidate_and_cert.candidate.has_value() || state.payload_cached) {
+        continue;
+      }
+      auto bytes = candidate_data_bytes(**state.candidate_and_cert.candidate);
+      if (!slot_is_finalized(id.slot)) {
+        result.nonfinalized_bytes = saturating_add(result.nonfinalized_bytes, bytes);
+      } else if (!is_durable(state)) {
+        result.nondurable_bytes = saturating_add(result.nondurable_bytes, bytes);
+      } else {
+        result.pinned_bytes = saturating_add(result.pinned_bytes, bytes);
+      }
+    }
+    result.db_payload_reads = db_payload_reads_;
+    result.db_payload_read_misses = db_payload_read_misses_;
+    result.db_payload_read_invalid = db_payload_read_invalid_;
+    result.coalesced_reads = coalesced_reads_;
+    result.durability_revocations = durability_revocations_;
+    result.cold_read_concurrency = COLD_READ_CONCURRENCY;
+    result.cold_read_max_remote_waiters = COLD_READ_MAX_REMOTE_WAITERS;
+    result.cold_reads_in_flight = cold_reads_in_flight_;
+    result.cold_reads_in_flight_peak = cold_reads_in_flight_peak_;
+    result.cold_read_waiters = cold_read_waiters_.size();
+    result.cold_read_waiters_peak = cold_read_waiters_peak_;
+    result.cold_read_bytes_in_flight = cold_read_bytes_in_flight_;
+    result.cold_read_bytes_peak = cold_read_bytes_peak_;
+    result.cold_reads_refused = cold_reads_refused_;
+    return result;
+  }
+
+  // A peer request that would have to wait behind a full queue of readers is refused; a
+  // local reader is never refused.
+  bool cold_read_must_refuse(bool remote) const {
+    return remote && cold_reads_in_flight_ >= COLD_READ_CONCURRENCY &&
+           cold_read_waiters_.size() >= COLD_READ_MAX_REMOTE_WAITERS;
+  }
+
+  td::actor::Task<> acquire_cold_read() {
+    if (cold_reads_in_flight_ < COLD_READ_CONCURRENCY) {
+      ++cold_reads_in_flight_;
+      cold_reads_in_flight_peak_ = std::max(cold_reads_in_flight_peak_, cold_reads_in_flight_);
+      co_return td::Unit{};
+    }
+    auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
+    cold_read_waiters_.push_back(std::move(promise));
+    cold_read_waiters_peak_ = std::max(cold_read_waiters_peak_, cold_read_waiters_.size());
+    // The slot is handed over by release_cold_read(), so the count does not change here.
+    co_await std::move(task);
+    co_return td::Unit{};
+  }
+
+  void release_cold_read() {
+    if (!cold_read_waiters_.empty()) {
+      auto promise = std::move(cold_read_waiters_.front());
+      cold_read_waiters_.pop_front();
+      promise.set_value(td::Unit{});
+      return;
+    }
+    if (cold_reads_in_flight_ == 0) {
+      LOG(ERROR) << "Simplex candidate-resolver: released a cold-read slot nobody held";
+      return;
+    }
+    --cold_reads_in_flight_;
+  }
+
+  // A read proved that the database does not hold this candidate's record as the entry
+  // believed: it is missing, undecodable or for another candidate. Neither flag may claim
+  // durability any more, so a payload fetched again is written again before it can be
+  // cached and dropped.
+  void revoke_durability(const CandidateId& id, CandidateState& state, td::Slice reason) {
+    if (!is_durable(state)) {
+      return;
+    }
+    LOG(WARNING) << "Simplex candidate-resolver: candidate data for " << id << " was believed durable but the record "
+                 << reason << "; it will be written again when the candidate is obtained";
+    state.candidate_in_db = false;
+    state.candidate_stored = false;
+    ++durability_revocations_;
   }
 
   void log_memory_diagnostics() const {
@@ -431,6 +741,32 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
                  << " first_retained_slot=" << retention_policy_.first_retained_slot()
                  << " retention_slots=" << retention_policy_.retained_slots()
                  << " evictions=" << state_evictions_ << " rate_limit_peers=" << rate_limiter_.size();
+
+    auto cache = payload_cache_state();
+    LOG(WARNING) << "MEMORY_DIAGNOSTICS simplex-candidate-payloads"
+                 << " node_limit=" << cache.node_limit << " node_charged_bytes=" << cache.node_charged_bytes
+                 << " node_charged_peak=" << cache.node_charged_peak
+                 << " node_retired_bytes=" << cache.node_retired_bytes
+                 << " node_retired_payloads=" << cache.node_retired_payloads
+                 << " node_refused_reservations=" << cache.node_refused_reservations
+                 << " node_accounting_errors=" << cache.node_accounting_errors
+                 << " cached_payloads=" << cache.cached_payloads << " cached_bytes=" << cache.cached_bytes
+                 << " admitted_payloads=" << cache.admitted_payloads << " admitted_bytes=" << cache.admitted_bytes
+                 << " dropped_payloads=" << cache.dropped_payloads
+                 << " not_cached_payloads=" << cache.not_cached_payloads << " pinned_bytes=" << cache.pinned_bytes
+                 << " nondurable_bytes=" << cache.nondurable_bytes << " nonfinalized_bytes=" << cache.nonfinalized_bytes
+                 << " db_payload_reads=" << cache.db_payload_reads
+                 << " db_payload_read_misses=" << cache.db_payload_read_misses
+                 << " db_payload_read_invalid=" << cache.db_payload_read_invalid
+                 << " coalesced_reads=" << cache.coalesced_reads
+                 << " durability_revocations=" << cache.durability_revocations
+                 << " cold_reads_in_flight=" << cache.cold_reads_in_flight
+                 << " cold_reads_in_flight_peak=" << cache.cold_reads_in_flight_peak
+                 << " cold_read_waiters=" << cache.cold_read_waiters
+                 << " cold_read_waiters_peak=" << cache.cold_read_waiters_peak
+                 << " cold_read_bytes_in_flight=" << cache.cold_read_bytes_in_flight
+                 << " cold_read_bytes_peak=" << cache.cold_read_bytes_peak
+                 << " cold_reads_refused=" << cache.cold_reads_refused;
   }
 
   td::Status check_rate_limit(adnl::AdnlNodeIdShort src) {
@@ -482,24 +818,67 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
               << "candidate metadata will be loaded on demand";
   }
 
-  td::actor::Task<bool> try_load_candidate_data_from_db(CandidateId id, CandidateState &state) {
+  // `tracked` is false for the transient state of an id the map does not hold: such a read is
+  // neither coalesced nor recorded, so a remote-chosen id never enters the map. `remote` marks
+  // a peer's request, which is refused as busy instead of queueing without bound.
+  td::actor::Task<bool> try_load_candidate_data_from_db(CandidateId id, CandidateState& state, bool tracked,
+                                                        bool remote) {
     auto &bus = *owning_bus();
 
     if (state.candidate_and_cert.candidate.has_value()) {
       co_return true;
     }
-
-    auto contents_key = create_serialize_tl_object<tl::db_key_candidate>(id.to_tl());
-    auto data_r = co_await bus.db->get_latest(std::move(contents_key));
-    if (!data_r.has_value()) {
-      if (state.candidate_in_db) {
-        LOG(WARNING) << "Simplex candidate-resolver: candidate data for " << id
-                     << " is indexed in DB but the content record is missing";
-        state.candidate_in_db = false;
+    if (tracked && state.payload_load_in_flight) {
+      // One read per candidate at a time: wait for the running one and use what it found.
+      ++coalesced_reads_;
+      auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
+      state.load_awaiters.push_back(std::move(promise));
+      co_await std::move(task);
+      co_return state.candidate_and_cert.candidate.has_value();
+    }
+    if (cold_read_must_refuse(remote)) {
+      ++cold_reads_refused_;
+      co_return td::Status::Error(ErrorCode::notready, "candidate database reads are busy");
+    }
+    if (tracked) {
+      state.payload_load_in_flight = true;
+    }
+    SCOPE_EXIT {
+      if (tracked) {
+        state.payload_load_in_flight = false;
+        auto awaiters = std::move(state.load_awaiters);
+        state.load_awaiters.clear();
+        for (auto& p : awaiters) {
+          p.set_value(td::Unit{});
+        }
       }
-      co_return false;
+    };
+    co_await acquire_cold_read();
+    SCOPE_EXIT {
+      release_cold_read();
+    };
+
+    // A store that completes while this read runs is newer than whatever the read returns.
+    const td::uint64 store_generation = state.store_generation;
+    auto contents_key = create_serialize_tl_object<tl::db_key_candidate>(id.to_tl());
+    ++db_payload_reads_;
+    auto data_r = co_await bus.db->get_latest(std::move(contents_key));
+    const bool superseded =
+        state.store_generation != store_generation || state.candidate_and_cert.candidate.has_value();
+    if (!data_r.has_value()) {
+      ++db_payload_read_misses_;
+      if (!superseded) {
+        revoke_durability(id, state, "is missing");
+      }
+      co_return state.candidate_and_cert.candidate.has_value();
     }
     auto data = std::move(*data_r);
+    const td::uint64 read_bytes = data.size();
+    cold_read_bytes_in_flight_ = saturating_add(cold_read_bytes_in_flight_, read_bytes);
+    cold_read_bytes_peak_ = std::max(cold_read_bytes_peak_, cold_read_bytes_in_flight_);
+    SCOPE_EXIT {
+      cold_read_bytes_in_flight_ = saturating_sub(cold_read_bytes_in_flight_, read_bytes);
+    };
     // Round 140 MEDIUM fix: validate that the deserialized
     // candidate's id matches the requested id, mirroring the
     // network-path gate at CandidateAndCert::from_tl above.
@@ -510,21 +889,32 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     // mismatch, turning a single bad DB record into a
     // remote-triggerable validator abort.  Now we deserialize
     // into a temporary, log-and-skip on either deserialize
-    // failure or id mismatch.  The candidate stays in
-    // candidate_in_db state but is not surfaced to to_tl
-    // until a fresh network/local store overwrites it.
+    // failure or id mismatch.  Such a record also revokes the
+    // entry's durability, so the candidate is written again
+    // once a network or local store supplies it.
     auto candidate_res = Candidate::deserialize(data, bus);
     if (candidate_res.is_error()) {
       LOG(WARNING) << "Simplex candidate-resolver: db record for " << id
                    << " failed to deserialize: " << candidate_res.error().message();
-      co_return false;
+      ++db_payload_read_invalid_;
+      if (!superseded) {
+        revoke_durability(id, state, "does not decode");
+      }
+      co_return state.candidate_and_cert.candidate.has_value();
     }
     auto candidate = candidate_res.move_as_ok();
     if (candidate->id != id) {
       LOG(WARNING) << "Simplex candidate-resolver: db record for " << id
                    << " contains a candidate for a different id " << candidate->id
                    << " (refusing to surface mismatched bytes)";
-      co_return false;
+      ++db_payload_read_invalid_;
+      if (!superseded) {
+        revoke_durability(id, state, "holds another candidate");
+      }
+      co_return state.candidate_and_cert.candidate.has_value();
+    }
+    if (state.candidate_and_cert.candidate.has_value()) {
+      co_return true;
     }
     state.candidate_and_cert.candidate = std::move(candidate);
     state.candidate_in_db = true;
@@ -634,7 +1024,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   td::actor::Task<> resolve_candidate_inner(CandidateId id, CandidateState &state) {
     auto &bus = *owning_bus();
 
-    co_await try_load_candidate_data_from_db(id, state);
+    co_await try_load_candidate_data_from_db(id, state, /*tracked=*/true, /*remote=*/false);
     co_await try_load_notar_cert_from_db_or_bootstrap(id, state);
 
     const size_t overlay_member_count =
@@ -724,12 +1114,21 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     }
 
     auto contents_key = create_serialize_tl_object<tl::db_key_candidate>(id.to_tl());
-    co_await bus.db->set(std::move(contents_key), (*candidate)->serialize());
-
-    auto index_key = create_serialize_tl_object<tl::db_key_candidateResolver_candidateInfo>(id.to_tl());
-    co_await bus.db->set(std::move(index_key), td::BufferSlice());
+    auto contents = co_await bus.db->set(std::move(contents_key), (*candidate)->serialize()).wrap();
+    if (contents.is_ok()) {
+      auto index_key = create_serialize_tl_object<tl::db_key_candidateResolver_candidateInfo>(id.to_tl());
+      contents = co_await bus.db->set(std::move(index_key), td::BufferSlice()).wrap();
+    }
+    if (contents.is_error()) {
+      // The payload is not durable, so it stays in memory outside the cache and is reported
+      // as non-durable.
+      LOG(WARNING) << "Simplex candidate-resolver: failed to persist candidate " << id
+                   << "; its payload stays in memory: " << contents.error();
+      co_return contents.move_as_error();
+    }
 
     state.candidate_stored = true;
+    ++state.store_generation;
     co_return td::Unit{};
   }
 };

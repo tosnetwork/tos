@@ -165,6 +165,81 @@ struct QueryResolverTrackedStateCount {
   std::string contents_to_string() const;
 };
 
+// Read-only observability of the candidate resolver's payload memory, in the classes it is
+// bounded by. The node-wide fields are the allowance all resolvers of the process share; the
+// rest belong to the queried resolver. With `id`, the last fields describe that entry.
+struct QueryCandidatePayloadCache {
+  struct Result {
+    // Node-wide: the allowance, what is charged against it (cached and retired payloads
+    // together, never more than the limit), and the retired part alone.
+    td::uint64 node_limit = 0;
+    td::uint64 node_charged_bytes = 0;
+    td::uint64 node_charged_peak = 0;
+    td::uint64 node_retired_bytes = 0;
+    size_t node_retired_payloads = 0;
+    td::uint64 node_refused_reservations = 0;
+    td::uint64 node_accounting_errors = 0;
+
+    // This resolver's cached finalized payloads.
+    size_t entries = 0;
+    size_t cached_payloads = 0;
+    td::uint64 cached_bytes = 0;
+    td::uint64 admitted_payloads = 0;
+    td::uint64 admitted_bytes = 0;
+    td::uint64 dropped_payloads = 0;
+    td::uint64 not_cached_payloads = 0;
+
+    // Payloads this resolver holds outside the cache, uncharged, by why they are held: an
+    // operation or waiter uses them, they are not durable, or their slot is not finalized.
+    td::uint64 pinned_bytes = 0;
+    td::uint64 nondurable_bytes = 0;
+    td::uint64 nonfinalized_bytes = 0;
+
+    // Database reads of payloads and what they found.
+    td::uint64 db_payload_reads = 0;
+    td::uint64 db_payload_read_misses = 0;
+    td::uint64 db_payload_read_invalid = 0;
+    td::uint64 coalesced_reads = 0;
+    td::uint64 durability_revocations = 0;
+
+    // Cold reads: database payload reads in flight, readers waiting for a read slot, and the
+    // bytes those reads hold. Remote readers beyond the waiting limit are refused.
+    size_t cold_read_concurrency = 0;
+    size_t cold_read_max_remote_waiters = 0;
+    size_t cold_reads_in_flight = 0;
+    size_t cold_reads_in_flight_peak = 0;
+    size_t cold_read_waiters = 0;
+    size_t cold_read_waiters_peak = 0;
+    td::uint64 cold_read_bytes_in_flight = 0;
+    td::uint64 cold_read_bytes_peak = 0;
+    td::uint64 cold_reads_refused = 0;
+
+    bool id_tracked = false;
+    bool id_payload_resident = false;
+    bool id_payload_cached = false;
+    bool id_durable = false;
+  };
+
+  using ReturnType = Result;
+
+  std::optional<CandidateId> id;
+
+  std::string contents_to_string() const;
+};
+
+// Read-only observability: candidate references Pool keeps for QueryValidatorGroupInfo, in
+// total and in slots it has already seen finalized.
+struct QueryPoolReceivedCandidates {
+  struct Result {
+    size_t total = 0;
+    size_t in_finalized_slots = 0;
+  };
+
+  using ReturnType = Result;
+
+  std::string contents_to_string() const;
+};
+
 // Read-only observability of what Consensus keeps to recover once a finalization backlog
 // clears: skip ranges whose timeout expired while behind, and votes Pool refused before
 // their intent. The sizes are what bounds that state; nothing here changes it.
@@ -309,11 +384,11 @@ struct QueryValidatorGroupInfo {
 class Bus : public consensus::Bus {
  public:
   using Parent = consensus::Bus;
-  using Events =
-      td::TypeList<BroadcastVote, PersistOwnVoteIntent, PersistOwnSignedVote, NotarizationObserved,
-                   FinalizationObserved, LeaderWindowObserved, WaitForParent, ResolveCandidate, StoreCandidate,
-                   ResolveState, SaveCertificate, QueryValidatorGroupInfo, QueryResolverTrackedStateCount,
-                   QueryFinalizationState, QueryVoteIngress, QueryConsensusRecoveryState>;
+  using Events = td::TypeList<BroadcastVote, PersistOwnVoteIntent, PersistOwnSignedVote, NotarizationObserved,
+                              FinalizationObserved, LeaderWindowObserved, WaitForParent, ResolveCandidate,
+                              StoreCandidate, ResolveState, SaveCertificate, QueryValidatorGroupInfo,
+                              QueryResolverTrackedStateCount, QueryFinalizationState, QueryVoteIngress,
+                              QueryConsensusRecoveryState, QueryCandidatePayloadCache, QueryPoolReceivedCandidates>;
 
   Bus() = default;
 
