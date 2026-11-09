@@ -502,6 +502,7 @@ class Msg:
     source: str | None = None
     destination: str | None = None
     bounced: bool = False
+    value: int | None = None  # nanotos carried by an internal message, when reported
 
 
 @dataclass(frozen=True)

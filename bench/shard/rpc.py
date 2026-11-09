@@ -36,7 +36,14 @@ class RpcError(Exception):
 
 
 class RateLimited(Exception):
-    """Every attempt was refused by the node's rate gate."""
+    """Every attempt was refused by the node's rate gate.
+
+    ``reason`` names the last refusal: ``"HTTP 429"`` or ``"-32005"``.
+    """
+
+    def __init__(self, message: str, reason: str = ""):
+        super().__init__(message)
+        self.reason = reason
 
 
 class Budget:
@@ -61,6 +68,11 @@ class Budget:
 
     def take(self) -> None:
         self._starts.append(self.clock())
+
+    def room(self) -> int:
+        """How many more requests fit now."""
+        self.delay()
+        return self.requests - len(self._starts)
 
 
 async def urllib_transport(url: str, body: bytes, timeout: float) -> tuple[int, bytes]:
@@ -93,7 +105,9 @@ class PacedRpc:
         transport: Transport = urllib_transport,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        budget: Budget | None = None,
     ):
+        """``budget`` shares another client's budget, for a second client of the same source."""
         if not 0 < share <= 1:
             raise ValueError("the budget share must be in (0, 1]")
         if type(attempts) is not int or attempts < 1:
@@ -103,7 +117,7 @@ class PacedRpc:
             raise ValueError("the share leaves no request in the budget")
         self.url, self.share, self.attempts, self.backoff = url, share, attempts, backoff
         self.timeout, self.transport, self.sleep = timeout, transport, sleep
-        self.budget = Budget(limit, window, clock)
+        self.budget = budget if budget is not None else Budget(limit, window, clock)
         self._lock = asyncio.Lock()
         self._id = 0
         self.sent = 0
@@ -118,6 +132,7 @@ class PacedRpc:
 
     async def call(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """The method's ``result``; raises RpcError on an error answer, RateLimited when refused."""
+        reason = ""
         for attempt in range(self.attempts):
             self._id += 1
             body = json.dumps(
@@ -136,6 +151,7 @@ class PacedRpc:
                 isinstance(error, dict) and error.get("code") == RATE_LIMITED_CODE
             )
             if refused:
+                reason = "HTTP 429" if status == 429 else str(RATE_LIMITED_CODE)
                 self.throttled += 1
                 if attempt + 1 < self.attempts:
                     await self.sleep(min(self.budget.window, self.backoff * 2**attempt))
@@ -143,7 +159,7 @@ class PacedRpc:
             if status != 200 or error is not None or "result" not in document:
                 raise RpcError(method, status, error if error is not None else raw[:200])
             return document["result"]
-        raise RateLimited(f"{method}: refused by the rate gate {self.attempts} times")
+        raise RateLimited(f"{method}: refused by the rate gate {self.attempts} times", reason)
 
     def stats(self) -> dict[str, Any]:
         return {

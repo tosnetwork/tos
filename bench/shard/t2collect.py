@@ -129,7 +129,9 @@ def parse_message(value: Any) -> Msg:
     source, destination = raw_address(value.get("source")), raw_address(value.get("destination"))
     if source is None or destination is None or type(value.get("bounced")) is not bool:
         return Msg(digest, "unknown")
-    return Msg(digest, "internal", source, destination, value["bounced"])
+    amount = value.get("value")
+    carried = int(amount) if isinstance(amount, str) and amount.isdigit() else None
+    return Msg(digest, "internal", source, destination, value["bounced"], carried)
 
 
 def parse_transaction(value: Any, block: BlockKey) -> Tx:
