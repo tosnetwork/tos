@@ -423,6 +423,11 @@ class RemoteRun(unittest.TestCase):
             b.decode(errors="replace") for b in written.values()
         ]
         texts += [b.decode() for b in node.bodies]
+        # JSON records again in one canonical layout, so a seed stored as a
+        # number list or in any other JSON shape is found whatever the indent.
+        for path, blob in written.items():
+            if path.suffix == ".json":
+                texts.append(json.dumps(json.loads(blob)))
         for form in secret_forms(TEST_SEED):
             for text in texts:
                 self.assertNotIn(form, text)
