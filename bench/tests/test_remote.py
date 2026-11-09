@@ -131,7 +131,9 @@ class Bound(unittest.TestCase):
         ):
             with self.assertRaises(ValueError, msg=bad):
                 remote.validate_caps(caps(**bad))
-        remote.validate_caps(caps(chains=255, forks=12, hops=remote.MAX_HOPS))
+        remote.validate_caps(caps(chains=254, forks=12, hops=remote.MAX_HOPS))
+        with self.assertRaises(ValueError):
+            remote.validate_caps(caps(chains=255))
 
 
 # ─── the wallet fee bound from hand-built ConfigParams ───────────────
@@ -418,9 +420,13 @@ class FakeNode:
         hop0: str = "",
         fee: int = NANO // 100,
         stall: bool = False,
+        launch: bool = True,
     ):
         self.lock = threading.Lock()
         self.fee, self.stall = fee, stall
+        # With launch=False the start is imported but launches no hop, as when its
+        # action phase fails.
+        self.launch = launch
         self.last_time = 0
         self.frozen_time: int | None = None
         self.hop0 = hop0
@@ -526,9 +532,18 @@ class FakeNode:
             "bounced": False,
         }
         external = {"hash": b64h("start external"), "kind": "external"}
+        hop = {
+            "hash": b64h("first hop"),
+            "kind": "internal",
+            "source": self.hop0,
+            "destination": self.hop0,
+            "bounced": False,
+        }
         self.txs[(0, self.mc + 1)] = [tx_json(self.wallet, 1, external, [start])]
-        self.txs[(0, self.mc + 2)] = [tx_json(self.hop0, 2, start, [])]
-        self.in_flight_until = self.mc + 2
+        self.txs[(0, self.mc + 2)] = [tx_json(self.hop0, 2, start, [hop] if self.launch else [])]
+        if self.launch:
+            self.txs[(0, self.mc + 3)] = [tx_json(self.hop0, 3, hop, [])]
+        self.in_flight_until = self.mc + (3 if self.launch else 2)
 
     def serve(self) -> tuple[http.server.ThreadingHTTPServer, str]:
         node = self
@@ -671,10 +686,12 @@ class RemoteRun(unittest.TestCase):
             server.server_close()
         self.assertEqual(len(node.sends), 2)
         self.assertEqual(record["t2_status"], "PASS", verdict)
-        # Counted by the chain walk: the funder's start message and its one import.
-        self.assertEqual(record["counts"]["run_owned_messages"], 1)
+        # Counted by the chain walk: the funder's start message, the hop it launched,
+        # and their imports.
+        self.assertEqual(record["counts"]["run_owned_messages"], 2)
         self.assertEqual(record["counts"]["delivered"]["entry"], 1)
-        self.assertEqual(record["counts"]["window_transactions"], 2)
+        self.assertEqual(record["counts"]["delivered"]["hop"], 1)
+        self.assertEqual(record["counts"]["window_transactions"], 3)
         # The masterchain blocks of the window are read too, for a funder there.
         self.assertTrue(any(wc == -1 for wc, _ in node.tx_reads))
         self.assertEqual(record["stranded"]["hop_accounts_total"], 8 * NANO)
@@ -832,6 +849,14 @@ class RemoteRun(unittest.TestCase):
         self.assertEqual(record["t2_status"], "INCONCLUSIVE")
         self.assertEqual(record["start_delivered"], 0)
         self.assertIn("start message", record["load_note"])
+
+    def test_a_start_that_launches_no_hop_is_inconclusive(self):
+        node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, self.hop0(), launch=False)
+        result, record = self.run_counted(node)
+        self.assertEqual(result.returncode, remote.INCONCLUSIVE, result.stderr[-2000:])
+        self.assertEqual(record["t2_status"], "INCONCLUSIVE")
+        self.assertEqual((record["start_delivered"], record["hops_delivered"]), (1, 0))
+        self.assertIn("launched no hop", record["load_note"])
 
     def test_an_undrained_closing_queue_exits_inconclusive(self):
         node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, self.hop0())

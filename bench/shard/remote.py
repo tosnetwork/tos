@@ -1157,17 +1157,29 @@ async def run_bounded(a: argparse.Namespace, caps: Caps, scratch: Path) -> int:
     # Send mode 3 lets the wallet skip a failing send, so a consumed nonce does not
     # prove the burst started: the start message itself must have been delivered.
     t2_status = result["status"]
-    start_delivered = result["conservation"]["stats"]["delivered"]["entry"]
+    stats = result["conservation"]["stats"]
+    start_delivered = stats["delivered"]["entry"]
+    hops_delivered = stats["delivered"]["hop"]
     load_note = None
     if start_delivered < 1 and t2_status == "PASS":
         t2_status = "INCONCLUSIVE"
         load_note = "the start message was not emitted and delivered inside the window"
+    elif hops_delivered < 1 and t2_status == "PASS":
+        # The start transaction ran but launched no chain, for example because its action
+        # phase failed: the window holds no load, so it measures nothing.
+        t2_status = "INCONCLUSIVE"
+        load_note = (
+            "the start message launched no hop "
+            f"({stats['aborted_transactions']} aborted, "
+            f"{stats['failed_action_phases']} failed action phases in the window)"
+        )
     after = await remote.balances(addresses)
     wallet_after, _ = await bench.state()
     attached = deploy_value + caps.load_funding
     record |= {
         "outcome": "COUNTED",
         "start_delivered": start_delivered,
+        "hops_delivered": hops_delivered,
         "load_note": load_note,
         "boundaries": {"opening": asdict(opening), "closing": asdict(closing)},
         "counts": window_counts(result),

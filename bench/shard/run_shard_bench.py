@@ -80,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--accounts", type=int, default=4096, help="hop accounts")
     p.add_argument(
-        "--chains", type=int, default=128, help="chains the start message launches (1..255)"
+        "--chains", type=int, default=128, help="chains the start message launches (1..254)"
     )
     p.add_argument("--forks", type=int, default=4, help="times each chain forks in two (0..12)")
     p.add_argument(
