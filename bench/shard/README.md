@@ -41,8 +41,15 @@ chains thinned out, and the run understates capacity.
 
 ```
 uv run python bench/tests/test_shard.py --build build
+cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --test shard_bench_hop_sandbox
 uv run python bench/shard/run_shard_bench.py --out /path/new-dir --split 2
 ```
+
+The Python tests cover the wire format and the accounting. The sandbox suite
+(`tosctl/src/node-control/contracts/tests/shard_bench_hop_sandbox.rs`) runs
+`hop.fc` through the executor with a real action phase and checks what each
+transaction emits. Every hop send ignores action errors, so it checks
+skipped actions and emitted messages, not only success.
 
 Run it once per `--split`, with everything else fixed. `--local 0.0` makes
 most hops cross a shard boundary (all but `1/2^split` of them), which
