@@ -279,28 +279,29 @@ async def read_all_transactions(
     return out
 
 
-async def queue_boundary(rpc: PacedRpc, lookback: int = 8) -> QueueBoundary:
-    """The outbound queue now, bound to the masterchain block whose shard tops it reports.
+async def queue_boundary(rpc: PacedRpc) -> QueueBoundary:
+    """The outbound queues now, bound to the masterchain block they were read at.
 
-    The queue sizes come from the node's latest masterchain state; the block
-    is found by matching the reported shard tops. A reading that matches no
-    recent block is unknown, not empty.
+    The node reports the queue of its masterchain state block first, under that
+    block's own id, and then the queue of each shard top of that state. The
+    masterchain id is used as the boundary; the reported basechain tops must be the
+    ones that block references. A reading that cannot be bound this way is unknown,
+    not empty.
     """
     sizes = await rpc.call("getOutMsgQueueSize")
     rows = [s for s in sizes.get("shards", []) if isinstance(s, dict)]
-    ids = {parse_block_id(s.get("id")) for s in rows}
+    ids = [parse_block_id(s.get("id")) for s in rows]
+    masterchain = [r for r in ids if r.workchain == -1]
+    if len(masterchain) != 1:
+        return QueueBoundary(None, None)
+    seqno = masterchain[0].seqno
     basechain = {r for r in ids if r.workchain == 0}
-    empty = all(int(s.get("size", -1)) == 0 for s in rows) and bool(rows)
-    info = await rpc.call("getMasterchainInfo")
-    last = parse_block_id(info.get("last")).seqno
-    for seqno in range(last, max(-1, last - lookback), -1):
-        shards = await rpc.call("getShards", {"seqno": seqno})
-        tops = {
-            parse_block_id(s) for s in shards.get("shards", []) if int(s.get("workchain", -1)) == 0
-        }
-        if tops == basechain:
-            return QueueBoundary(seqno, empty)
-    return QueueBoundary(None, None)
+    shards = await rpc.call("getShards", {"seqno": seqno})
+    tops = {parse_block_id(s) for s in shards.get("shards", []) if int(s.get("workchain", -1)) == 0}
+    if tops != basechain:
+        return QueueBoundary(None, None)
+    empty = all(int(s.get("size", -1)) == 0 for s in rows)
+    return QueueBoundary(seqno, empty)
 
 
 async def wait_empty_queue(rpc: PacedRpc, timeout: float, poll: float = 2.0) -> QueueBoundary:

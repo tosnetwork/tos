@@ -791,6 +791,87 @@ class ReadFailures(unittest.TestCase):
             self.assertEqual(result["boundary_blocks_unread"], [seqno])
 
 
+class Boundaries(unittest.TestCase):
+    def test_an_unread_closing_block_leaves_messages_pending_not_lost(self):
+        t, m = hop_run()
+        # One more hop, imported only in the last block, which only the closing
+        # masterchain block's tops reach.
+        late = msg(20, RUN[2], RUN[0])
+        t.txs[t.keys[6]][-1] = Tx(
+            t.txs[t.keys[6]][-1].hash,
+            RUN[2],
+            t.txs[t.keys[6]][-1].lt,
+            t.keys[6],
+            m["bounce"],
+            (late,),
+        )
+        t.n += 1
+        t.txs[t.keys[-1]].append(Tx(h("tx", t.n), RUN[0], t.n, t.keys[-1], late, ()))
+        blocks = {k: BlockTxs(tuple(v), True) for k, v in t.txs.items()}
+        complete = t2check.evaluate(
+            t.chain.mcs,
+            t.chain.blocks,
+            blocks,
+            RUN,
+            [FUNDER],
+            QueueBoundary(100, True),
+            QueueBoundary(104, True),
+            all_refs(t.chain),
+            finalized_mc=FINAL,
+        )
+        self.assertEqual(complete["status"], PASS, complete["conservation"])
+        out = t2check.evaluate(
+            t.chain.mcs[:-1],  # the closing masterchain block was not read
+            t.chain.blocks,
+            blocks,
+            RUN,
+            [FUNDER],
+            QueueBoundary(100, True),
+            QueueBoundary(104, True),
+            all_refs(t.chain),
+            finalized_mc=FINAL,
+        )
+        self.assertEqual(out["boundary_blocks_unread"], [104])
+        self.assertEqual(out["status"], INCONCLUSIVE)
+        self.assertEqual(out["conservation"]["stats"]["dropped"], 0)
+
+    class QueueNode:
+        """Answers getOutMsgQueueSize and getShards for one masterchain block."""
+
+        def __init__(self, rows: list[tuple[BlockRef, int]], tops: dict[int, list[BlockRef]]):
+            self.rows, self.tops = rows, tops
+
+        async def __call__(self, url: str, body: bytes, timeout: float) -> tuple[int, bytes]:
+            request = json.loads(body)
+            if request["method"] == "getOutMsgQueueSize":
+                result: Any = {
+                    "shards": [{"id": id_json(r), "size": size} for r, size in self.rows]
+                }
+            else:
+                seqno = request["params"]["seqno"]
+                result = {"shards": [id_json(t) for t in self.tops.get(seqno, [])]}
+            reply = {"jsonrpc": "2.0", "id": request["id"], "result": result}
+            return 200, json.dumps(reply).encode()
+
+    def boundary(self, rows: list[tuple[BlockRef, int]], tops: dict[int, list[BlockRef]]):
+        rpc = rpcmod.PacedRpc("http://n", 1.0, transport=self.QueueNode(rows, tops))
+        return asyncio.run(t2collect.queue_boundary(rpc))
+
+    def test_the_queue_is_bound_to_the_masterchain_block_it_was_read_at(self):
+        mc = BlockRef(-1, ROOT_SHARD, 101, h("mc", 101))
+        left, right = ref(LEFT, 7), ref(RIGHT, 7)
+        tops = {101: [left, right], 102: [left, right]}
+        got = self.boundary([(mc, 0), (left, 0), (right, 0)], tops)
+        self.assertEqual(got, QueueBoundary(101, True))
+        got = self.boundary([(mc, 0), (left, 3), (right, 0)], tops)
+        self.assertEqual(got, QueueBoundary(101, False))
+        # Tops that the reported masterchain block does not reference: unknown.
+        got = self.boundary([(mc, 0), (left, 0)], tops)
+        self.assertEqual(got, QueueBoundary(None, None))
+        # No masterchain row: the reading cannot be bound.
+        self.assertEqual(self.boundary([(left, 0), (right, 0)], tops), QueueBoundary(None, None))
+
+
 class Diagnostics(unittest.TestCase):
     def test_run_owned_balance_counts_outstanding_messages(self):
         t, m = hop_run()

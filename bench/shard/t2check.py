@@ -736,6 +736,13 @@ def evaluate(
     ]
     changes, layout = layout_changes(mcs)
     continuity = check_continuity(mcs, blocks, observed, max_blocks, finalized_mc=finalized_mc)
+    # Without its boundary block the window ends (or starts) somewhere else, so that
+    # boundary's queue reading says nothing about it: messages still in flight there
+    # must stay pending, never be reported as lost.
+    if opening.mc_seqno in missing:
+        opening = QueueBoundary(opening.mc_seqno, None)
+    if closing.mc_seqno in missing:
+        closing = QueueBoundary(closing.mc_seqno, None)
     conservation = check_conservation(
         continuity,
         txs,
