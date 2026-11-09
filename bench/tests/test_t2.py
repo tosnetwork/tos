@@ -75,12 +75,16 @@ class Chain:
 
 
 def split_then_merge() -> Chain:
-    """1 shard -> split into 2 -> merge back to 1, with a sibling block reached only by the merge."""
+    """1 shard -> split into 2 -> merge back to 1.
+
+    The last block before the split and one sibling block before the merge
+    are referenced by no masterchain block, so the walk reaches them only by
+    crossing the split and by following the merge's second predecessor.
+    """
     c = Chain()
     root = c.add(ROOT_SHARD, 10, [ref(ROOT_SHARD, 9)])
     c.mc(root)  # opening boundary
     r11 = c.run(ROOT_SHARD, root, 1)
-    c.mc(r11)
     left = c.add(LEFT, 12, [r11], after_split=True)
     right = c.add(RIGHT, 12, [r11], after_split=True)
     c.mc(left, right)
@@ -208,10 +212,10 @@ class Layout(unittest.TestCase):
         changes, verdict = t2check.layout_changes(c.mcs)
         self.assertEqual(verdict.status, PASS, verdict.failures)
         self.assertEqual([x.kind for x in changes], ["split", "merge"])
-        self.assertEqual([x.mc_seqno for x in changes], [102, 104])
+        self.assertEqual([x.mc_seqno for x in changes], [101, 103])
         self.assertEqual(changes[0].old, ("8000000000000000",))
         self.assertEqual(changes[0].new, ("4000000000000000", "c000000000000000"))
-        self.assertEqual(changes[1].gen_utime, 2104)
+        self.assertEqual(changes[1].gen_utime, 2103)
 
     def test_one_block_split_is_not_missed(self):
         c = Chain()
@@ -253,10 +257,10 @@ class Layout(unittest.TestCase):
         c = split_then_merge()
         node = RecordedNode(c)
         rpc = rpcmod.PacedRpc("http://n", 1.0, transport=node)
-        mcs = asyncio.run(t2collect.read_masterchain(rpc, 100, 105))
-        self.assertEqual([m.seqno for m in mcs], list(range(100, 106)))
+        mcs = asyncio.run(t2collect.read_masterchain(rpc, 100, 104))
+        self.assertEqual([m.seqno for m in mcs], list(range(100, 105)))
         self.assertEqual(mcs, c.mcs)
-        self.assertEqual(sorted(node.mc_reads), list(range(100, 106)))
+        self.assertEqual(sorted(node.mc_reads), list(range(100, 105)))
 
 
 # ─── block continuity ────────────────────────────────────────────────
@@ -287,12 +291,14 @@ class Continuity(unittest.TestCase):
         unreached = next(f for f in result.verdict.failures if "blocks" in f)["blocks"]
         self.assertEqual(unreached, [ref(RIGHT, 13).label()])
 
-    def test_walk_follows_both_merge_parents(self):
+    def test_walk_follows_both_merge_parents_and_crosses_the_split(self):
         # Guards the walk itself: the right sibling is reachable only through
-        # the merge block's second predecessor.
+        # the merge block's second predecessor, and the last unsplit block
+        # only through the split blocks' parent link.
         c = split_then_merge()
         result = t2check.check_continuity(c.mcs, c.blocks, all_refs(c))
         self.assertIn(ref(RIGHT, 13).key, result.reached)
+        self.assertIn(ref(ROOT_SHARD, 11).key, result.reached)
         self.assertEqual(result.verdict.stats["observed_unreached"], 0)
 
     def test_truncated_walk_is_inconclusive_not_failed(self):
@@ -382,7 +388,7 @@ class Traffic:
             RUN,
             [FUNDER],
             QueueBoundary(100, opening),
-            QueueBoundary(105, closing),
+            QueueBoundary(104, closing),
         )
 
 
@@ -487,7 +493,7 @@ class Conservation(unittest.TestCase):
             RUN,
             [FUNDER],
             QueueBoundary(100, True),
-            QueueBoundary(105, True),
+            QueueBoundary(104, True),
             all_refs(t.chain),
         )
         self.assertEqual(out["status"], PASS)
