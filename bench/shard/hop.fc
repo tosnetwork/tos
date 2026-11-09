@@ -12,12 +12,19 @@
 ;; Bodies:
 ;;   deploy#64706c79 lo:uint32 hi:uint32
 ;;   start#73746172  chains:uint8 hop_params
-;;   hop#686f7031    hop_params
+;;   hop#686f7031    from:uint32 hop_params
 ;;   hop_params = remaining:uint32 forks:uint8 local:uint16 depth:uint8
-;;                deadline:uint32 accounts:uint32
+;;                deadline:uint32 accounts:uint32 flags:uint8
+;;                payload:(Maybe ^Cell)
+;;
+;; flags select how much work a hop carries besides the forwarding itself:
+;;   bit 0  every hop carries the target's StateInit;
+;;   bit 1  every hop checks that its sender is the copy named by from.
+;; payload is forwarded unchanged with every hop and only adds message size.
+;; With flags 0 and no payload a hop is as light as this contract allows.
 ;;
 ;; The contract holds no value worth protecting: a hop spends only what its
-;; message brought, so nothing checks who sent it.
+;; message brought, so the sender check exists only as optional work.
 
 const op::deploy = 0x64706c79;
 const op::start = 0x73746172;
@@ -25,6 +32,11 @@ const op::hop = 0x686f7031;
 
 const err::bad_range = 101;
 const err::bad_params = 102;
+const err::bad_sender = 103;
+
+const flag::with_init = 1;
+const flag::verify_sender = 2;
+const flag::all = 3;
 
 ;; local is a probability scaled to 2^16: the chance that a hop must stay in
 ;; its sender's shard. A same-shard target is searched for this many times
@@ -97,11 +109,13 @@ int next_hop(int local, int depth, int accounts) impure inline {
   return next;
 }
 
-cell hop_body(int remaining, int forks, int local, int depth, int deadline, int accounts) inline {
+cell hop_body(int remaining, int forks, int local, int depth, int deadline, int accounts,
+              int flags, cell payload) inline {
   return begin_cell()
-    .store_uint(op::hop, 32)
+    .store_uint(op::hop, 32).store_uint(self_id, 32)
     .store_uint(remaining, 32).store_uint(forks, 8).store_uint(local, 16)
     .store_uint(depth, 8).store_uint(deadline, 32).store_uint(accounts, 32)
+    .store_uint(flags, 8).store_maybe_ref(payload)
     .end_cell();
 }
 
@@ -127,6 +141,7 @@ cell hop_body(int remaining, int forks, int local, int depth, int deadline, int 
   if (cs~load_uint(4) & 1) {
     return ();  ;; bounced
   }
+  slice sender = cs~load_msg_addr();
   load_data();
   randomize_lt();
   int op = body~load_uint(32);
@@ -135,12 +150,14 @@ cell hop_body(int remaining, int forks, int local, int depth, int deadline, int 
     return ();
   }
   int chains = 1;
+  int from = -1;
   if (op == op::start) {
     chains = body~load_uint(8);
   } else {
     if (op != op::hop) {
       return ();
     }
+    from = body~load_uint(32);
   }
   int remaining = body~load_uint(32);
   int forks = body~load_uint(8);
@@ -148,30 +165,38 @@ cell hop_body(int remaining, int forks, int local, int depth, int deadline, int 
   int depth = body~load_uint(8);
   int deadline = body~load_uint(32);
   int accounts = body~load_uint(32);
-  throw_unless(err::bad_params, (chains > 0) & (accounts > 0) & (depth <= 60) & (local <= local_base));
+  int flags = body~load_uint(8);
+  cell payload = body~load_maybe_ref();
+  throw_unless(err::bad_params, (chains > 0) & (accounts > 0) & (depth <= 60) & (local <= local_base)
+                                & ((flags & ~ flag::all) == 0));
+  if ((from >= 0) & (flags & flag::verify_sender)) {
+    (int sender_wc, int sender_hash) = parse_std_addr(sender);
+    throw_unless(err::bad_sender, (sender_wc == 0) & (sender_hash == cell_hash(state_init(from))));
+  }
   if ((remaining == 0) | (now() > deadline)) {
     return ();  ;; the chain ends; its value stays here
   }
+  int with_init? = (flags & flag::with_init) != 0;
   ;; Keep this copy's balance as it was: everything sent below comes out of
   ;; the incoming value, net of this transaction's fees.
   raw_reserve(my_balance - msg_value, 2);
   if (op == op::start) {
     ;; Every chain starts at a uniformly random copy.
-    cell first = hop_body(remaining, forks, local, depth, deadline, accounts);
+    cell first = hop_body(remaining, forks, local, depth, deadline, accounts, flags, payload);
     int share = msg_value / chains;
     repeat (chains - 1) {
-      send_to(random() % accounts, false, first, share, mode::share);
+      send_to(random() % accounts, with_init?, first, share, mode::share);
     }
-    send_to(random() % accounts, false, first, 0, mode::rest);
+    send_to(random() % accounts, with_init?, first, 0, mode::rest);
     return ();
   }
   remaining -= 1;
   if (forks > 0) {
-    cell child = hop_body(remaining, forks - 1, local, depth, deadline, accounts);
-    send_to(next_hop(local, depth, accounts), false, child, msg_value / 2, mode::share);
-    send_to(next_hop(local, depth, accounts), false, child, 0, mode::rest);
+    cell child = hop_body(remaining, forks - 1, local, depth, deadline, accounts, flags, payload);
+    send_to(next_hop(local, depth, accounts), with_init?, child, msg_value / 2, mode::share);
+    send_to(next_hop(local, depth, accounts), with_init?, child, 0, mode::rest);
   } else {
-    cell next = hop_body(remaining, 0, local, depth, deadline, accounts);
-    send_to(next_hop(local, depth, accounts), false, next, 0, mode::rest);
+    cell next = hop_body(remaining, 0, local, depth, deadline, accounts, flags, payload);
+    send_to(next_hop(local, depth, accounts), with_init?, next, 0, mode::rest);
   }
 }

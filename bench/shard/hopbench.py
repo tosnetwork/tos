@@ -27,6 +27,13 @@ OP_HOP = 0x686F7031
 LOCAL_BASE = 65536
 MAX_CHAINS = 255
 MAX_DEPTH = 60
+# Hop flags (hop.fc): carry the target's StateInit; check the sender's address.
+FLAG_WITH_INIT = 1
+FLAG_VERIFY_SENDER = 2
+FLAG_ALL = FLAG_WITH_INIT | FLAG_VERIFY_SENDER
+# A payload rides in its own cell chain; 127 bytes per cell, up to 4 KiB.
+PAYLOAD_CELL_BYTES = 127
+MAX_PAYLOAD = 4096
 U64 = (1 << 64) - 1
 
 
@@ -95,8 +102,29 @@ class HopFamily:
         return [self.address(i) for i in range(self.accounts)]
 
 
+def payload_cell(size: int) -> Cell | None:
+    """``size`` deterministic bytes as a chain of cells, or no payload for 0."""
+    if type(size) is not int or not 0 <= size <= MAX_PAYLOAD:
+        raise ValueError(f"payload size must be in [0, {MAX_PAYLOAD}] bytes")
+    if size == 0:
+        return None
+    data = (hashlib.sha256(b"hop payload").digest() * (size // 32 + 1))[:size]
+    parts = [data[i : i + PAYLOAD_CELL_BYTES] for i in range(0, size, PAYLOAD_CELL_BYTES)]
+    tail = Builder().store_bytes(parts[-1]).end_cell()
+    for part in reversed(parts[:-1]):
+        tail = Builder().store_bytes(part).store_ref(tail).end_cell()
+    return tail
+
+
 def hop_params(
-    remaining: int, forks: int, local: int, depth: int, deadline: int, accounts: int
+    remaining: int,
+    forks: int,
+    local: int,
+    depth: int,
+    deadline: int,
+    accounts: int,
+    flags: int = 0,
+    payload: Cell | None = None,
 ) -> Builder:
     if not 0 <= local <= LOCAL_BASE - 1:
         raise ValueError("local is a probability scaled to 2^16 - 1")
@@ -104,6 +132,8 @@ def hop_params(
         raise ValueError(f"depth must be in [0, {MAX_DEPTH}]")
     if accounts < 1:
         raise ValueError("accounts must be positive")
+    if type(flags) is not int or flags & ~FLAG_ALL:
+        raise ValueError("flags may only combine FLAG_WITH_INIT and FLAG_VERIFY_SENDER")
     return (
         Builder()
         .store_uint(_uint(remaining, 32, "remaining"), 32)
@@ -112,6 +142,8 @@ def hop_params(
         .store_uint(depth, 8)
         .store_uint(_uint(deadline, 32, "deadline"), 32)
         .store_uint(_uint(accounts, 32, "accounts"), 32)
+        .store_uint(flags, 8)
+        .store_maybe_ref(payload)
     )
 
 
@@ -128,11 +160,19 @@ def deploy_body(lo: int, hi: int) -> Cell:
 
 
 def start_body(
-    chains: int, remaining: int, forks: int, local: int, depth: int, deadline: int, accounts: int
+    chains: int,
+    remaining: int,
+    forks: int,
+    local: int,
+    depth: int,
+    deadline: int,
+    accounts: int,
+    flags: int = 0,
+    payload: Cell | None = None,
 ) -> Cell:
     if not 1 <= chains <= MAX_CHAINS:
         raise ValueError(f"chains must be in [1, {MAX_CHAINS}]")
-    params = hop_params(remaining, forks, local, depth, deadline, accounts)
+    params = hop_params(remaining, forks, local, depth, deadline, accounts, flags, payload)
     return (
         Builder()
         .store_uint(OP_START, 32)

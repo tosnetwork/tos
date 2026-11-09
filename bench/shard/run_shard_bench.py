@@ -81,6 +81,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--account-funding", type=float, default=1.0, help="TOS kept by each account")
     p.add_argument("--load-funding", type=float, default=200000.0, help="TOS the chains spend")
     p.add_argument("--hops", type=int, default=4_000_000_000, help="hop budget of each chain")
+    p.add_argument(
+        "--with-init",
+        action="store_true",
+        help="every hop carries its target's StateInit (larger messages)",
+    )
+    p.add_argument(
+        "--verify-sender",
+        action="store_true",
+        help="every hop recomputes its sender's address and checks it (more gas)",
+    )
+    p.add_argument(
+        "--payload",
+        type=int,
+        default=0,
+        help=f"bytes every hop forwards unchanged (0..{hopbench.MAX_PAYLOAD})",
+    )
     p.add_argument("--block-limits", choices=("production", "dev"), default="production")
     p.add_argument("--block-limit-mul", type=int, default=1)
     p.add_argument("--shard-wait", type=int, default=900, help="seconds to wait for the split")
@@ -103,7 +119,12 @@ def parse_args() -> argparse.Namespace:
         p.error("funding must be positive")
     if a.block_limits == "production" and a.block_limit_mul != 1:
         p.error("--block-limit-mul applies only to --block-limits dev")
+    if not 0 <= a.payload <= hopbench.MAX_PAYLOAD:
+        p.error(f"--payload must be in [0, {hopbench.MAX_PAYLOAD}]")
     a.local_scaled = hopbench.local_scaled(a.local)
+    a.flags = (hopbench.FLAG_WITH_INIT if a.with_init else 0) | (
+        hopbench.FLAG_VERIFY_SENDER if a.verify_sender else 0
+    )
     return a
 
 
@@ -201,9 +222,22 @@ async def wait_split(scanner: ShardScanner, split: int, timeout: float) -> list[
     raise RuntimeError(f"the basechain did not reach {want} shards within {timeout:g}s")
 
 
-async def chain_now(pool: chain.ClientPool) -> int:
-    info = await pool.call("get_masterchain_info")
-    return int((await pool.call("get_block_header", info.last)).gen_utime)
+async def chain_now(pool: chain.ClientPool, attempts: int = 20) -> int:
+    """The latest masterchain block's time, read from one liteserver.
+
+    Both reads go to the same connection: another node may not have applied
+    the block yet and would answer LITE_SERVER_NOTREADY.
+    """
+    client = pool.pick()
+    for attempt in range(attempts):
+        try:
+            info = await client.call("get_masterchain_info")
+            return int((await client.call("get_block_header", info.last)).gen_utime)
+        except Exception as error:
+            if "LITE_SERVER_NOTREADY" not in str(error) or attempt + 1 == attempts:
+                raise
+            await asyncio.sleep(0.25)
+    raise AssertionError("unreachable")
 
 
 async def send_from_genesis(main, message, what: str, timeout: float = 120) -> None:
@@ -451,7 +485,15 @@ async def main(a: argparse.Namespace) -> int:
                     addresses[0],
                     load_value,
                     body=hopbench.start_body(
-                        a.chains, a.hops, a.forks, a.local_scaled, a.split, deadline, a.accounts
+                        a.chains,
+                        a.hops,
+                        a.forks,
+                        a.local_scaled,
+                        a.split,
+                        deadline,
+                        a.accounts,
+                        a.flags,
+                        hopbench.payload_cell(a.payload),
                     ),
                 ),
                 "start",
@@ -497,7 +539,11 @@ async def main(a: argparse.Namespace) -> int:
             tail = hopbench.tail_ratio(scanner.blocks, lo, hi)
             report = {
                 "scope": "LOCAL_ENGINEERING_EVIDENCE_ONLY: one host, every validator runs every shard",
-                "workload": "hop chains between bench/shard/hop.fc copies; internal messages only",
+                "workload": (
+                    "hop chains between bench/shard/hop.fc copies; internal messages only; "
+                    f"StateInit on every hop: {a.with_init}, sender check: {a.verify_sender}, "
+                    f"payload: {a.payload} bytes"
+                ),
                 "source_commit": commit,
                 "contract_code_hash": code.hash.hex(),
                 "host": {
@@ -518,6 +564,9 @@ async def main(a: argparse.Namespace) -> int:
                     "block_limits": a.block_limits,
                     "block_limit_mul": a.block_limit_mul,
                     "load_funding_tos": a.load_funding,
+                    "with_init": a.with_init,
+                    "verify_sender": a.verify_sender,
+                    "payload_bytes": a.payload,
                 },
                 "accounts_per_shard": placement,
                 "split_seconds": split_seconds,

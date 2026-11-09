@@ -48,6 +48,27 @@ Run it once per `--split`, with everything else fixed. `--local 0.0` makes
 most hops cross a shard boundary (all but `1/2^split` of them), which
 measures the cost of cross-shard delivery against `--local 1.0`.
 
+### Hop weight
+
+By default a hop is as light as the contract allows: accounts are deployed
+up front, so a hop carries no StateInit, and nothing checks who sent it.
+Three switches add per-hop work, each on its own or together:
+
+| Switch | Each hop then also |
+|---|---|
+| `--with-init` | carries the target's StateInit (code and data), so messages and blocks grow |
+| `--verify-sender` | rebuilds the StateInit of the sender it names and checks the sender's address against it, which costs gas |
+| `--payload N` | forwards N bytes unchanged in a cell chain, which adds message size only |
+
+With `--with-init --verify-sender` a hop does what a self-deploying,
+sender-checking contract does on every message. The light default isolates
+the shard question; the heavier settings show how much of the per-shard rate
+a message's own size and execution take. Every run records the switches in
+`results.json`.
+
+`--validators 1` runs a single validator, so one node, rather than four
+nodes sharing the host, carries every shard.
+
 Outputs under `--out`: `results.json` (parameters, chain config snapshot,
 per-shard summary) and `blocks.csv` (one row per window block).
 

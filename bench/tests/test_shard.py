@@ -70,7 +70,31 @@ class Bodies(unittest.TestCase):
             [s.load_uint(n) for n in (8, 32, 8, 16, 8, 32, 32)],
             [255, 7, 3, 65535, 2, 1_800_000_000, 4096],
         )
-        self.assertEqual(len(body.bits), 32 + 8 + 32 + 8 + 16 + 8 + 32 + 32)
+        self.assertEqual(s.load_uint(8), 0)  # flags
+        self.assertIsNone(s.load_maybe_ref())  # no payload
+        self.assertEqual(len(body.bits), 32 + 8 + 32 + 8 + 16 + 8 + 32 + 32 + 8 + 1)
+        self.assertEqual(len(body.refs), 0)
+
+    def test_start_body_with_flags_and_payload(self):
+        payload = hopbench.payload_cell(300)
+        flags = hopbench.FLAG_WITH_INIT | hopbench.FLAG_VERIFY_SENDER
+        s = hopbench.start_body(1, 2, 0, 0, 0, 3, 4, flags, payload).begin_parse()
+        s.skip_bits(32 + 8 + 32 + 8 + 16 + 8 + 32 + 32)
+        self.assertEqual(s.load_uint(8), 3)
+        self.assertEqual(s.load_maybe_ref().hash, payload.hash)
+
+    def test_payload_cells(self):
+        self.assertIsNone(hopbench.payload_cell(0))
+        for size in (1, 127, 128, 300, hopbench.MAX_PAYLOAD):
+            cell, total = hopbench.payload_cell(size), 0
+            while cell is not None:
+                self.assertLessEqual(len(cell.bits), 8 * hopbench.PAYLOAD_CELL_BYTES)
+                total += len(cell.bits) // 8
+                cell = cell.refs[0] if cell.refs else None
+            self.assertEqual(total, size)
+        for bad in (-1, hopbench.MAX_PAYLOAD + 1):
+            with self.assertRaises(ValueError):
+                hopbench.payload_cell(bad)
 
     def test_deploy_body_layout(self):
         s = hopbench.deploy_body(0, 4096).begin_parse()
@@ -88,6 +112,7 @@ class Bodies(unittest.TestCase):
             lambda: hopbench.start_body(1, 1, 0, 0, 0, 1 << 32, 2),
             lambda: hopbench.start_body(1, 1 << 32, 0, 0, 0, 1, 2),
             lambda: hopbench.deploy_body(5, 5),
+            lambda: hopbench.start_body(1, 1, 0, 0, 0, 1, 2, flags=4),
         ):
             with self.assertRaises(ValueError):
                 bad()
