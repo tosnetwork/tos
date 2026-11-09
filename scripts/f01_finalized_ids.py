@@ -50,21 +50,18 @@ def rpc_block_id(value: dict) -> tuple[int, str, int, str, str]:
     return workchain, "8000000000000000", height, root.hex(), file_hash.hex()
 
 
-def raw_header_facts(raw_rows: dict) -> dict:
-    """Key-block facts from every retained raw masterchain header, validated first.
+def names_predecessor(header: dict, block_id: tuple) -> bool:
+    previous = header.get("prev_blocks")
+    return (isinstance(previous, list) and len(previous) == 1
+            and rpc_block_id(previous[0]) == block_id)
 
-    Each header's ID must be the requested height. ``is_key_block``, when present,
-    must be a strict boolean and agree across every answer for that height, on every
-    node; ``prev_key_block_seqno``, when present, must be an integer below the
-    height. Repeated answers for one node and height must carry one ID.
 
-    Returns the heights whose headers say they are key blocks (``key``) and every
-    height a header names as its preceding key block (``named``). A named height is
-    classified as a key block; that alone does not prove its full ID.
-    """
+def raw_header_facts(raw_rows: dict, nodes: dict) -> dict:
+    """Derive coverage exceptions from agreeing headers bound to all four native logs."""
     flags: dict[int, bool] = {}
-    ids: dict[tuple[str, int], tuple] = {}
-    named: set[int] = set()
+    preceding: dict[int, int] = {}
+    ids: dict[int, tuple] = {}
+    headers: dict[int, dict[str, list[dict]]] = {}
     for (name, method, height), responses in raw_rows.items():
         if method != "getBlockHeader":
             continue
@@ -73,8 +70,9 @@ def raw_header_facts(raw_rows: dict) -> dict:
             block_id = rpc_block_id(result.get("id"))
             if block_id[2] != height:
                 raise ValueError("F01 raw header ID is not the requested height")
-            if ids.setdefault((name, height), block_id) != block_id:
-                raise ValueError("F01 raw headers disagree on one node's block ID")
+            if ids.setdefault(height, block_id) != block_id:
+                raise ValueError(f"F01 raw header differs: validators disagree on the full block ID at {height}")
+            headers.setdefault(height, {}).setdefault(name, []).append(result)
             if "is_key_block" in result:
                 flag = result["is_key_block"]
                 if type(flag) is not bool:
@@ -85,12 +83,42 @@ def raw_header_facts(raw_rows: dict) -> dict:
                 previous = result["prev_key_block_seqno"]
                 if type(previous) is not int or not 0 <= previous < height:
                     raise ValueError("F01 raw header prev_key_block_seqno is invalid")
-                named.add(previous)
-    key = {height for height, flag in flags.items() if flag}
-    for height in named:
-        if flags.get(height) is False:
+                if preceding.setdefault(height, previous) != previous:
+                    raise ValueError("F01 raw headers disagree on prev_key_block_seqno")
+    for previous in preceding.values():
+        if flags.get(previous) is False:
             raise ValueError("F01 raw header names a non-key block as a key block")
-    return {"key": key, "named": named, "flags": flags}
+
+    native = {}
+    for name, events in nodes.items():
+        for event in events:
+            if event["height"] in headers:
+                native.setdefault((name, event["height"]), set()).add(tuple(event["id"]))
+
+    def anchored(name, height):
+        marked = native.get((name, height))
+        if marked:
+            return marked == {ids[height]}
+        successor = headers.get(height + 1, {}).get(name, [])
+        return (all(row.get("is_key_block") is True for row in headers[height][name])
+                and bool(successor) and native.get((name, height + 1)) == {ids[height + 1]}
+                and all(names_predecessor(row, ids[height]) for row in successor))
+
+    key, named = set(), set()
+    for height, by_node in headers.items():
+        if by_node.keys() != nodes.keys() or not all(anchored(name, height) for name in nodes):
+            continue
+        answers = [row for rows in by_node.values() for row in rows]
+        if all(row.get("is_key_block") is True for row in answers):
+            key.add(height)
+        if all("prev_key_block_seqno" in row for row in answers):
+            named.add(preceding[height])
+    known_keys = sorted(key | named)
+    for height, previous in preceding.items():
+        index = bisect_left(known_keys, height)
+        if index and previous < known_keys[index - 1]:
+            raise ValueError("F01 raw header prev_key_block_seqno skips a known key block")
+    return {"key": key, "named": named}
 
 
 def rpc_config34_hash(response: dict) -> str:
@@ -176,7 +204,7 @@ def verify_capture(manifest_path: Path, nodes: dict[str, list[dict]],
             raise ValueError("F01 retained raw RPC returned an error")
         key = (name, method, int(params["seqno"]))
         raw_rows.setdefault(key, []).append(response)
-    facts = raw_header_facts(raw_rows)
+    facts = raw_header_facts(raw_rows, nodes)
     h_proven_by = {}
     for name, height in expected_pairs:
         observation = indexed[(name, height)]
@@ -202,15 +230,13 @@ def verify_capture(manifest_path: Path, nodes: dict[str, list[dict]],
             # proven by its successor: this node natively finalized H+1 (checked as
             # a strict H+1 pair), and every retained raw H+1 header of this node
             # names exactly H's full ID as its only predecessor.
-            if facts["flags"].get(height) is not True:
+            if not all(row["result"].get("is_key_block") is True for row in header_rows):
                 raise ValueError("F01 native marker absent at H, and H is not a raw key block")
             successors = raw_rows.get((name, "getBlockHeader", height + 1), [])
             if not successors:
                 raise ValueError("F01 raw transcript lacks the H+1 header for successor proof")
             for row in successors:
-                previous = row["result"].get("prev_blocks")
-                if (not isinstance(previous, list) or len(previous) != 1
-                        or rpc_block_id(previous[0]) != observed_id):
+                if not names_predecessor(row["result"], observed_id):
                     raise ValueError("F01 raw H+1 header does not name H's exact ID as predecessor")
             h_proven_by[name] = "successor_prev"
         else:
