@@ -1379,16 +1379,6 @@ void ValidatorManagerImpl::run_ext_query(adnl::AdnlNodeIdShort source, td::Buffe
     wait = E.move_as_ok();
   }
 
-  if (data.size() < sizeof(td::int32)) {
-    promise.set_error(td::Status::Error(ErrorCode::protoviolation, "liteserver query has no function tag"));
-    return;
-  }
-  auto request_id = td::as<td::int32>(data.as_slice().data());
-  if (!lite_server_admission_.check_rate(request_id, data.size())) {
-    promise.set_error(td::Status::Error(ErrorCode::notready, "liteserver admission limit exceeded"));
-    return;
-  }
-
   td::optional<PublicKeyHash> source_peer;
   if (!source.is_zero()) {
     source_peer = source.pubkey_hash();
@@ -1419,10 +1409,6 @@ void ValidatorManagerImpl::run_ext_query(adnl::AdnlNodeIdShort source, td::Buffe
 
 void ValidatorManagerImpl::execute_ext_query(td::optional<PublicKeyHash> source_peer, td::BufferSlice data,
                                              td::Promise<td::BufferSlice> promise) {
-  if (!lite_server_admission_.try_acquire_execution()) {
-    promise.set_error(td::Status::Error(ErrorCode::notready, "liteserver execution limit exceeded"));
-    return;
-  }
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         td::actor::send_closure(SelfId, &ValidatorManagerImpl::finish_ext_query, std::move(R), std::move(promise));
@@ -1431,7 +1417,6 @@ void ValidatorManagerImpl::execute_ext_query(td::optional<PublicKeyHash> source_
 }
 
 void ValidatorManagerImpl::finish_ext_query(td::Result<td::BufferSlice> result, td::Promise<td::BufferSlice> promise) {
-  lite_server_admission_.release();
   td::BufferSlice data;
   if (result.is_error()) {
     auto status = result.move_as_error();

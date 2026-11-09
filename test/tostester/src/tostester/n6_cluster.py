@@ -31,13 +31,6 @@ SUSTAINED_SESSION_LOG_FLUSH_SECONDS = 5.1
 # the underlying error appended verbatim (ToslibClient: Internal("get last block failed ")).
 LITE_LAST_BLOCK_SYNC_FAILED = "INTERNAL: get last block failed "
 LITE_TRANSPORT_FAILURE = "LITE_SERVER_NETWORK"
-# Each liteserver connection admits a bounded number of queries per window and silently
-# drops the rest (AdnlInboundConnection::process_packet). The budget is read from that
-# declaration so an observer never paces against a copy that has drifted from the server.
-LITE_CONNECTION_LIMITS_SOURCE = Path("adnl/adnl-ext-server.hpp")
-LITE_CONNECTION_LIMITS = re.compile(
-    r"ExtConnectionQueryLimits\s+query_limits_\{\s*([0-9.]+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*\}"
-)
 # A lookup_block is lookupBlockWithProof plus getBlockProof, and toslib may first refresh
 # its last block with one getMasterchainInfo; a height poll is one getMasterchainInfo.
 LITE_QUERIES_PER_LOOKUP = 3
@@ -340,35 +333,20 @@ class LiteConnectionBudget:
     max_inflight: int
 
 
-def lite_connection_budget(source_dir: Path | None = None) -> LiteConnectionBudget:
-    root = source_dir if source_dir is not None else Path(__file__).resolve().parents[4]
-    path = root / LITE_CONNECTION_LIMITS_SOURCE
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as error:
-        raise RuntimeError(
-            f"N6_LITE_BUDGET_FAILURE: cannot read the liteserver connection limits: {error}"
-        ) from error
-    declarations = LITE_CONNECTION_LIMITS.findall(text)
-    if len(declarations) != 1:
-        raise RuntimeError(
-            "N6_LITE_BUDGET_FAILURE: expected exactly one per-connection query limit in "
-            f"{path}, found {len(declarations)}"
-        )
-    window, per_window, inflight = declarations[0]
-    budget = LiteConnectionBudget(float(window), int(per_window), int(inflight))
-    if (
-        not math.isfinite(budget.window_seconds)
-        or budget.window_seconds <= 0
-        or budget.max_queries_per_window < 2 * LITE_QUERIES_PER_LOOKUP
-        or budget.max_inflight < LITE_QUERIES_PER_LOOKUP
-    ):
-        raise RuntimeError(f"N6_LITE_BUDGET_FAILURE: unusable per-connection limits {budget}")
-    return budget
+# The liteserver sets no per-connection query window of its own, so the observer paces
+# itself: it keeps the query load it has always had, half of 64 queries per second on each
+# connection, leaving the rest for toslib's background refreshes and retries.
+LITE_OBSERVER_BUDGET = LiteConnectionBudget(
+    window_seconds=1.0, max_queries_per_window=64, max_inflight=32
+)
+
+
+def lite_connection_budget() -> LiteConnectionBudget:
+    return LITE_OBSERVER_BUDGET
 
 
 class LiteQueryPacer:
-    """Keeps an observer inside half of each liteserver connection's admission budget.
+    """Keeps an observer inside half of its own per-connection query budget.
 
     Every paced call queries each client once, and each client owns its own connection, so
     one sliding window bounds every connection. The other half of the budget is headroom for

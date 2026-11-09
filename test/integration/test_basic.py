@@ -130,14 +130,14 @@ async def main(args: argparse.Namespace):
             ),
             block_id_text(network.zerostate.as_block()),
             simplex_validator_names=[node.name for node in nodes],
-            lite_budget=lite_connection_budget(repo_root),
+            lite_budget=lite_connection_budget(),
         )
         require(
             sustained["masterchain_blocks_produced"] >= args.sustain_blocks,
             "functional cluster did not sustain the requested number of blocks",
         )
-        # The observer stays inside the Lite admission budget, so any refused query means
-        # the test itself overloaded the server; the check fails whether or not it was answered.
+        # The server refuses a query only on a handler error or an oversized answer, so any
+        # refused query means something failed; the check fails whether or not it was answered.
         admission_drops = lite_admission_drop_warnings({node.name: node.log_path for node in nodes})
         require(
             not any(admission_drops.values()),

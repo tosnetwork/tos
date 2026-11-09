@@ -26,42 +26,10 @@ namespace tos {
 
 namespace adnl {
 
-namespace {
-
-ExtQueryFailureKind admission_failure_kind(ExtAdmission admission) {
-  switch (admission) {
-    case ExtAdmission::PerConnectionRateLimited:
-      return ExtQueryFailureKind::PerConnectionRateLimit;
-    case ExtAdmission::PerConnectionInflightLimited:
-      return ExtQueryFailureKind::PerConnectionInflightLimit;
-    case ExtAdmission::PerIpInflightLimited:
-      return ExtQueryFailureKind::PerIpInflightLimit;
-    case ExtAdmission::ServerInflightLimited:
-    case ExtAdmission::Acquired:
-      break;
-  }
-  return ExtQueryFailureKind::ServerInflightLimit;
-}
-
-}  // namespace
-
 td::Status AdnlInboundConnection::process_packet(td::BufferSlice data) {
   TRY_RESULT(f, fetch_tl_object<tos_api::adnl_message_query>(std::move(data), true));
-  auto connection_admission = query_limits_.try_acquire();
-  if (connection_admission != ExtAdmission::Acquired) {
-    // Nothing was acquired, so nothing is released.
-    return reject_or_close(f->query_id_,
-                           ExtQueryFailure{admission_failure_kind(connection_admission), td::Status::OK()});
-  }
-  auto server_admission = server_query_limits_->try_acquire(source_);
-  if (server_admission != ExtAdmission::Acquired) {
-    query_limits_.release();
-    return reject_or_close(f->query_id_, ExtQueryFailure{admission_failure_kind(server_admission), td::Status::OK()});
-  }
-  auto P =
-      td::PromiseCreator::lambda([SelfId = actor_id(this), query_id = f->query_id_, source = source_,
-                                  server_query_limits = server_query_limits_](td::Result<td::BufferSlice> R) mutable {
-        server_query_limits->release(source);
+  auto P = td::PromiseCreator::lambda(
+      [SelfId = actor_id(this), query_id = f->query_id_](td::Result<td::BufferSlice> R) mutable {
         td::actor::send_closure(SelfId, &AdnlInboundConnection::query_finished, query_id, std::move(R));
       });
   auto source_id = remote_id_.is_zero() ? anonymous_remote_id_ : remote_id_;
@@ -144,7 +112,6 @@ void AdnlInboundConnection::tear_down() {
 }
 
 void AdnlInboundConnection::query_finished(td::Bits256 query_id, td::Result<td::BufferSlice> result) {
-  query_limits_.release();
   if (closing()) {
     // A refusal is already closing this connection in order: the answers queued
     // before it go out, then the socket closes. A result arriving now cannot be
@@ -362,49 +329,20 @@ void AdnlExtServerImpl::accepted(td::SocketFd fd) {
     note_refused_connection("unknown peer address");
     return;
   }
-  // Admission is counted per source (IPv4 address or IPv6 /64); the exact
-  // address stays the connection's identity and logging key.
-  auto admitted = connection_limits_.try_acquire(peer_address);
-  if (!admitted) {
-    note_refused_connection("connection limit exceeded");
-    return;
-  }
   auto peer_ip = peer_address.get_ip_host();
 
-  class Callback final : public AdnlExtConnection::Callback {
-   public:
-    Callback(td::actor::ActorId<AdnlExtServerImpl> server, std::string source)
-        : server_(server), source_(std::move(source)) {
-    }
-    void on_close(td::actor::ActorId<AdnlExtConnection>) override {
-      td::actor::send_closure(server_, &AdnlExtServerImpl::connection_closed, std::move(source_));
-    }
-    void on_ready(td::actor::ActorId<AdnlExtConnection>) override {
-    }
-
-   private:
-    td::actor::ActorId<AdnlExtServerImpl> server_;
-    std::string source_;
-  };
-
-  // Derive the anonymous identity and the rate-limiting key together, before
-  // the call, so neither depends on the order the arguments below happen to be
+  // Derive the anonymous identity and the byte-share key together, before the
+  // call, so neither depends on the order the arguments below happen to be
   // evaluated in.
   auto identity = make_ext_connection_identity(std::move(peer_ip));
-  // Pending input and in-flight queries are counted under the same source the
-  // connection was admitted under, across all of that source's connections.
-  auto source = std::move(*admitted);
+  // Pending input and output bytes are counted under the peer's source
+  // (IPv4 address or IPv6 /64), across all of that source's connections.
   ExtSourceKey source_key(peer_address);
   td::actor::create_actor<AdnlInboundConnection>(
       td::actor::ActorOptions().with_name("inconn").with_poll(), std::move(fd), peer_table_, actor_id(this),
-      AdnlNodeIdShort{identity.anonymous_id}, identity.peer_ip, query_limits_, failure_policy_,
-      std::make_unique<Callback>(actor_id(this), source), output_bytes_, input_bytes_, input_source_shares_,
-      std::move(source_key), output_source_shares_)
+      AdnlNodeIdShort{identity.anonymous_id}, identity.peer_ip, failure_policy_, nullptr, output_bytes_, input_bytes_,
+      input_source_shares_, std::move(source_key), output_source_shares_)
       .release();
-}
-
-void AdnlExtServerImpl::connection_closed(std::string source) {
-  connection_limits_.release(source);
 }
 
 void AdnlExtServerImpl::decrypt_init_packet(AdnlNodeIdShort dst, td::BufferSlice data,

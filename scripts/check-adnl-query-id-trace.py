@@ -69,10 +69,13 @@ def main(root: Path) -> None:
         "admission=accepted",
         "peer=",
     )
-    # Both admission refusals (per connection, then server or per IP) must reach the
-    # single terminal path, which traces them; a bare return would drop the id.
-    if server.count("reject_or_close(f->query_id_,") != 2:
-        fail("server admission refusals no longer both reach reject_or_close")
+    # The server sets no admission limit of its own: every parsed query goes to the
+    # service with its id. An early return here would drop that id untraced, and a
+    # refusal belongs in the single terminal path (reject_or_close), not in ingress.
+    if "AdnlPeerTable::deliver_query" not in server:
+        fail("server ingress no longer delivers the parsed query to the service")
+    if "reject_or_close(" in server or server.count("return ") != 1:
+        fail("server ingress gained an early return or refusal before delivering the query")
     refusal = segment(
         root,
         "adnl/adnl-ext-server.cpp",
