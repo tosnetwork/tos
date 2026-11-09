@@ -260,6 +260,56 @@ class NodeMetricsTests(unittest.TestCase):
         )
 
 
+class ScrapeTests(unittest.TestCase):
+    """A broken exporter fails only its own node, including a truncated chunked reply."""
+
+    @staticmethod
+    def serve(reply: bytes) -> int:
+        import socket
+        import threading
+
+        listener = socket.create_server(("127.0.0.1", 0))
+
+        def run():
+            with listener:
+                connection, _ = listener.accept()
+                with connection:
+                    _ = connection.recv(65536)
+                    connection.sendall(reply)
+
+        threading.Thread(target=run, daemon=True).start()
+        return listener.getsockname()[1]
+
+    def test_a_truncated_reply_fails_only_its_node(self):
+        good = b"tos_ext_message_admission_total 3\n"
+        ok_port = self.serve(
+            b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s"
+            % (len(good), good)
+        )
+        cut_port = self.serve(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n"
+        )
+        saved = dict(bench.METRIC_PORTS)
+        bench.METRIC_PORTS.clear()
+        bench.METRIC_PORTS.update({"node-ok": ok_port, "node-cut": cut_port})
+        try:
+            out = bench.scrape_metrics()
+        finally:
+            bench.METRIC_PORTS.clear()
+            bench.METRIC_PORTS.update(saved)
+        self.assertEqual(out["node-ok"], {"tos_ext_message_admission_total": 3.0})
+        self.assertIsNone(out["node-cut"])
+
+
+class NodeArgTests(unittest.TestCase):
+    def test_harness_options_cannot_be_forwarded(self):
+        self.assertIsNone(bench.node_arg_conflict(["--celldb-cache-min-size=0"], 39100))
+        self.assertIsNotNone(bench.node_arg_conflict(["--session-logs=x.log"], 0))
+        self.assertIsNotNone(bench.node_arg_conflict(["--exporter-address=127.0.0.1:1"], 39100))
+        # Without the harness exporter, forwarding one is the caller's choice.
+        self.assertIsNone(bench.node_arg_conflict(["--exporter-address=127.0.0.1:1"], 0))
+
+
 class ChainNowTests(unittest.TestCase):
     """The masterchain time is read from one node, so a lagging node cannot fail it."""
 

@@ -22,6 +22,7 @@ import asyncio
 import csv
 import datetime
 import hashlib
+import http.client
 import json
 import logging
 import math
@@ -102,7 +103,7 @@ def parse_args() -> argparse.Namespace:
         "--max-senders",
         type=int,
         default=512,
-        help="cap on sending connections; a node admits 30 externals per 10 s from each",
+        help="cap on sending connections; each sends at most SOURCE_SEND_RATE externals/s",
     )
     p.add_argument(
         "--connections-per-node",
@@ -468,7 +469,8 @@ class Bench:
                 raise SystemExit(
                     f"{rate:g}/s needs more than {cap} sender connections; one host can offer at most "
                     f"{cap * chain.SOURCE_SEND_RATE:g} externals/s to {len(self.configs)} nodes "
-                    "(64 connections per source IP per node, 30 externals per 10 s per connection)"
+                    f"({chain.SENDERS_PER_NODE} sender connections per node, "
+                    f"{chain.SOURCE_SEND_RATE:g} externals/s per connection)"
                 )
             senders = cap
         t0, records = await asyncio.to_thread(
@@ -647,7 +649,7 @@ class Bench:
             "connections": len(by_connection),
             "max_sends_per_connection_per_10s": peak,
             "connections_with_rate_limit_refusals": len(refused_on),
-            "admission_window": "30 externals per 10 s per client identity",
+            "sender_pacing_per_connection_per_s": chain.SOURCE_SEND_RATE,
         }
         # An ingress refusal breaks its wallet's nonce chain, so at most every later
         # transfer of that wallet in the stage is then refused as stale (exit 1804/133).
@@ -825,6 +827,21 @@ def set_ingress_ls_priority(ingress: list[FullNode], priority: int, out: Path) -
     log.info("ingress liteserver check priority set to %d on %d nodes", priority, len(ingress))
 
 
+def node_arg_conflict(node_arg: list[str], metrics_base_port: int) -> str | None:
+    """Why --node-arg would clash with an option the harness sets itself, or None.
+
+    A second --exporter-address makes the engine open a second exporter and abort; a second
+    --session-logs moves the logs away from where the collation evidence is read.
+    """
+    for arg in node_arg:
+        name = arg.split("=", 1)[0]
+        if name == "--session-logs":
+            return "--node-arg cannot set --session-logs: the harness reads its own session logs"
+        if name == "--exporter-address" and metrics_base_port:
+            return "--node-arg cannot set --exporter-address together with --metrics-base-port"
+    return None
+
+
 def node_args(a: argparse.Namespace, node_name: str) -> list[str]:
     """The extra validator-engine arguments of one node: its metrics exporter, then --node-arg."""
     extra = list(a.node_arg)
@@ -859,7 +876,8 @@ def scrape_metrics() -> dict[str, dict[str, float] | None]:
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=10) as reply:
                 text = reply.read().decode()
-        except OSError as error:
+        except (OSError, http.client.HTTPException) as error:
+            # A refused, timed-out or truncated response fails this node only.
             out[name] = None
             log.warning("metrics scrape of %s failed: %s", name, error)
             continue
@@ -902,6 +920,12 @@ async def main(a: argparse.Namespace) -> int:
         raise SystemExit("--send-via ingress needs --ingress-nodes 1 or more")
     if a.ingress_ls_priority >= 0 and a.ingress_nodes <= 0:
         raise SystemExit("--ingress-ls-priority needs --ingress-nodes 1 or more")
+    reason = node_arg_conflict(a.node_arg, a.metrics_base_port)
+    if reason:
+        raise SystemExit(reason)
+    # The engine console splits its command on whitespace, so the options file path must have none.
+    if a.ingress_ls_priority >= 0 and any(c.isspace() for c in str(a.out.resolve())):
+        raise SystemExit("--ingress-ls-priority needs an --out path without whitespace")
     a.out = a.out.resolve()
     a.out.mkdir(parents=True, exist_ok=False)
     commit = source_commit()
@@ -1052,11 +1076,26 @@ async def main(a: argparse.Namespace) -> int:
                 "block_limits": a.block_limits,
                 "block_limit_mul": a.block_limit_mul,
                 "limits_profile": (
-                    "production: ConfigParams 22/23 as the canonical genesis"
+                    (
+                        "production: ConfigParams 22/23 as the canonical genesis"
+                        if not a.basechain_block_bytes
+                        else "production, except basechain bytes (ConfigParam 23) set to "
+                        + a.basechain_block_bytes
+                    )
                     if a.block_limits == "production"
                     else "dev: test-harness profile (bytes 128K/512K/1M x mul, gas 100M)"
                 )
                 + "; see chain_config for the exact parameters",
+                "submission": {
+                    "send_via": a.send_via,
+                    "targets": len(bench.configs),
+                    "ingress_nodes": a.ingress_nodes,
+                    "ingress_ls_priority": a.ingress_ls_priority,
+                    "sender_pacing_per_connection_per_s": chain.SOURCE_SEND_RATE,
+                },
+                "basechain_block_bytes": a.basechain_block_bytes or None,
+                "shard_block_rate_ms": a.shard_block_rate_ms or None,
+                "node_args": list(a.node_arg),
                 "chain_config": chain_config,
                 "wallets": a.wallets,
                 "max_senders": a.max_senders,

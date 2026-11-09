@@ -1,8 +1,8 @@
 """Sender worker processes: many liteserver client identities without one process's thread cap.
 
 A toslib client runs its own threads and a process can host at most 256, so a
-bench that needs hundreds of client identities (each admitted 30 externals per
-10 s by a node) spreads them over worker processes. Each worker opens its
+bench that needs hundreds of client identities spreads them over worker
+processes. Each worker opens its
 connections, sends its pre-serialized messages at their absolute scheduled
 times, never retries a send, and returns one record per message.
 """
