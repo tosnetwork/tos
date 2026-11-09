@@ -112,7 +112,14 @@ def nano(value: float) -> int:
 
 
 class ShardScanner:
-    """Walks every basechain shard's blocks from where it started, by header back-links."""
+    """Walks every basechain shard's blocks from where it started, by header back-links.
+
+    Every call goes to one node's liteserver: a shard head read from one node's
+    masterchain state may not be applied yet on another node, which then
+    answers LITE_SERVER_NOTREADY for a block that exists.
+    """
+
+    NOT_READY_ATTEMPTS = 20
 
     def __init__(self, pool: chain.ClientPool):
         self.pool = pool
@@ -131,12 +138,26 @@ class ShardScanner:
         self.last = {shard: head.seqno for shard, head in heads.items()}
         self.shard_sets.append((time.time(), sorted(hopbench.shard_label(s) for s in heads)))
 
+    async def _header(self, block):
+        """A block's header, waiting out a node that has not applied it yet."""
+        for attempt in range(self.NOT_READY_ATTEMPTS):
+            try:
+                return await self.pool.call("get_block_header", block)
+            except Exception as error:
+                if (
+                    "LITE_SERVER_NOTREADY" not in str(error)
+                    or attempt + 1 == self.NOT_READY_ATTEMPTS
+                ):
+                    raise
+                await asyncio.sleep(0.25)
+        raise AssertionError("unreachable")
+
     async def _walk(self, shard: int, head) -> None:
         stop_at = self.last.get(shard)
         found = []
         block = head
         while stop_at is None or block.seqno > stop_at:
-            header = await self.pool.call("get_block_header", block)
+            header = await self._header(block)
             found.append(
                 hopbench.ScannedBlock(
                     shard, block.seqno, int(header.gen_utime), bytes(block.root_hash)
@@ -219,6 +240,36 @@ async def fill_unmatched(
         block = await pool.call("lookup_block", 0, b.shard, b.seqno, cost=3)
         b.transactions = len(await pool.call("get_block_transactions", block, cost=2))
     return len(missing)
+
+
+async def cross_check(
+    pool: chain.ClientPool, blocks: list[hopbench.ScannedBlock], lo: int, hi: int, samples: int = 24
+) -> dict[str, Any]:
+    """Recount a spread of window blocks through the liteserver's transaction list.
+
+    The window rate comes from the collators' own records; this checks those
+    records against the chain for an evenly spaced sample of blocks.
+    """
+    matched = sorted(
+        (b for b in blocks if b.collation is not None and lo <= b.gen_utime < hi),
+        key=lambda b: (b.gen_utime, b.shard & hopbench.U64, b.seqno),
+    )
+    step = max(1, len(matched) // samples)
+    picked = matched[::step][:samples]
+    mismatches = []
+    for b in picked:
+        block = await pool.call("lookup_block", 0, b.shard, b.seqno, cost=3)
+        counted = len(await pool.call("get_block_transactions", block, cost=2))
+        if counted != b.transactions:
+            mismatches.append(
+                {
+                    "shard": hopbench.shard_label(b.shard),
+                    "seqno": b.seqno,
+                    "record": b.transactions,
+                    "chain": counted,
+                }
+            )
+    return {"sampled": len(picked), "mismatches": mismatches}
 
 
 def package_temperatures() -> list[float] | None:
@@ -350,7 +401,10 @@ async def main(a: argparse.Namespace) -> int:
                 for k in range(a.connections_per_node)
             ]
             pool = chain.ClientPool(readers)
-            scanner = ShardScanner(pool)
+            scan_pool = chain.ClientPool(
+                [await connect(nodes[-1], f"scan/{k}") for k in range(a.connections_per_node)]
+            )
+            scanner = ShardScanner(scan_pool)
             shards = await wait_split(scanner, a.split, a.shard_wait)
             split_seconds = time.time() - boot
             log.info(
@@ -428,9 +482,15 @@ async def main(a: argparse.Namespace) -> int:
                 b.collation = records.get(b.root_hash)
                 if b.collation is not None:
                     b.transactions = b.collation.transactions
-            filled = await fill_unmatched(pool, scanner.blocks, lo, hi)
+            filled = await fill_unmatched(scan_pool, scanner.blocks, lo, hi)
             summary = hopbench.summarize(scanner.blocks, lo, hi)
             summary["unmatched_blocks_counted_by_liteserver"] = filled
+            summary["liteserver_cross_check"] = await cross_check(scan_pool, scanner.blocks, lo, hi)
+            if summary["liteserver_cross_check"]["mismatches"]:
+                log.error(
+                    "collation records disagree with the chain: %s",
+                    summary["liteserver_cross_check"],
+                )
             write_blocks_csv(
                 a.out / "blocks.csv", [b for b in scanner.blocks if lo <= b.gen_utime < hi]
             )
