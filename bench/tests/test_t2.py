@@ -11,6 +11,7 @@ import asyncio
 import base64
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -624,6 +625,8 @@ class RecordedNode:
         self.finalized = finalized
         # (method, workchain, seqno) answered with a node error, as a block not in db is.
         self.fail = fail or set()
+        # (workchain, seqno) -> fields left out of that block's transaction page.
+        self.strip: dict[tuple[int, int], tuple[str, ...]] = {}
         self.mc_reads: list[int] = []
         self.mc_tx_reads: list[int] = []
 
@@ -644,6 +647,9 @@ class RecordedNode:
             else:
                 block_id = self.chain.blocks[(0, int(p["shard"]), p["seqno"])].ref
             result = {"id": id_json(block_id), "incomplete": False, "transactions": []}
+            # A malformed page: the matching block id with its list or flag left out.
+            for field in self.strip.get((p["workchain"], p["seqno"]), ()):
+                result.pop(field)
         elif request["method"] == "getShards":
             m = next(x for x in self.chain.mcs if x.seqno == p["seqno"])
             result = {"@type": "blocks.shards", "shards": [id_json(t) for t in m.tops]}
@@ -765,11 +771,17 @@ class Finality(unittest.TestCase):
 class ReadFailures(unittest.TestCase):
     """A block the node cannot serve makes the window INCONCLUSIVE; evidence is still written."""
 
-    def window(self, fail: set[tuple[str, int, int]]) -> tuple[dict[str, Any], dict[str, Any]]:
+    def window(
+        self,
+        fail: set[tuple[str, int, int]],
+        strip: dict[tuple[int, int], tuple[str, ...]] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         import tempfile
 
         c = split_then_merge()
-        rpc = rpcmod.PacedRpc("http://n", 1.0, transport=RecordedNode(c, FINAL, fail))
+        node = RecordedNode(c, FINAL, fail)
+        node.strip = strip or {}
+        rpc = rpcmod.PacedRpc("http://n", 1.0, transport=node)
         with tempfile.TemporaryDirectory() as d:
             result = asyncio.run(
                 t2collect.check_window(
@@ -792,6 +804,11 @@ class ReadFailures(unittest.TestCase):
             result, verdict = self.window(fail)
             self.assertEqual(result["status"], INCONCLUSIVE, fail)
             self.assertEqual(verdict["status"], INCONCLUSIVE)
+
+    def test_a_page_without_its_list_or_flag_is_inconclusive_not_empty(self):
+        for fields in (("transactions",), ("incomplete",), ("transactions", "incomplete")):
+            result, _ = self.window(set(), {(0, 14): fields})
+            self.assertEqual(result["status"], INCONCLUSIVE, fields)
 
     def test_an_unreadable_boundary_block_is_inconclusive(self):
         for seqno in (100, FINAL):
@@ -881,6 +898,42 @@ class Boundaries(unittest.TestCase):
         self.assertEqual(self.boundary([(left, 0), (right, 0)], tops), QueueBoundary(None, None))
 
 
+class LocalExitAndWait(unittest.TestCase):
+    def test_exit_status_follows_the_verdict(self):
+        self.assertEqual(t2check.exit_status(PASS), 0)
+        self.assertEqual(t2check.exit_status(FAIL), t2check.EXIT_FAIL)
+        for status in (INCONCLUSIVE, None, "anything else"):
+            self.assertEqual(t2check.exit_status(status), t2check.EXIT_INCONCLUSIVE)
+
+    def test_the_wait_for_chain_time_is_bounded(self):
+        async def frozen() -> int:
+            return 1000
+
+        clock = iter(range(1000, 10**6, 7))
+
+        async def ticking() -> int:
+            return next(clock)
+
+        self.assertIsNone(asyncio.run(t2collect.wait_until_past(frozen, 1001, 0.05, 0.01)))
+
+        async def slow() -> int:
+            await asyncio.sleep(0.5)
+            return 2000
+
+        async def stuck() -> int:
+            await asyncio.Event().wait()
+            return 0
+
+        # A read that outlives the limit, or never returns, still ends at the limit.
+        for read in (slow, stuck):
+            started = time.monotonic()
+            self.assertIsNone(asyncio.run(t2collect.wait_until_past(read, 1001, 0.05, 0.01)))
+            self.assertLess(time.monotonic() - started, 0.4)
+        self.assertGreaterEqual(
+            asyncio.run(t2collect.wait_until_past(ticking, 1030, 5, 0.0)) or 0, 1030
+        )
+
+
 class Diagnostics(unittest.TestCase):
     def test_run_owned_balance_counts_outstanding_messages(self):
         t, m = hop_run()
@@ -950,9 +1003,33 @@ class Parsing(unittest.TestCase):
         self.assertEqual(seen[1]["after_lt"], "2")
         self.assertEqual(seen[1]["after_account"], f"{2:064x}")
 
+    def test_a_transaction_without_its_summary_fields_leaves_the_block_incomplete(self):
+        block = ref(LEFT, 9)
+        for broken in (
+            {k: v for k, v in tx_json(1).items() if k != "out_msgs"},
+            {k: v for k, v in tx_json(1).items() if k != "in_msg"},
+            {k: v for k, v in tx_json(1).items() if k != "lt"},
+            tx_json(1) | {"aborted": None},
+        ):
+            page = {"id": id_json(block), "incomplete": False, "transactions": [broken]}
+
+            async def node(url: str, body: bytes, timeout: float, page=page) -> tuple[int, bytes]:
+                return 200, json.dumps({"id": 1, "result": page}).encode()
+
+            rpc = rpcmod.PacedRpc("http://n", 1.0, transport=node)
+            got = asyncio.run(t2collect.read_transactions(rpc, block))
+            self.assertFalse(got.complete, broken)
+
 
 def tx_json(n: int) -> dict[str, Any]:
-    return {"account": f"{n:064x}", "lt": str(n), "hash": b64(h("t", n)), "in_msg": None}
+    # The fields the server always renders for a transaction summary.
+    return {
+        "account": f"{n:064x}",
+        "lt": str(n),
+        "hash": b64(h("t", n)),
+        "in_msg": None,
+        "out_msgs": [],
+    }
 
 
 if __name__ == "__main__":

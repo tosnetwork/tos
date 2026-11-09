@@ -19,6 +19,13 @@ from typing import Any
 
 U64 = (1 << 64) - 1
 PASS, FAIL, INCONCLUSIVE = "PASS", "FAIL", "INCONCLUSIVE"
+# Process exit statuses of a T2 check: 0 only for a PASS.
+EXIT_FAIL, EXIT_INCONCLUSIVE = 1, 4
+
+
+def exit_status(status: str | None) -> int:
+    return {PASS: 0, FAIL: EXIT_FAIL}.get(status or "", EXIT_INCONCLUSIVE)
+
 
 BlockKey = tuple[int, int, int]  # (workchain, signed shard id, seqno)
 MASTERCHAIN_SHARD = -(1 << 63)

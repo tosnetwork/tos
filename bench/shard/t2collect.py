@@ -31,6 +31,7 @@ import asyncio
 import base64
 import json
 import sys
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -138,6 +139,14 @@ def parse_transaction(value: Any, block: BlockKey) -> Tx:
     account = value.get("account")
     if not isinstance(account, str) or len(account) != 64:
         raise ValueError("a transaction has no account")
+    # The server always renders these fields; a summary without them is missing evidence,
+    # never "no messages" (read_transactions then leaves the block incomplete).
+    if "in_msg" not in value or not isinstance(value.get("out_msgs"), list):
+        raise ValueError("a transaction summary lacks its message fields")
+    if not isinstance(value.get("lt"), (str, int)) or not str(value["lt"]).isdigit():
+        raise ValueError("a transaction summary lacks its lt")
+    if "aborted" in value and not isinstance(value["aborted"], bool):
+        raise ValueError("a transaction summary could not be decoded by the node")
     raw_compute, raw_action = value.get("compute"), value.get("action")
     compute: dict[str, Any] = raw_compute if isinstance(raw_compute, dict) else {}
     action: dict[str, Any] | None = raw_action if isinstance(raw_action, dict) else None
@@ -146,10 +155,10 @@ def parse_transaction(value: Any, block: BlockKey) -> Tx:
     return Tx(
         hash=_hash_hex(value.get("hash"), "transaction hash"),
         account=f"{block[0]}:{account.lower()}",
-        lt=int(value.get("lt", 0)),
+        lt=int(value["lt"]),
         block=block,
         in_msg=None if in_msg is None else parse_message(in_msg),
-        out_msgs=tuple(parse_message(m) for m in value.get("out_msgs") or ()),
+        out_msgs=tuple(parse_message(m) for m in value["out_msgs"]),
         aborted=value.get("aborted") is True,
         activated=compute.get("account_activated") is True,
         action_success=None if action is None else action.get("success") is True,
@@ -242,9 +251,17 @@ async def read_transactions(rpc: PacedRpc, ref: BlockRef) -> BlockTxs:
         got = parse_block_id(answer.get("id"))
         if got != ref:
             raise ValueError(f"transactions of {ref.label()} answered for {got.label()}")
-        page = [parse_transaction(t, ref.key) for t in answer.get("transactions", [])]
+        listed, more = answer.get("transactions"), answer.get("incomplete")
+        if not isinstance(listed, list) or not isinstance(more, bool):
+            # A page without its transaction list or pagination flag is missing evidence,
+            # not an empty block: the block stays incomplete, so the window cannot PASS.
+            return BlockTxs(tuple(txs), False)
+        try:
+            page = [parse_transaction(t, ref.key) for t in listed]
+        except ValueError:
+            return BlockTxs(tuple(txs), False)
         txs.extend(page)
-        if answer.get("incomplete") is not True:
+        if not more:
             return BlockTxs(tuple(txs), True)
         if not page:
             break
@@ -255,6 +272,28 @@ async def read_transactions(rpc: PacedRpc, ref: BlockRef) -> BlockTxs:
             "after_account": last.account.split(":", 1)[1],
         }
     return BlockTxs(tuple(txs), False)
+
+
+async def wait_until_past(
+    now: Callable[[], Awaitable[int]], target: int, limit: float, poll: float = 2.0
+) -> int | None:
+    """Wait until chain time ``now()`` passes ``target``; None after ``limit`` monotonic seconds.
+
+    A chain whose block production stopped keeps answering with the same time, and a read
+    can itself stall, so one deadline bounds every read and every sleep.
+    """
+
+    async def loop() -> int:
+        while True:
+            current = await now()
+            if current >= target:
+                return current
+            await asyncio.sleep(poll)
+
+    try:
+        return await asyncio.wait_for(loop(), timeout=max(0.0, limit))
+    except TimeoutError:
+        return None
 
 
 async def read_all_transactions(

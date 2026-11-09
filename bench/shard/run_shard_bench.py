@@ -59,7 +59,7 @@ from pytosiq_core import Address, WalletMessage  # noqa: E402
 from tostester.install import Install  # noqa: E402
 from tostester.network import FullNode, Network, StartOptions  # noqa: E402
 
-from shard import hopbench, t2collect  # noqa: E402
+from shard import hopbench, t2check, t2collect  # noqa: E402
 from shard.rpc import PacedRpc  # noqa: E402
 from shard.t2check import BlockRef  # noqa: E402
 from toslib import ToslibClient  # noqa: E402
@@ -429,6 +429,7 @@ async def main(a: argparse.Namespace) -> int:
     working_dir = a.out / "network"
     working_dir.mkdir()
     opened: list[chain.PacedClient] = []
+    t2: dict[str, Any] | None = None
     async with Network(install, working_dir) as network:
         if network.config.auth_network_tag is None:
             network.config.auth_network_tag = hashlib.sha256(b"tos-shard-bench").digest()
@@ -582,9 +583,20 @@ async def main(a: argparse.Namespace) -> int:
             )
             tail = hopbench.tail_ratio(scanner.blocks, lo, hi)
             t2 = None
+            past: int | None = None
             if opening is not None:
-                while await chain_now(pool) < deadline + 5:
-                    await asyncio.sleep(2)
+                # Bounded: a stalled chain keeps answering with the same time.
+                # The window ends 5 s after the hop deadline; allow that much chain time
+                # plus the drain wait, measured on the local clock from now.
+                limit = a.warmup + a.duration + 35 + a.drain_wait + 60
+                past = await t2collect.wait_until_past(lambda: chain_now(pool), deadline + 5, limit)
+            if opening is not None and past is None:
+                t2 = {
+                    "status": t2check.INCONCLUSIVE,
+                    "stopped": "chain time did not pass the deadline",
+                }
+                log.error("T2: chain time did not pass the deadline; the window is inconclusive")
+            elif opening is not None:
                 closing = await t2collect.wait_empty_queue(rpc, a.drain_wait)
                 log.info("T2 closing boundary: %s", closing)
                 observed = [
@@ -669,6 +681,9 @@ async def main(a: argparse.Namespace) -> int:
         finally:
             for c in opened:
                 await c.client.aclose()
+    # With --t2-check, the process status follows the T2 verdict; a missing verdict is not a PASS.
+    if a.t2_check:
+        return t2check.exit_status(t2["status"] if t2 is not None else None)
     return 0
 
 
