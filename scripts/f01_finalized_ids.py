@@ -50,6 +50,49 @@ def rpc_block_id(value: dict) -> tuple[int, str, int, str, str]:
     return workchain, "8000000000000000", height, root.hex(), file_hash.hex()
 
 
+def raw_header_facts(raw_rows: dict) -> dict:
+    """Key-block facts from every retained raw masterchain header, validated first.
+
+    Each header's ID must be the requested height. ``is_key_block``, when present,
+    must be a strict boolean and agree across every answer for that height, on every
+    node; ``prev_key_block_seqno``, when present, must be an integer below the
+    height. Repeated answers for one node and height must carry one ID.
+
+    Returns the heights whose headers say they are key blocks (``key``) and every
+    height a header names as its preceding key block (``named``). A named height is
+    classified as a key block; that alone does not prove its full ID.
+    """
+    flags: dict[int, bool] = {}
+    ids: dict[tuple[str, int], tuple] = {}
+    named: set[int] = set()
+    for (name, method, height), responses in raw_rows.items():
+        if method != "getBlockHeader":
+            continue
+        for response in responses:
+            result = response["result"]
+            block_id = rpc_block_id(result.get("id"))
+            if block_id[2] != height:
+                raise ValueError("F01 raw header ID is not the requested height")
+            if ids.setdefault((name, height), block_id) != block_id:
+                raise ValueError("F01 raw headers disagree on one node's block ID")
+            if "is_key_block" in result:
+                flag = result["is_key_block"]
+                if type(flag) is not bool:
+                    raise ValueError("F01 raw header is_key_block is not a boolean")
+                if flags.setdefault(height, flag) != flag:
+                    raise ValueError("F01 raw headers disagree on is_key_block")
+            if "prev_key_block_seqno" in result:
+                previous = result["prev_key_block_seqno"]
+                if type(previous) is not int or not 0 <= previous < height:
+                    raise ValueError("F01 raw header prev_key_block_seqno is invalid")
+                named.add(previous)
+    key = {height for height, flag in flags.items() if flag}
+    for height in named:
+        if flags.get(height) is False:
+            raise ValueError("F01 raw header names a non-key block as a key block")
+    return {"key": key, "named": named, "flags": flags}
+
+
 def rpc_config34_hash(response: dict) -> str:
     try:
         encoded = response["result"]["config"]["bytes"]
@@ -133,6 +176,8 @@ def verify_capture(manifest_path: Path, nodes: dict[str, list[dict]],
             raise ValueError("F01 retained raw RPC returned an error")
         key = (name, method, int(params["seqno"]))
         raw_rows.setdefault(key, []).append(response)
+    facts = raw_header_facts(raw_rows)
+    h_proven_by = {}
     for name, height in expected_pairs:
         observation = indexed[(name, height)]
         expected_hash = before_set if height < transition_height else after_set
@@ -145,7 +190,30 @@ def verify_capture(manifest_path: Path, nodes: dict[str, list[dict]],
         observed_id = rpc_block_id(observation.get("block_id"))
         native_ids = {tuple(event["id"]) for event in nodes[name]
                       if event["height"] == height}
-        if native_ids != {observed_id}:
+        if native_ids:
+            if native_ids != {observed_id}:
+                raise ValueError("F01 native marker differs from exact raw header")
+            if height == transition_height:
+                h_proven_by[name] = "native"
+        elif height == transition_height:
+            # A key block's own finalization notice reaches no consensus bus: the
+            # validator groups change before it is published (manager.cpp
+            # new_masterchain_block, bridge.cpp notify_mc_finalized). H is then
+            # proven by its successor: this node natively finalized H+1 (checked as
+            # a strict H+1 pair), and every retained raw H+1 header of this node
+            # names exactly H's full ID as its only predecessor.
+            if facts["flags"].get(height) is not True:
+                raise ValueError("F01 native marker absent at H, and H is not a raw key block")
+            successors = raw_rows.get((name, "getBlockHeader", height + 1), [])
+            if not successors:
+                raise ValueError("F01 raw transcript lacks the H+1 header for successor proof")
+            for row in successors:
+                previous = row["result"].get("prev_blocks")
+                if (not isinstance(previous, list) or len(previous) != 1
+                        or rpc_block_id(previous[0]) != observed_id):
+                    raise ValueError("F01 raw H+1 header does not name H's exact ID as predecessor")
+            h_proven_by[name] = "successor_prev"
+        else:
             raise ValueError("F01 native marker differs from exact raw header")
         if any(rpc_block_id(row["result"]["id"]) != observed_id
                for row in header_rows):
@@ -154,7 +222,10 @@ def verify_capture(manifest_path: Path, nodes: dict[str, list[dict]],
             raise ValueError("F01 raw Config34 differs at transition boundary")
     return {"capture_manifest_sha256": hashlib.sha256(raw_manifest).hexdigest(),
             "raw_rpc_transcript_sha256": transcript_sha,
-            "raw_header_heights": list(heights)}
+            "raw_header_heights": list(heights),
+            "h_proven_by": dict(sorted(h_proven_by.items())),
+            "raw_key_block_heights": sorted(facts["key"]),
+            "raw_named_key_heights": sorted(facts["named"] - facts["key"])}
 
 
 def extract(path: Path) -> tuple[list[dict], str]:
@@ -180,7 +251,15 @@ def extract(path: Path) -> tuple[list[dict], str]:
 
 
 def evaluate(nodes: dict[str, list[dict]], transition_height: int,
-             before_set: str, after_set: str) -> dict:
+             before_set: str, after_set: str,
+             exempt_heights: frozenset[int] = frozenset()) -> dict:
+    """Compare the four nodes' native finalization markers.
+
+    ``exempt_heights`` are heights the raw headers classify as key blocks. A key
+    block's own finalization notice reaches no consensus bus, so a node may lack a
+    marker there; that is a coverage exception, not a proof of the block's ID.
+    Every marker that does exist is still compared across all nodes at every height.
+    """
     if len(nodes) < 4 or transition_height < 1:
         raise ValueError("F01 needs at least four validator logs and a positive transition height")
     if (not all(re.fullmatch(r"[0-9a-f]{64}", value) and int(value, 16) != 0
@@ -204,16 +283,24 @@ def evaluate(nodes: dict[str, list[dict]], transition_height: int,
             seen[height] = block_id
             timeline.append((event["at"], node, height))
         by_node[node] = seen
-    common = set.intersection(*(set(rows) for rows in by_node.values()))
-    if not {transition_height - 1, transition_height, transition_height + 1} <= common:
-        raise ValueError("absent all-node common-height IDs around set change")
-    checked = sorted(common)
-    if checked != list(range(checked[0], checked[-1] + 1)):
-        raise ValueError("common-height finalization evidence has a gap")
-    for height in checked:
-        ids = {rows[height] for rows in by_node.values()}
+    # Every reported ID at every height, whichever nodes report it, must agree.
+    reported: dict[int, set] = {}
+    for rows in by_node.values():
+        for height, block_id in rows.items():
+            reported.setdefault(height, set()).add(block_id)
+    for height, ids in sorted(reported.items()):
         if len(ids) != 1:
             raise ValueError(f"conflicting finalized full BlockIdExt at height {height}")
+    common = set.intersection(*(set(rows) for rows in by_node.values()))
+    around = {transition_height - 1, transition_height + 1}
+    if not around <= common or not (transition_height in common
+                                    or transition_height in exempt_heights):
+        raise ValueError("absent all-node common-height IDs around set change")
+    checked = sorted(common)
+    missing = set(range(checked[0], checked[-1] + 1)) - common
+    if missing - set(exempt_heights):
+        raise ValueError("common-height finalization evidence has a gap")
+    exempt_in_range = sorted(missing)
 
     # On this single host, log timestamps order per-node observations. A lag
     # is caught up only when that same node later finalizes the then-known tip.
@@ -245,6 +332,9 @@ def evaluate(nodes: dict[str, list[dict]], transition_height: int,
         "transition_height": transition_height,
         "before_set_sha256": before_set, "after_set_sha256": after_set,
         "nodes": sorted(nodes), "checked_heights": checked,
+        # Key-block heights inside the checked range that lack a marker on at least
+        # one node: classified as key blocks by raw headers, IDs not proven here.
+        "coverage_exempt_key_heights": exempt_in_range,
         "common_height_count": len(checked),
         "final_node_heights": tips, "lag_events": lag_events,
         "max_lag_blocks": max((item["lag_blocks"] for item in lag_events), default=0),
@@ -286,10 +376,15 @@ def main() -> int:
         digests.add(digest)
         nodes[name], sources[name] = events, digest
         source_paths[name] = resolved
-    report = evaluate(nodes, args.transition_height, args.before_set, args.after_set)
-    report.update(verify_capture(args.capture_manifest, nodes,
-                                 {name: (source_paths[name], sources[name]) for name in nodes},
-                                 args.transition_height, args.before_set, args.after_set))
+    # The raw capture first: its validated headers classify the key-block heights
+    # whose missing native markers the node-log comparison may then exempt.
+    capture = verify_capture(args.capture_manifest, nodes,
+                             {name: (source_paths[name], sources[name]) for name in nodes},
+                             args.transition_height, args.before_set, args.after_set)
+    exempt = frozenset(capture["raw_key_block_heights"]) | frozenset(capture["raw_named_key_heights"])
+    report = evaluate(nodes, args.transition_height, args.before_set, args.after_set,
+                      exempt_heights=exempt)
+    report.update(capture)
     report["raw_node_log_sha256"] = sources
     args.out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     return 0
