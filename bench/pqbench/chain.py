@@ -465,3 +465,22 @@ def basechain_soft_limits(chain_config: dict[str, dict[str, str]]) -> tuple[int,
 
     byte_tiers, gas_tiers, lt_tiers = tiers(), tiers(), tiers()
     return byte_tiers[1], gas_tiers[1], lt_tiers[1]
+
+
+async def chain_now(pool: ClientPool, attempts: int = 20, pause: float = 0.25) -> int:
+    """The latest masterchain block's time, read from one liteserver.
+
+    Both reads go to the same connection: another node may not have applied the
+    block yet and would answer LITE_SERVER_NOTREADY. A NOTREADY from that one
+    node, which can lag under load, is retried; any other error is raised.
+    """
+    client = pool.pick()
+    for attempt in range(attempts):
+        try:
+            info = await client.call("get_masterchain_info")
+            return int((await client.call("get_block_header", info.last)).gen_utime)
+        except Exception as error:
+            if "LITE_SERVER_NOTREADY" not in str(error) or attempt + 1 == attempts:
+                raise
+            await asyncio.sleep(pause)
+    raise AssertionError("unreachable")

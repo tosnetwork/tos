@@ -274,9 +274,7 @@ class Bench:
         ]
 
     async def _now(self) -> int:
-        info = await self.pool.call("get_masterchain_info")
-        header = await self.pool.call("get_block_header", info.last)
-        return int(header.gen_utime)
+        return await chain.chain_now(self.pool)
 
     async def wait_nonce(self, wallet: QuantumWallet, nonce: int, what: str, timeout: float = 180):
         deadline = time.time() + timeout

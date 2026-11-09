@@ -4,16 +4,19 @@ Run: uv run python bench/tests/test_summarize.py
 """
 
 import argparse
+import asyncio
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src")]
 
 import run_local_bench as bench  # noqa: E402
+from pqbench import chain  # noqa: E402
 from pqbench.chain import BlockRow, SendRecord  # noqa: E402
 
 RATE_LIMIT = "LITE_SERVER_NOTREADY: external message source rate limit exceeded"
@@ -255,6 +258,51 @@ class NodeMetricsTests(unittest.TestCase):
             bench.metrics_delta({}, {"node-1": {"a": 2.0}}),
             {"node-1": {"scrape_failed": ["before"]}},
         )
+
+
+class ChainNowTests(unittest.TestCase):
+    """The masterchain time is read from one node, so a lagging node cannot fail it."""
+
+    class Node:
+        def __init__(self, applied: int, errors: list[str] | None = None):
+            self.applied = applied
+            self.errors = list(errors or [])
+            self.calls: list[str] = []
+
+        async def call(self, method: str, *args):
+            self.calls.append(method)
+            if self.errors:
+                raise RuntimeError(self.errors.pop(0))
+            if method == "get_masterchain_info":
+                return SimpleNamespace(last=SimpleNamespace(seqno=self.applied))
+            if args[0].seqno > self.applied:
+                raise RuntimeError(f"LITE_SERVER_NOTREADY: block {args[0].seqno} is not in db")
+            return SimpleNamespace(gen_utime=1000 + args[0].seqno)
+
+    class Pool:
+        def __init__(self, *nodes):
+            self.nodes, self.i = nodes, 0
+
+        def pick(self):
+            node = self.nodes[self.i % len(self.nodes)]
+            self.i += 1
+            return node
+
+    def now(self, pool, **kw) -> int:
+        return asyncio.run(chain.chain_now(cast(chain.ClientPool, pool), pause=0, **kw))
+
+    def test_both_reads_go_to_one_node(self):
+        ahead, behind = self.Node(2258), self.Node(2257)
+        self.assertEqual(self.now(self.Pool(ahead, behind)), 3258)
+        self.assertEqual(behind.calls, [])
+
+    def test_notready_is_retried_and_other_errors_are_raised(self):
+        flaky = self.Node(5, ["LITE_SERVER_NOTREADY: not in db", "LITE_SERVER_NOTREADY: not in db"])
+        self.assertEqual(self.now(self.Pool(flaky)), 1005)
+        with self.assertRaises(RuntimeError):
+            self.now(self.Pool(self.Node(5, ["LITE_SERVER_UNKNOWN: boom"])))
+        with self.assertRaises(RuntimeError):
+            self.now(self.Pool(self.Node(5, ["LITE_SERVER_NOTREADY: x"] * 3)), attempts=3)
 
 
 if __name__ == "__main__":
