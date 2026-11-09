@@ -123,7 +123,7 @@ AI actor applications should be deployed as native TVM contracts on wc=0 unless 
 
 The basechain descriptor uses the `workchain_v2` (#a7) constructor with
 `min_split` 0, `max_split` 2 and `persistent_state_split_depth` 4, and explicit
-split/merge timings ([gen-zerostate.fif](../crypto/smartcont/gen-zerostate.fif#L68-L88)). The collator splits any
+split/merge timings ([gen-zerostate.fif](../crypto/smartcont/gen-zerostate.fif#L91-L111)). The collator splits any
 shard shallower than `min_split` regardless of load and never merges back below
 it, so `min_split` is the floor on how many basechain shards every validator must
 run. An earlier value of 4 forced 16 shards about 400 s after genesis; with four
@@ -131,6 +131,24 @@ validators each node then ran 17 consensus groups, saturated its disk flushes an
 let the masterchain interval drift from about 470 ms to about 1 s. With 0 the
 basechain stays one shard until load asks for a split, and can split at most
 twice.
+
+**What the split fields are for.**
+- **`max_split` caps how far load may split the basechain.** Depth d allows at most 2^d shards, so 2 allows four.
+- **`min_split` forces a depth regardless of load.**
+
+ConfigParam 12 is both mandatory and critical (ConfigParams 9 and 10), so only a
+critical proposal can change it. Under ConfigParam 11's critical setup, the
+proposal must win three rounds, each with 3/4 of the validator weight. The config
+contract does not bound the values; the collator stops splitting at depth 60.
+
+Raising `max_split` lets load add shards and keeps the basechain at one shard when
+it is quiet. Raising `min_split` makes every validator run the extra shards all
+the time.
+
+While the validator set is no larger than ConfigParam 28's `shard_validators_num`
+(21 at [genesis](../crypto/smartcont/gen-zerostate.fif#L285)), every shard
+committee is the whole set. More shards then add work on the same machines rather
+than spreading it over more of them.
 
 ## ConfigParams 6 and 7
 
