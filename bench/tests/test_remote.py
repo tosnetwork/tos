@@ -219,11 +219,34 @@ def wallet_data(nonce: int) -> Cell:
     )
 
 
-class FakeNode:
-    """One basechain shard, one masterchain block per masterchain-info read, no transactions."""
+def tx_json(account: str, lt: int, in_msg: dict[str, Any], out: list[dict[str, Any]]):
+    return {
+        "account": account.split(":", 1)[1],
+        "lt": str(lt),
+        "hash": b64h("tx", account, lt),
+        "in_msg": in_msg,
+        "out_msgs": out,
+        "aborted": False,
+        "compute": {"skipped": False, "success": True, "account_activated": False},
+        "action": {"success": True, "skipped_actions": 0, "messages_created": len(out)},
+    }
 
-    def __init__(self, wallet: str, wallet_balance: int, account_funding: int):
+
+class FakeNode:
+    """One basechain shard, one masterchain block per masterchain-info read.
+
+    The start request puts the wallet's start transaction in the next shard
+    block and the first hop account's import of it in the one after. Other
+    blocks, masterchain blocks included, carry no transactions.
+    """
+
+    def __init__(self, wallet: str, wallet_balance: int, account_funding: int, hop0: str = ""):
         self.lock = threading.Lock()
+        self.hop0 = hop0
+        self.txs: dict[tuple[int, int], list[dict[str, Any]]] = {}
+        self.tx_reads: list[tuple[int, int]] = []
+        # The start message sits in the outbound queue until this masterchain block.
+        self.in_flight_until = 0
         self.mc = 100
         self.wallet, self.wallet_balance = wallet, wallet_balance
         self.account_funding = account_funding
@@ -248,13 +271,20 @@ class FakeNode:
         if method == "getShards":
             return {"shards": [block_id(0, p["seqno"])]}
         if method == "getOutMsgQueueSize":
-            return {"shards": [{"id": block_id(0, self.mc), "size": 0}]}
+            size = 1 if self.mc < self.in_flight_until else 0
+            return {"shards": [{"id": block_id(0, self.mc), "size": size}]}
         if method == "getConsensusBlock":
             return {"consensus_block": self.mc}
         if method == "getConfigParam":
             return {"config": {"bytes": "AA=="}}
         if method == "getBlockTransactionsExt":
-            return {"id": block_id(0, p["seqno"]), "incomplete": False, "transactions": []}
+            where = (p["workchain"], p["seqno"])
+            self.tx_reads.append(where)
+            return {
+                "id": block_id(*where),
+                "incomplete": False,
+                "transactions": self.txs.get(where, []),
+            }
         if method == "getAddressInformation":
             if p["address"] == self.wallet:
                 active = self.nonce is not None
@@ -272,12 +302,27 @@ class FakeNode:
             }
         if method == "sendBoc":
             self.sends.append(p["boc"])
+            if len(self.sends) == 2 and self.hop0:
+                self.start_traffic()
             self.nonce = (self.nonce or 0) + 1
             self.wallet_balance -= NANO // 100 + (
                 8 * self.account_funding if len(self.sends) == 1 else 10 * NANO
             )
             return {"@type": "ok"}
         raise KeyError(method)
+
+    def start_traffic(self) -> None:
+        start = {
+            "hash": b64h("start message"),
+            "kind": "internal",
+            "source": self.wallet,
+            "destination": self.hop0,
+            "bounced": False,
+        }
+        external = {"hash": b64h("start external"), "kind": "external"}
+        self.txs[(0, self.mc + 1)] = [tx_json(self.wallet, 1, external, [start])]
+        self.txs[(0, self.mc + 2)] = [tx_json(self.hop0, 2, start, [])]
+        self.in_flight_until = self.mc + 2
 
     def serve(self) -> tuple[http.server.ThreadingHTTPServer, str]:
         node = self
@@ -391,13 +436,20 @@ class RemoteRun(unittest.TestCase):
             cwd=d,
         )
 
+    def hop0(self) -> str:
+        from shard import hopbench
+
+        seed = hashlib.sha256(b"tos-shard-bench-remote").digest()
+        family = hopbench.HopFamily(HOP_CODE, int.from_bytes(seed[:8], "big"), 8)
+        return remote.raw(family.address(0))
+
     def wallet_address(self) -> str:
         key = remote.WalletKey(remote.Secret(TEST_SEED), TEST_RESCUE, 0)
         w = remote.bench_wallet(WALLET_CODE, GLOBAL_ID, AUTH, key, fake_public_key(TEST_SEED))
         return remote.raw(w.address)
 
     def test_remote_run_uses_json_rpc_only_and_never_leaks_the_key(self):
-        node = FakeNode(self.wallet_address(), 1000 * NANO, NANO)
+        node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, self.hop0())
         server, url = node.serve()
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -406,12 +458,19 @@ class RemoteRun(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr[-3000:])
                 self.assertIn("LOADED-BLOCKED-MODULES []", result.stderr)
                 record = json.loads((d / "out/results.json").read_text())
+                verdict = (d / "out/t2/t2-verdict.json").read_text()
                 written = {p: p.read_bytes() for p in (d / "out").rglob("*") if p.is_file()}
         finally:
             server.shutdown()
             server.server_close()
         self.assertEqual(len(node.sends), 2)
-        self.assertEqual(record["t2_status"], "PASS")
+        self.assertEqual(record["t2_status"], "PASS", verdict)
+        # Counted by the chain walk: the funder's start message and its one import.
+        self.assertEqual(record["counts"]["run_owned_messages"], 1)
+        self.assertEqual(record["counts"]["delivered"]["entry"], 1)
+        self.assertEqual(record["counts"]["window_transactions"], 2)
+        # The masterchain blocks of the window are read too, for a funder there.
+        self.assertTrue(any(wc == -1 for wc, _ in node.tx_reads))
         self.assertEqual(record["stranded"]["hop_accounts_total"], 8 * NANO)
         self.assertEqual(record["stranded"]["recoverable"], 0)
         self.assertIsNotNone(record["finalized_mc"])
