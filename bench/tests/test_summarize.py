@@ -3,6 +3,7 @@
 Run: uv run python bench/tests/test_summarize.py
 """
 
+import argparse
 import sys
 import tempfile
 import unittest
@@ -235,6 +236,19 @@ class NodeMetricsTests(unittest.TestCase):
                 "node-3": {"scrape_failed": ["before", "after"]},
             },
         )
+
+    def test_node_args_append_every_node_arg_after_the_exporter(self):
+        extra = ["--celldb-cell-cache-max-size=100000", "--celldb-cache-min-size=0"]
+        bench.METRIC_PORTS.pop("node-test", None)
+        off = argparse.Namespace(node_arg=extra, metrics_base_port=0)
+        self.assertEqual(bench.node_args(off, "node-test"), extra)
+        on = argparse.Namespace(node_arg=extra, metrics_base_port=39100)
+        args = bench.node_args(on, "node-test")
+        self.assertEqual(args[0], "--exporter-address")
+        self.assertEqual(args[2:], extra)
+        bench.METRIC_PORTS.pop("node-test", None)
+        none = argparse.Namespace(node_arg=[], metrics_base_port=0)
+        self.assertEqual(bench.node_args(none, "node-test"), [])
 
     def test_a_node_missing_at_one_end_is_a_failure(self):
         self.assertEqual(

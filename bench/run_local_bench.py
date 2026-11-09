@@ -151,6 +151,14 @@ def parse_args() -> argparse.Namespace:
         help="set local_ls_message_priority on the ingress full nodes after they sync (-1: keep)",
     )
     p.add_argument(
+        "--node-arg",
+        action="append",
+        default=[],
+        metavar="ARG",
+        help="extra validator-engine argument for every node, repeatable "
+        "(e.g. --node-arg=--celldb-cell-cache-max-size=100000)",
+    )
+    p.add_argument(
         "--send-via",
         choices=("all", "validators", "ingress"),
         default="all",
@@ -819,11 +827,13 @@ def set_ingress_ls_priority(ingress: list[FullNode], priority: int, out: Path) -
     log.info("ingress liteserver check priority set to %d on %d nodes", priority, len(ingress))
 
 
-def metrics_args(a: argparse.Namespace, node: FullNode) -> list[str]:
+def node_args(a: argparse.Namespace, node_name: str) -> list[str]:
+    """The extra validator-engine arguments of one node: its metrics exporter, then --node-arg."""
+    extra = list(a.node_arg)
     if not a.metrics_base_port:
-        return []
-    port = METRIC_PORTS.setdefault(node.name, a.metrics_base_port + len(METRIC_PORTS))
-    return ["--exporter-address", f"127.0.0.1:{port}"]
+        return extra
+    port = METRIC_PORTS.setdefault(node_name, a.metrics_base_port + len(METRIC_PORTS))
+    return ["--exporter-address", f"127.0.0.1:{port}", *extra]
 
 
 METRIC_WORDS = ("ext_message", "external", "broadcast", "mempool")
@@ -960,7 +970,7 @@ async def main(a: argparse.Namespace) -> int:
             group.create_task(dht.run())
             for node in nodes:
                 group.create_task(
-                    node.run(StartOptions(verbosity=a.node_verbosity, args=metrics_args(a, node)))
+                    node.run(StartOptions(verbosity=a.node_verbosity, args=node_args(a, node.name)))
                 )
         await network.wait_mc_block(seqno=1)
         await network.wait_block(workchain=0, shard=chain.BASECHAIN_SHARD, seqno=1)
@@ -969,7 +979,7 @@ async def main(a: argparse.Namespace) -> int:
                 for node in ingress:
                     group.create_task(
                         node.run(
-                            StartOptions(verbosity=a.node_verbosity, args=metrics_args(a, node))
+                            StartOptions(verbosity=a.node_verbosity, args=node_args(a, node.name))
                         )
                     )
             await wait_synced(ingress, nodes[0], install)
