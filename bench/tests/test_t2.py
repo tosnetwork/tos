@@ -248,6 +248,22 @@ class Layout(unittest.TestCase):
         self.assertEqual(verdict.status, INCONCLUSIVE)
         self.assertEqual(verdict.gaps[0]["from"], 102)
 
+    def test_a_split_that_keeps_only_one_half_fails(self):
+        c = Chain()
+        c.mc(ref(ROOT_SHARD, 1))
+        c.mc(ref(LEFT, 2))  # the right half of the address space disappeared
+        _, verdict = t2check.layout_changes(c.mcs)
+        self.assertEqual(verdict.status, FAIL)
+
+    def test_a_parent_kept_beside_its_child_fails(self):
+        c = Chain()
+        c.mc(ref(ROOT_SHARD, 1))
+        c.mc(ref(ROOT_SHARD, 2), ref(LEFT, 2), ref(RIGHT, 2))  # overlapping ranges
+        _, verdict = t2check.layout_changes(c.mcs)
+        self.assertEqual(verdict.status, FAIL)
+        self.assertIsNone(t2check.partition_error([LL, LR, RIGHT]))
+        self.assertIsNotNone(t2check.partition_error([LL, RIGHT]))
+
     def test_impossible_layout_change_fails(self):
         c = Chain()
         c.mc(ref(ROOT_SHARD, 1))
@@ -498,6 +514,12 @@ class Conservation(unittest.TestCase):
         self.assertEqual(t.check().status, FAIL)
         self.assertEqual(t.check(opening=None).status, INCONCLUSIVE)
 
+    def test_a_closing_queue_not_known_empty_is_inconclusive(self):
+        t, _ = hop_run()
+        self.assertEqual(t.check().status, PASS)
+        for closing in (False, None):
+            self.assertEqual(t.check(closing=closing).status, INCONCLUSIVE)
+
     def test_incomplete_transaction_list_is_a_gap(self):
         t, _ = hop_run()
         blocks = {k: BlockTxs(tuple(v), True) for k, v in t.txs.items()}
@@ -583,15 +605,26 @@ class RecordedNode:
     transactions.
     """
 
-    def __init__(self, chain: Chain, finalized: int = FINAL):
+    def __init__(
+        self,
+        chain: Chain,
+        finalized: int = FINAL,
+        fail: set[tuple[str, int, int]] | None = None,
+    ):
         self.chain = chain
         self.finalized = finalized
+        # (method, workchain, seqno) answered with a node error, as a block not in db is.
+        self.fail = fail or set()
         self.mc_reads: list[int] = []
         self.mc_tx_reads: list[int] = []
 
     async def __call__(self, url: str, body: bytes, timeout: float) -> tuple[int, bytes]:
         request = json.loads(body)
         p = request["params"]
+        if (request["method"], p.get("workchain"), p.get("seqno")) in self.fail:
+            error = {"code": -32000, "message": "block is not in db"}
+            reply = {"jsonrpc": "2.0", "id": request["id"], "error": error}
+            return 200, json.dumps(reply).encode()
         if request["method"] == "getConsensusBlock":
             result: Any = {"@type": "ext.blocks.consensusBlock", "consensus_block": self.finalized}
         elif request["method"] == "getBlockTransactionsExt":
@@ -718,6 +751,44 @@ class Finality(unittest.TestCase):
             self.assertEqual(
                 sorted(node.mc_tx_reads), [m.seqno for m in c.mcs if 100 < m.seqno <= FINAL]
             )
+
+
+class ReadFailures(unittest.TestCase):
+    """A block the node cannot serve makes the window INCONCLUSIVE; evidence is still written."""
+
+    def window(self, fail: set[tuple[str, int, int]]) -> tuple[dict[str, Any], dict[str, Any]]:
+        import tempfile
+
+        c = split_then_merge()
+        rpc = rpcmod.PacedRpc("http://n", 1.0, transport=RecordedNode(c, FINAL, fail))
+        with tempfile.TemporaryDirectory() as d:
+            result = asyncio.run(
+                t2collect.check_window(
+                    rpc,
+                    QueueBoundary(100, True),
+                    QueueBoundary(FINAL, True),
+                    set(RUN),
+                    {FUNDER},
+                    Path(d),
+                    all_refs(c),
+                    finality_wait=0,
+                )
+            )
+            verdict = json.loads((Path(d) / "t2-verdict.json").read_text())
+        return result, verdict
+
+    def test_an_unreadable_shard_header_or_page_is_inconclusive(self):
+        self.assertEqual(self.window(set())[0]["status"], PASS)
+        for fail in ({("getBlockHeader", 0, 13)}, {("getBlockTransactionsExt", 0, 14)}):
+            result, verdict = self.window(fail)
+            self.assertEqual(result["status"], INCONCLUSIVE, fail)
+            self.assertEqual(verdict["status"], INCONCLUSIVE)
+
+    def test_an_unreadable_boundary_block_is_inconclusive(self):
+        for seqno in (100, FINAL):
+            result, _ = self.window({("getBlockHeader", -1, seqno)})
+            self.assertEqual(result["status"], INCONCLUSIVE, seqno)
+            self.assertEqual(result["boundary_blocks_unread"], [seqno])
 
 
 class Diagnostics(unittest.TestCase):

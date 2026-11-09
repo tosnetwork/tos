@@ -39,7 +39,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from shard import t2check  # noqa: E402
-from shard.rpc import PacedRpc  # noqa: E402
+from shard.rpc import PacedRpc, RateLimited, RpcError  # noqa: E402
 from shard.t2check import (  # noqa: E402
     BlockKey,
     BlockRecord,
@@ -166,7 +166,14 @@ async def read_masterchain(rpc: PacedRpc, lo: int, hi: int, parallel: int = 4) -
     if not 0 <= lo <= hi:
         raise ValueError("a masterchain range needs 0 <= lo <= hi")
 
-    async def one(seqno: int) -> McRecord:
+    async def one(seqno: int) -> McRecord | None:
+        try:
+            return await read_one(seqno)
+        except (RpcError, RateLimited):
+            # An unread masterchain block is a gap in the layout record, never a guess.
+            return None
+
+    async def read_one(seqno: int) -> McRecord:
         header = await rpc.call(
             "getBlockHeader",
             {"workchain": -1, "shard": str(MASTERCHAIN_SHARD), "seqno": seqno},
@@ -183,7 +190,7 @@ async def read_masterchain(rpc: PacedRpc, lo: int, hi: int, parallel: int = 4) -
     out: list[McRecord] = []
     for start in range(lo, hi + 1, parallel):
         batch = range(start, min(hi, start + parallel - 1) + 1)
-        out.extend(await asyncio.gather(*(one(s) for s in batch)))
+        out.extend(m for m in await asyncio.gather(*(one(s) for s in batch)) if m is not None)
     return out
 
 
@@ -212,9 +219,14 @@ async def walk_blocks(
             queued.add(ref.key)
             wave.append(ref)
         headers = await asyncio.gather(
-            *(rpc.call("getBlockHeader", _block_params(r)) for r in wave)
+            *(rpc.call("getBlockHeader", _block_params(r)) for r in wave), return_exceptions=True
         )
         for header in headers:
+            if isinstance(header, (RpcError, RateLimited)):
+                # The block stays unread; check_continuity reports it as a gap.
+                continue
+            if isinstance(header, BaseException):
+                raise header
             record = parse_header(header)
             blocks[record.ref.key] = record
             pending.extend(record.prev)
@@ -252,8 +264,17 @@ async def read_all_transactions(
     for start in range(0, len(refs), parallel):
         batch = refs[start : start + parallel]
         for ref, block in zip(
-            batch, await asyncio.gather(*(read_transactions(rpc, r) for r in batch))
+            batch,
+            await asyncio.gather(
+                *(read_transactions(rpc, r) for r in batch), return_exceptions=True
+            ),
         ):
+            if isinstance(block, (RpcError, RateLimited)):
+                # A transaction list that could not be read is incomplete, so a gap.
+                out[ref.key] = BlockTxs((), False)
+                continue
+            if isinstance(block, BaseException):
+                raise block
             out[ref.key] = block
     return out
 

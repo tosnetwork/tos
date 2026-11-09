@@ -165,6 +165,26 @@ class LayoutChange:
         }
 
 
+def partition_error(layout: Iterable[int]) -> str | None:
+    """Why a set of shards is not a complete, non-overlapping cover of the address space.
+
+    A shard with lowest set bit ``l`` covers the unsigned range ``[x - l, x + l)``. A
+    layout is valid only when these ranges tile ``[0, 2^64)`` exactly: a missing half of
+    a split, or a parent kept beside its children, is refused.
+    """
+    spans = sorted((_unsigned(s) - _low_bit(s), _unsigned(s) + _low_bit(s)) for s in layout)
+    if not spans:
+        return "the layout has no shard"
+    edge = 0
+    for start, end in spans:
+        if start != edge:
+            return f"the layout {'overlaps' if start < edge else 'leaves a gap'} at {start:016x}"
+        edge = end
+    if edge != 1 << 64:
+        return f"the layout ends at {edge:#x}, not at the end of the address space"
+    return None
+
+
 def change_kind(old: Iterable[int], new: Iterable[int]) -> str:
     """Classify a layout change; anything that is neither a split nor a merge is refused."""
     before, after = set(old), set(new)
@@ -226,6 +246,16 @@ def layout_changes(mcs: Iterable[McRecord]) -> tuple[list[LayoutChange], Verdict
     for m in rows:
         if not m.tops:
             failures.append({"reason": "no basechain shard top", "mc_seqno": m.seqno})
+            continue
+        broken = partition_error(m.layout())
+        if broken is not None:
+            failures.append(
+                {
+                    "reason": broken,
+                    "mc_seqno": m.seqno,
+                    "layout": [shard_label(s) for s in m.layout()],
+                }
+            )
     verdict = Verdict(
         _decide(failures, gaps),
         failures,
@@ -532,6 +562,9 @@ def check_conservation(
         )
     if opening.empty is not True:
         gaps.append({"reason": "the opening queue is not known to be empty"})
+    if closing.empty is not True:
+        # Run-owned messages may still be queued: nothing can be called conserved yet.
+        gaps.append({"reason": "the closing queue is not known to be empty"})
     window: list[Tx] = []
     for key in [*sorted(continuity.reached), *sorted(masterchain_keys)]:
         block = txs.get(key)
@@ -695,6 +728,12 @@ def evaluate(
     finalized_mc: int | None,
 ) -> dict[str, Any]:
     """The layout record and the continuity and conservation verdicts of one window."""
+    seqnos = {m.seqno for m in mcs}
+    missing = [
+        seqno
+        for seqno in (opening.mc_seqno, closing.mc_seqno)
+        if seqno is not None and seqno not in seqnos
+    ]
     changes, layout = layout_changes(mcs)
     continuity = check_continuity(mcs, blocks, observed, max_blocks, finalized_mc=finalized_mc)
     conservation = check_conservation(
@@ -708,8 +747,12 @@ def evaluate(
     )
     statuses = [layout.status, continuity.verdict.status, conservation.status]
     overall = FAIL if FAIL in statuses else INCONCLUSIVE if INCONCLUSIVE in statuses else PASS
+    if missing and overall == PASS:
+        # The walk would start or end at another block than the window's boundary.
+        overall = INCONCLUSIVE
     return {
         "status": overall,
+        "boundary_blocks_unread": missing,
         "layout_changes": [c.as_dict() for c in changes],
         "layout": layout.as_dict(),
         "continuity": continuity.verdict.as_dict(),
