@@ -509,6 +509,7 @@ class Msg:
     source: str | None = None
     destination: str | None = None
     bounced: bool = False
+    value: int | None = None  # nanotos carried by an internal message, when reported
 
 
 @dataclass(frozen=True)
@@ -523,6 +524,11 @@ class Tx:
     activated: bool = False
     action_success: bool | None = None
     skipped_actions: int = 0
+    fee: int | None = None  # total_fees in nanotos, when reported
+    # Why the server's rendering does not show this transaction executed its inbound
+    # message: aborted, or a compute phase that failed, was skipped for a reason other
+    # than a plain value credit, or was not shown. None only when it shows it executed.
+    phase_failure: str | None = "phases not shown"
 
 
 @dataclass(frozen=True)

@@ -16,9 +16,12 @@ A run:
    bench wallet's own fees for both of its externals, and refuses when the
    attached value plus that bound exceeds ``--max-cost``. Nothing is
    written or sent before this step either;
-3. funds the hop accounts from the supplied bench wallet (a self-pay Quantum
-   wallet whose ML-DSA-44 seed is read from ``--key-file``) in one
-   deployment tree, and checks the deployment's real fee against its bound;
+3. takes the bench wallet's lock, reconciles every earlier attempt of the
+   wallet against the chain and refuses when any needed it or the hop tree
+   is already deployed (``shard.journal``); then funds the hop accounts from
+   the supplied bench wallet (a self-pay Quantum wallet whose ML-DSA-44 seed
+   is read from ``--key-file``) in one deployment tree, and checks the
+   deployment's real fee against its bound;
 4. opens the window at an empty outbound queue, sends the start message, waits
    past the deadline and closes the window at an empty queue. When chain
    time stops advancing the wait ends and the run is recorded INCONCLUSIVE;
@@ -31,23 +34,33 @@ and decrements it on every fork, and sends hop messages without bounce. The
 start message carries ``remaining`` (``--hops``) and ``forks``, and
 ``chains`` is a uint8, so the contract itself stops every chain at the cap;
 running out of value or passing the deadline only ends chains sooner.
+
+Both wallet externals are written to ``<out>/journal.jsonl`` and fsynced
+before they are sent, and each is settled only by the wallet transaction
+whose inbound message is that external, with its phases and its expected
+message checked and its fee taken from it. A request with no such proof
+ends ``unknown`` and is never resent. A signer that does not answer within
+``--signer-timeout`` is killed: before the deployment is sent the run is
+refused, after it the run stops.
 """
 
 import argparse
 import asyncio
 import base64
+import contextlib
 import hashlib
 import json
 import logging
 import math
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -59,9 +72,10 @@ from pqbench.workload import (
     QuantumWallet,
     primary_nonce,
 )
-from pytosiq_core import Address, Cell, ExternalMsgInfo, MessageAny
+from pytosiq_core import Address, Cell, ExternalMsgInfo, InternalMsgInfo, MessageAny
 
 from shard import hopbench, t2collect
+from shard import journal as jr
 from shard.rpc import PacedRpc, RpcError
 
 NANO = 1_000_000_000
@@ -71,8 +85,12 @@ MAX_HOPS = 1_000_000
 MAX_ACCOUNTS = 65_536
 # A self-pay request is valid for at most an hour after the chain's now().
 REQUEST_LIFETIME = 600
+# Seconds the bench signer may take for one call before it is killed.
+SIGNER_TIMEOUT = 120.0
+# Refused before anything was sent.
 REFUSED = 3
-# The run stopped without an answer, for example because chain time stopped advancing.
+# The run stopped without an answer after sending, for example because chain time stopped
+# advancing or a real fee exceeded its derived bound.
 INCONCLUSIVE = 4
 # The T2 checker found a broken layout, continuity or conservation.
 T2_FAILED = 1
@@ -254,6 +272,24 @@ class GasPrices:
     def max_fee(self) -> int:
         """The fee at gas_limit, the most gas a non-special account can buy."""
         return self.fee(self.gas_limit)
+
+    def bought_for(self, nanotos: int) -> int:
+        """ComputePhaseConfig::gas_bought_for: the gas ``nanotos`` buys, at most gas_limit."""
+        if nanotos < self.flat_gas_price:
+            return 0
+        if nanotos >= self.max_fee():  # max_gas_threshold
+            return self.gas_limit
+        bought = ((nanotos - self.flat_gas_price) << 16) // self.gas_price + self.flat_gas_limit
+        return min(bought, self.gas_limit)
+
+    def internal_fee(self, value: int) -> int:
+        """The most computation an inbound internal message carrying ``value`` can cost.
+
+        compute_gas_limits starts an ordinary internal message at the gas its
+        value buys; only accept_message raises the limit, and a receiver that
+        never accepts (the self-pay wallet's recv_internal) keeps it there.
+        """
+        return self.fee(self.bought_for(value))
 
 
 def parse_gas_prices(cell: Cell) -> GasPrices:
@@ -487,6 +523,26 @@ def storage_fee_bound(
     return StorageFee(cells, bits, since, until, due, _ceil_shr16(rate * (until - since)) + due)
 
 
+def account_storage(
+    config: FeeConfig,
+    state_init: Cell,
+    stat: tuple[int, int, int, int] | None,
+    now: int,
+    until: int,
+) -> StorageFee:
+    """A wallet's storage bound up to ``until``: the larger of what the node reports and its
+    StateInit plus a whole account root, since its last payment (``now`` if never)."""
+    cells, bits = tree_size([state_init])
+    cells, bits = cells + 1, bits + ACCOUNT_ROOT_BITS
+    since, due = now, 0
+    if stat is not None:
+        cells, bits = max(cells, stat[0]), max(bits, stat[1])
+        since, due = (stat[2] if stat[2] > 0 else now), stat[3]
+    if since > until:
+        raise ValueError("a wallet's last storage payment lies past the fee horizon")
+    return storage_fee_bound(config, cells, bits, since, until, due)
+
+
 @dataclass(frozen=True)
 class WalletFeeBound:
     externals: list[ExternalFee]
@@ -562,21 +618,52 @@ def load_key(path: Path) -> WalletKey:
     return WalletKey(Secret(fields["mldsa44_seed"]), fields["rescue_public_key"], wallet_id)
 
 
+class SignerTimeout(RuntimeError):
+    """The bench signer did not answer in time; it was killed and nothing was signed."""
+
+
+def run_signer_process(
+    command: list[str], text: str, timeout: float
+) -> subprocess.CompletedProcess[str]:
+    """Run the bench signer with ``text`` on stdin, killed with its process group after ``timeout``.
+
+    The signer runs in its own session, so anything it started dies with it,
+    and its pipes are drained and the process reaped before this returns.
+    Errors never carry the input.
+    """
+    if not (math.isfinite(timeout) and timeout > 0):
+        raise ValueError("the signer timeout must be a positive number of seconds")
+    with subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    ) as process:
+        try:
+            out, err = process.communicate(text, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+            raise SignerTimeout(f"the bench signer did not answer within {timeout:g} s") from None
+        return subprocess.CompletedProcess(command, process.returncode, out, err)
+
+
 class Signer:
     """ML-DSA-44 through the bench signer executable; the seed goes over stdin only."""
 
-    def __init__(self, executable: Path, key: WalletKey):
+    def __init__(self, executable: Path, key: WalletKey, timeout: float = SIGNER_TIMEOUT):
         if not executable.is_file():
             raise FileNotFoundError(f"bench signer not found: {executable}")
-        self.executable, self.key = executable.resolve(), key
+        if not (math.isfinite(timeout) and timeout > 0):
+            raise ValueError("the signer timeout must be a positive number of seconds")
+        self.executable, self.key, self.timeout = executable.resolve(), key, timeout
 
     def _run(self, args: list[str], line: str, size: int) -> bytes:
-        result = subprocess.run(
-            [str(self.executable), *args, "--threads", "1"],
-            input=line + "\n",
-            capture_output=True,
-            text=True,
-            check=False,
+        result = run_signer_process(
+            [str(self.executable), *args, "--threads", "1"], line + "\n", self.timeout
         )
         if result.returncode:
             # The signer's stderr could echo its input; report only the exit status.
@@ -711,7 +798,21 @@ def _count(value: object, name: str) -> int:
         return int(value)
     if type(value) is int and value >= 0:
         return value
-    raise ValueError(f"the bench wallet's storage statistic {name} is malformed")
+    raise ValueError(f"the storage statistic {name} is malformed")
+
+
+def storage_stat(account: dict[str, Any]) -> tuple[int, int, int, int] | None:
+    """(cells, bits, last_paid, due payment) from an account state answer, None when absent."""
+    stat = account.get("storage_stat")
+    if not isinstance(stat, dict):
+        return None
+    due = stat.get("due_payment")
+    return (
+        _count(stat.get("used_cells"), "used_cells"),
+        _count(stat.get("used_bits"), "used_bits"),
+        _count(stat.get("last_paid"), "last_paid"),
+        0 if due is None else _count(due, "due_payment"),
+    )
 
 
 class HorizonPassed(Exception):
@@ -738,6 +839,7 @@ def bench_wallet(
 class BenchWallet:
     def __init__(self, wallet: QuantumWallet, signer: Signer, remote: Remote):
         self.wallet, self.signer, self.remote = wallet, signer, remote
+        self.seqno = 0  # submissions of this run, for the journal's attempt ids
 
     @property
     def address(self) -> Address:
@@ -756,16 +858,10 @@ class BenchWallet:
 
     async def storage(self) -> tuple[int, int, int, int]:
         """(cells, bits, last_paid, due payment) of the wallet's storage as the node reports it."""
-        stat = (await self.remote.account(self.address)).get("storage_stat")
-        if not isinstance(stat, dict):
+        stat = storage_stat(await self.remote.account(self.address))
+        if stat is None:
             raise ValueError("the node reports no storage statistics for the bench wallet")
-        due = stat.get("due_payment")
-        return (
-            _count(stat.get("used_cells"), "used_cells"),
-            _count(stat.get("used_bits"), "used_bits"),
-            _count(stat.get("last_paid"), "last_paid"),
-            0 if due is None else _count(due, "due_payment"),
-        )
+        return stat
 
     def external(self, request: Cell, signature: bytes, deploy: bool) -> MessageAny:
         """The external of a signed request; a deploying external carries the StateInit."""
@@ -787,28 +883,112 @@ class BenchWallet:
         request = self.wallet.request(0, actions, 0)
         return self.external(request, bytes(SIGNATURE_BYTES), deploy)
 
-    async def send(self, actions: list[MessageAny], what: str, timeout: float, latest: int) -> int:
-        """Send one signed request; wait until its nonce is consumed. Returns the balance spent.
+    async def send(
+        self,
+        actions: list[MessageAny],
+        what: str,
+        timeout: float,
+        latest: int,
+        journal: jr.Journal,
+        role: str,
+    ) -> "Sent":
+        """Sign, journal and send one request, then confirm it by its transaction.
 
         The request expires at chain time ``latest`` at the latest, so the
         wallet cannot execute it after the horizon its storage bound covers.
+        Its attempt record is fsynced before the send starts. Settlement is
+        the wallet transaction whose inbound message is this external, with
+        every phase and every expected message checked; a nonce that moved
+        proves nothing. An unanswered or ambiguous send is never resent: it
+        ends ``unknown`` once ``timeout`` runs out without a proof.
         """
-        balance, nonce = await self.state()
+        _, nonce = await self.state()
         now = await self.remote.now()
         deadline = min(now + REQUEST_LIFETIME, latest)
         if deadline <= now:
             raise HorizonPassed(f"the {what} request would expire before chain time {now}")
         request = self.wallet.request(nonce or 0, actions, deadline)
+        # A signer timeout raises here: nothing was signed, journaled or sent.
         external = self.external(request, self.signer.sign(request.hash), nonce is None)
-        await self.remote.send(external)
-        deadline = time.monotonic() + timeout
-        while True:
-            after, now_nonce = await self.state()
-            if now_nonce is not None and now_nonce > (nonce or 0):
-                return balance - after
-            if time.monotonic() >= deadline:
-                raise RuntimeError(f"the bench wallet never executed the {what} request")
-            await asyncio.sleep(self.remote.poll)
+        cell = external.serialize()
+        record = jr.attempt_record(
+            role=role,
+            sender=raw(self.address),
+            wallet=None,
+            seqno=self.seqno,
+            nonce=nonce or 0,
+            deadline=deadline,
+            cell=cell,
+            actions=[(*action_target(m), 3) for m in actions],
+            what=what,
+            signed_at=now,
+        )
+        self.seqno += 1
+        journal.append(record)
+        try:
+            await self.remote.send(external)
+            error: BaseException | None = None
+        except Exception as caught:  # classified below; the send is never repeated
+            error = caught
+        state, reason = jr.send_outcome(error)
+        journal.event("sent", record["id"], state=state, reason=reason)
+        if state == "refused":
+            return Sent(record, "refused", reason)
+        verdict = await jr.confirm(
+            self.remote.rpc, record, self.remote.now, timeout, self.remote.poll
+        )
+        return settle(journal, record, verdict)
+
+
+@dataclass
+class Sent:
+    """One bench-wallet request: ``settled`` (executed as signed), ``failed`` (executed with a
+    failed phase or a missing message), ``not_executed`` (expired unexecuted), ``refused``
+    (the node did not take it) or ``unknown`` (no proof either way; never resent)."""
+
+    attempt: dict[str, Any]
+    state: str
+    reason: str | None
+    verdict: "jr.Verdict | None" = None
+    problems: list[str] = field(default_factory=list)
+
+    @property
+    def fee(self) -> int | None:
+        found = self.verdict.found if self.verdict is not None else None
+        return found.tx.fee if found is not None else None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.attempt["id"],
+            "external": self.attempt["external"],
+            "state": self.state,
+            "reason": self.reason,
+            "problems": self.problems,
+            "tx": self.verdict.as_dict() if self.verdict is not None else None,
+        }
+
+
+def action_target(message: MessageAny) -> tuple[str, int]:
+    """(raw destination, value) of an internal message the wallet is asked to send."""
+    info = message.info
+    if not isinstance(info, InternalMsgInfo) or not isinstance(info.dest, Address):
+        raise ValueError("a wallet action is not an internal message to an address")
+    return raw(info.dest), int(info.value.tomis)
+
+
+def settle(journal: jr.Journal, record: dict[str, Any], verdict: "jr.Verdict") -> Sent:
+    """Journal what the chain proved about a sent request, and its state."""
+    if verdict.state == "executed":
+        journal.event("observed", record["id"], **verdict.as_dict())
+        if verdict.problems or verdict.duplicates:
+            problems = verdict.problems + (["executed twice"] if verdict.duplicates else [])
+            return Sent(record, "failed", "; ".join(problems), verdict, problems)
+        return Sent(record, "settled", None, verdict)
+    if verdict.state == "not_executed":
+        journal.event("expired", record["id"], chain_now=verdict.chain_now)
+        return Sent(record, "not_executed", verdict.reason, verdict)
+    journal.event("unknown", record["id"], reason=verdict.reason)
+    return Sent(record, "unknown", verdict.reason, verdict)
 
 
 def window_counts(result: dict[str, Any]) -> dict[str, Any]:
@@ -838,6 +1018,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--key-file", type=Path, required=True, help="bench wallet key (JSON, mode 0600)"
     )
     p.add_argument("--signer", type=Path, required=True, help="bench-pq-signer executable")
+    p.add_argument(
+        "--signer-timeout",
+        type=float,
+        default=SIGNER_TIMEOUT,
+        help="seconds one signer call may take before it is killed",
+    )
+    p.add_argument(
+        "--state-dir",
+        type=Path,
+        help="the wallet lock and journal registry (default: <key-file>.state next to the key)",
+    )
     p.add_argument("--auth-tag", required=True, help="the network's 32-byte AUTH tag (hex)")
     p.add_argument("--build", type=Path, default=hopbench.ROOT / "build")
     p.add_argument("--hop-code", type=Path, help="precompiled hop.fc BOC instead of --build")
@@ -867,6 +1058,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     for name in ("deploy_wait", "drain_wait", "poll"):
         if not getattr(a, name) >= 0:
             p.error(f"--{name.replace('_', '-')} must not be negative")
+    if not (math.isfinite(a.signer_timeout) and a.signer_timeout > 0):
+        p.error("--signer-timeout must be a positive number of seconds")
     try:
         a.auth = bytes.fromhex(a.auth_tag)
     except ValueError:
@@ -956,18 +1149,8 @@ async def fee_plan(
             config, "start", bench.unsigned_external(start_actions, False), start_actions
         ),
     ]
-    cells, bits, last_paid, due = await bench.storage()
-    state_cells, state_bits = tree_size([bench.wallet.state_init.serialize()])
-    since = last_paid if last_paid > 0 else now
-    if since > horizon:
-        raise ValueError("the bench wallet's last storage payment lies past the fee horizon")
-    storage = storage_fee_bound(
-        config,
-        max(cells, state_cells + 1),
-        max(bits, state_bits + ACCOUNT_ROOT_BITS),
-        since,
-        horizon,
-        due,
+    storage = account_storage(
+        config, bench.wallet.state_init.serialize(), await bench.storage(), now, horizon
     )
     return config, wallet_fee_bound(externals, storage)
 
@@ -997,7 +1180,7 @@ async def run(a: argparse.Namespace) -> int:
 
 async def run_bounded(a: argparse.Namespace, caps: Caps, scratch: Path) -> int:
     key = load_key(a.key_file)
-    signer = Signer(a.signer, key)
+    signer = Signer(a.signer, key, a.signer_timeout)
     hop_code = load_code(a.hop_code, a.build, scratch / "contracts", "hop")
     wallet_code = load_code(a.wallet_code, a.build, scratch / "contracts", "wallet")
     rpcs = [PacedRpc(url, a.rpc_share) for url in a.rpc]
@@ -1074,6 +1257,58 @@ async def run_bounded(a: argparse.Namespace, caps: Caps, scratch: Path) -> int:
     if balance < bound.cost:
         return refuse(f"the bench wallet holds {balance} nanotos; the run may cost {bound.cost}")
 
+    # One invocation per wallet: the lock is held until the process ends, and every
+    # earlier attempt of this wallet is accounted for before a new signature.
+    try:
+        state = jr.WalletState(a.state_dir or jr.default_state_dir(a.key_file), raw(wallet.address))
+    except (jr.WalletLocked, OSError) as error:
+        return refuse(str(error))
+    try:
+        return await run_locked(
+            a, caps, scratch, state, remote, rpcs, bench, signer, hop_code, wallet, global_id,
+            cp12, addresses, deploy_actions, deploy_value, start_actions, horizon, config,
+            fees, bound, balance,
+        )  # fmt: skip
+    finally:
+        state.release()
+
+
+async def run_locked(
+    a: argparse.Namespace,
+    caps: Caps,
+    scratch: Path,
+    state: jr.WalletState,
+    remote: Remote,
+    rpcs: list[PacedRpc],
+    bench: "BenchWallet",
+    signer: Signer,
+    hop_code: Cell,
+    wallet: QuantumWallet,
+    global_id: int,
+    cp12: Any,
+    addresses: list[Address],
+    deploy_actions: list[MessageAny],
+    deploy_value: int,
+    start_actions: Any,
+    horizon: int,
+    config: FeeConfig,
+    fees: WalletFeeBound,
+    bound: Bound,
+    balance: int,
+) -> int:
+    report = await state.reconcile(remote.rpc, remote.now)
+    why = jr.refusal_of(report)
+    if why is not None:
+        print(json.dumps({"reconciled": report}, indent=2), flush=True)
+        return refuse(why)
+    # The deployment tree is derived from the public run seed: a tree already deployed
+    # would be funded a second time, so it is refused instead.
+    root = await remote.account(addresses[0])
+    if root.get("state") == "active":
+        return refuse(
+            f"the hop tree root {raw(addresses[0])} is already deployed; use another --seed"
+        )
+
     a.out = a.out.resolve()
     a.out.mkdir(parents=True, exist_ok=False)
     logging.basicConfig(
@@ -1101,28 +1336,62 @@ async def run_bounded(a: argparse.Namespace, caps: Caps, scratch: Path) -> int:
         "hop_code_hash": hop_code.hash.hex(),
     }
 
+    journal = jr.Journal(a.out / jr.NAME)
+    journal.append(
+        {
+            "type": "run",
+            "version": jr.VERSION,
+            "tool": "shard-bench-remote",
+            "wallet": raw(wallet.address),
+            "mc_start": await jr.head_of(remote.rpc),
+            "deadline_grace": jr.DEADLINE_GRACE,
+            "fee_horizon": horizon,
+            "time": time.time(),
+        }
+    )
+    state.register(journal.path)
+    record["journal"] = jr.NAME
+    record["externals"] = []
+
     def stop(outcome: str, why: str, code: int) -> int:
         record["outcome"], record["stopped"] = outcome, why
         record["rpc"] = [r.stats() for r in rpcs]
         out_record.write_text(json.dumps(record, indent=2) + "\n")
+        journal.append({"type": "end", "exit_status": code, "time": time.time()})
         log.error(why)
         return code
 
-    spent_deploy = await bench.send(deploy_actions, "deployment", a.deploy_wait, horizon)
-    deploy_fee = spent_deploy - deploy_value
+    try:
+        deployed = await bench.send(
+            deploy_actions, "deployment", a.deploy_wait, horizon, journal, "deployment"
+        )
+    except SignerTimeout as error:
+        # Nothing was signed or sent: the attempt is not in the journal.
+        return stop("REFUSED", f"deployment: {error}", REFUSED)
+    except HorizonPassed as error:
+        return stop("REFUSED", str(error), REFUSED)
+    record["externals"].append({"what": "deployment", **deployed.as_dict()})
+    if deployed.state != "settled":
+        return stop(
+            "STOPPED", f"the deployment is {deployed.state}: {deployed.reason}", INCONCLUSIVE
+        )
+    if deployed.fee is None:
+        return stop("STOPPED", "the node reported no fee for the deployment", INCONCLUSIVE)
+    deploy_fee = deployed.fee
     record["deployment_wallet_fee"] = deploy_fee
     # A cross-check of the fee model on a real transaction: the deployment
     # cannot cost more than its own bound plus all the storage the run may owe.
     deploy_bound = fees.externals[0].total + fees.storage.fee
     if deploy_fee > deploy_bound:
+        # Already sent, so not a refusal: the run stops, like any other stop after a send.
         return stop(
-            "REFUSED",
+            "STOPPED",
             f"the deployment's wallet fee {deploy_fee} exceeds its derived bound {deploy_bound}",
-            REFUSED,
+            INCONCLUSIVE,
         )
     missing = await remote.wait_active(addresses, a.deploy_wait)
     if missing:
-        return stop("REFUSED", f"{len(missing)} hop accounts never became active", REFUSED)
+        return stop("STOPPED", f"{len(missing)} hop accounts never became active", INCONCLUSIVE)
     before = await remote.balances(addresses)
 
     opening = await t2collect.wait_empty_queue(remote.rpc, a.drain_wait, a.poll)
@@ -1139,10 +1408,16 @@ async def run_bounded(a: argparse.Namespace, caps: Caps, scratch: Path) -> int:
     deadline = await remote.now() + a.duration
     record["deadline"] = deadline
     try:
-        spent_start = await bench.send(start_actions(deadline), "start", a.drain_wait, horizon)
-    except HorizonPassed as error:
-        return stop("INCONCLUSIVE", str(error), INCONCLUSIVE)
-    record["start_wallet_fee"] = spent_start - caps.load_funding
+        started = await bench.send(
+            start_actions(deadline), "start", a.drain_wait, horizon, journal, "start"
+        )
+    except (HorizonPassed, SignerTimeout) as error:
+        # The deployment was sent already, so this is a stop, not a refusal.
+        return stop("STOPPED", f"start: {error}", INCONCLUSIVE)
+    record["externals"].append({"what": "start", **started.as_dict()})
+    if started.state != "settled":
+        return stop("INCONCLUSIVE", f"the start is {started.state}: {started.reason}", INCONCLUSIVE)
+    record["start_wallet_fee"] = started.fee
     past = await remote.wait_past(deadline + 5, a.drain_wait)
     if past is None:
         return stop(
@@ -1209,6 +1484,7 @@ async def run_bounded(a: argparse.Namespace, caps: Caps, scratch: Path) -> int:
         "rpc": [r.stats() for r in rpcs],
     }
     out_record.write_text(json.dumps(record, indent=2) + "\n")
+    journal.append({"type": "end", "exit_status": exit_status(t2_status), "time": time.time()})
     log.info("T2 %s; stranded %d nanotos", t2_status, record["stranded"]["hop_accounts_total"])
     return exit_status(t2_status)
 

@@ -975,7 +975,7 @@ class Parsing(unittest.TestCase):
         }
         tx = t2collect.parse_transaction(raw, (0, LEFT, 5))
         self.assertEqual(tx.account, RUN[1])
-        self.assertEqual(tx.in_msg, Msg(h("m1"), "internal", RUN[0], RUN[1], False))
+        self.assertEqual(tx.in_msg, Msg(h("m1"), "internal", RUN[0], RUN[1], False, 5))
         self.assertEqual(tx.out_msgs[0].kind, "unknown")
         self.assertEqual((tx.activated, tx.skipped_actions, tx.action_success), (True, 2, True))
 

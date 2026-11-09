@@ -139,7 +139,14 @@ class QuantumWallet:
             raise ValueError("deployment needs positive funding")
         return transfer_message(sender, self.address, value, init=self.state_init, bounce=False)
 
-    def request(self, nonce: int, actions: list[MessageAny], deadline: int, epoch: int = 0) -> Cell:
+    def request(
+        self,
+        nonce: int,
+        actions: list[MessageAny],
+        deadline: int,
+        epoch: int = 0,
+        mode: int = 3,
+    ) -> Cell:
         for name, value, bits in (
             ("nonce", nonce, 64),
             ("deadline", deadline, 32),
@@ -147,7 +154,9 @@ class QuantumWallet:
         ):
             if type(value) is not int or not 0 <= value < (1 << bits):
                 raise ValueError(f"{name} must fit uint{bits}")
-        payload = Builder().store_uint(QSP_EXECUTE_TAG, 32).store_ref(out_list(actions)).end_cell()
+        payload = (
+            Builder().store_uint(QSP_EXECUTE_TAG, 32).store_ref(out_list(actions, mode)).end_cell()
+        )
         return (
             Builder()
             .store_uint(QSP_REQUEST, 32)
