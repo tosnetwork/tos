@@ -80,6 +80,8 @@ class External:
     tx_hash: str | None = None
     tx_mc: int | None = None
     tx_utime: int | None = None
+    fee_bound: int | None = None  # the external's derived fee bound, storage aside
+    tx_fee: int | None = None  # total_fees of its transaction, when the node reports it
     failure: list[str | None] = field(default_factory=list)
     emitted: list[str | None] = field(default_factory=list)
     recipient_tx: list[str | None] = field(default_factory=list)
@@ -227,7 +229,7 @@ class Ledger:
             return None
         if ext.submission == SUBMIT_REFUSED:
             self._anomaly("a refused external executed", msg=ext.msg_hash, tx=tx.hash)
-        ext.tx_hash, ext.tx_mc, ext.tx_utime = tx.hash, mc, utime
+        ext.tx_hash, ext.tx_mc, ext.tx_utime, ext.tx_fee = tx.hash, mc, utime, tx.fee
         if tx.aborted or tx.action_success is not True:
             why = "transaction aborted" if tx.aborted else "action phase failed"
             ext.failure = [why] * ext.size
@@ -325,6 +327,8 @@ class Ledger:
                 "tx": ext.tx_hash,
                 "tx_mc": ext.tx_mc,
                 "tx_utime": ext.tx_utime,
+                "fee_bound": ext.fee_bound,
+                "tx_fee": ext.tx_fee,
                 "actions": actions,
             }
 

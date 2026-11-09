@@ -4,16 +4,28 @@ Every read and send goes through ``shard.rpc.PacedRpc`` inside
 ``--rpc-share`` of each node's per-source budget; nothing on this path opens a
 liteserver connection or boots a node. A run:
 
-1. checks the plan and computes its bound: transfers, externals, and what the
-   run may take out of the bench wallet (load-wallet funding plus the bench
-   wallet's own fees), with the load wallets' fee bound and the recoverable
-   floor shown separately. It prints the bound and refuses to go on over
-   ``--max-cost`` or ``--max-transfers``. Nothing is read or sent before;
+1. checks the plan and computes its bound: transfers, externals, and the
+   load-wallet funding the run may take out of the bench wallet. It prints
+   the bound and refuses to go on when the funding alone exceeds
+   ``--max-cost`` or the transfers ``--max-transfers``. Nothing is read or
+   sent before;
 2. derives ``--wallets`` self-pay Quantum load wallets from the bench key
    (each has its own ML-DSA-44 seed, derived from the bench seed and never
-   written anywhere, and the bench key's RESCUE key), then deploys or tops up
-   from the bench wallet in multi-action externals;
-3. runs the steps: from ``--start-rate`` transfers/s, multiplied by
+   written anywhere, and the bench key's RESCUE key), reads every one of
+   them and the gas, forwarding and storage prices of the live
+   configuration (ConfigParams 21, 25 and 18), and derives the fee bound of
+   the whole planned ramp with ``shard.remote``'s fee model: every funding
+   external of the bench wallet and its storage, every transfer external of
+   every step and repeat (each with its exact action count and message
+   sizes), every return sweep, the computation on everything the load
+   wallets receive, and their storage. Every request's deadline is capped at
+   the horizon that storage bound covers. It refuses when the funding plus
+   the bench wallet's fee bound exceeds ``--max-cost``, or the load wallets'
+   fee bound exceeds their funding. Nothing is written or sent before this
+   step either;
+3. deploys or tops up the load wallets from the bench wallet in
+   multi-action externals, and checks each one's real fee against its bound;
+4. runs the steps: from ``--start-rate`` transfers/s, multiplied by
    ``--factor`` per step, ``--step-seconds`` each. Every external carries up to
    ``--batch`` transfers, one send action each (mode 3: pay fees separately,
    ignore errors), from one load wallet to other load wallets. A follower
@@ -22,8 +34,9 @@ liteserver connection or boots a node. A run:
    finality, and applies the pass rule over its window after
    ``--warmup``. A step spanning a layout change does not count and is
    repeated up to ``--layout-repeats`` times; the ramp ends at the first
-   counted failing step;
-4. writes the ledger (one line per external, every action's outcome) and the
+   counted failing step. Every executed transfer external's reported fee is
+   checked against its bound, and one over it stops the ramp;
+5. writes the ledger (one line per external, every action's outcome) and the
    results, then returns what is left in the load wallets to ``--return-to``
    (default: the bench wallet).
 
@@ -31,6 +44,11 @@ A load wallet carries one external at a time. An ambiguous submission is
 never resent: its wallet is held until the request's deadline has passed on
 chain, and then the wallet's nonce is read again before it sends new
 transfers.
+
+Exit statuses (``exit_status``): 0 when the ramp ran as specified (every
+step passed, or it ended at the first counted failing step), 1 when the
+ledger saw an anomaly or a duplicate, 3 when it was refused before anything
+was sent, 4 when it stopped after sending without an answer.
 
 Run: ``bench/run_t4_ramp.py --help``.
 """
@@ -47,6 +65,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -70,7 +89,6 @@ from t4.ledger import NO_WALLET, External, Ledger, StepRule, step_layout, step_m
 
 NANO = remote.NANO
 REFUSED = remote.REFUSED
-STOPPED = 4
 # The node refuses externals above 64 KiB; keep the local bench's headroom.
 EXT_MESSAGE_BUDGET = 60_000
 # The wallet's error code for a request whose nonce is not the current one.
@@ -100,9 +118,6 @@ class Plan:
     repeats: int
     transfer_value: int  # nanotos; action i of an external carries this plus i
     wallet_funding: int  # nanotos each load wallet is funded or topped up to
-    wallet_fee_cap: int  # nanotos one bench-wallet external may cost in fees
-    external_fee_cap: int  # nanotos one load-wallet external may cost in its own fees
-    transfer_fee_cap: int  # nanotos one transfer may cost: forward fee and recipient fees
     deploy_batch: int  # deployment actions per bench-wallet external
 
     def rates(self) -> list[float]:
@@ -134,13 +149,7 @@ def validate_plan(plan: Plan) -> Plan:
         raise ValueError("the step factor must be in [1, 16]")
     if max(plan.rates()) > 1_000_000:
         raise ValueError("the last step's rate exceeds 1000000 transfers/s")
-    for name in (
-        "transfer_value",
-        "wallet_funding",
-        "wallet_fee_cap",
-        "external_fee_cap",
-        "transfer_fee_cap",
-    ):
+    for name in ("transfer_value", "wallet_funding"):
         _int_in(name, getattr(plan, name), 1, (1 << 120) - 1)
     return plan
 
@@ -153,6 +162,24 @@ def externals_for(transfers: int, batch: int) -> int:
     return -(-transfers // batch)
 
 
+def planned_sizes(plan: Plan) -> dict[int, int]:
+    """How many load externals of each action count the whole ramp may send.
+
+    Every step runs up to ``1 + repeats`` times; a step of ``total`` transfers
+    sends ``total // batch`` full externals and one with the rest, exactly as
+    ``Ramp.step`` cuts them.
+    """
+    validate_plan(plan)
+    runs = 1 + plan.repeats
+    sizes: Counter[int] = Counter()
+    for rate in plan.rates():
+        full, rest = divmod(transfers_in(rate, plan.step_seconds), plan.batch)
+        sizes[plan.batch] += runs * full
+        if rest:
+            sizes[rest] += runs
+    return {k: n for k, n in sorted(sizes.items()) if n}
+
+
 @dataclass(frozen=True)
 class Bound:
     transfers: int
@@ -163,37 +190,43 @@ class Bound:
     bench_fees: int
     load_fees: int
     cost: int
+    fee_spend: int
     recoverable_floor: int
 
     def as_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = asdict(self)
         out["cost_tos"] = self.cost / NANO
         out["load_fees_tos"] = self.load_fees / NANO
+        out["fee_spend_tos"] = self.fee_spend / NANO
         out["recoverable_floor_tos"] = self.recoverable_floor / NANO
         return out
 
 
-def work_bound(plan: Plan) -> Bound:
+def work_bound(plan: Plan, fees: "RampFees | None" = None) -> Bound:
     """An upper bound on the run's transfers and externals, and on its cost to the bench wallet.
 
     Every step may run ``1 + repeats`` times. The bench wallet sends at most
     one funding action per load wallet, ``deploy_batch`` per external, so the
-    most it can lose is that funding plus its own fees. The load wallets pay
-    their fees out of that funding; the fee bound covers every load external
-    (transfers and the final sweep) and every transfer, and what is left of
-    the funding is recoverable.
+    most it can lose is that funding plus its own fees (``fees.bench_total``).
+    The load wallets pay every fee of theirs out of that funding:
+    ``fees.load_total`` bounds them over the whole planned ramp (every
+    transfer external of every step and repeat, every sweep, the computation
+    on everything they receive and their storage), and ``refusal`` requires
+    it to fit inside the funding, so adding it to the cost would count the
+    same nanotos twice. ``fee_spend`` is the most the run can burn in fees
+    when the sweep returns the rest. Before the configuration is read the
+    bound is taken with no fees, which already refuses a run whose funding
+    alone exceeds ``--max-cost``.
     """
-    validate_plan(plan)
-    runs = 1 + plan.repeats
-    per_step = [transfers_in(r, plan.step_seconds) for r in plan.rates()]
-    transfers = runs * sum(per_step)
-    load_externals = runs * sum(externals_for(t, plan.batch) for t in per_step)
-    deploy = externals_for(plan.wallets, plan.deploy_batch)
+    sizes = planned_sizes(plan)
+    transfers = sum(size * n for size, n in sizes.items())
+    load_externals = sum(sizes.values())
+    deploy = (
+        len(fees.funding) if fees is not None else externals_for(plan.wallets, plan.deploy_batch)
+    )
     funding = plan.wallets * plan.wallet_funding
-    bench_fees = deploy * plan.wallet_fee_cap
-    load_fees = (
-        load_externals + plan.wallets
-    ) * plan.external_fee_cap + transfers * plan.transfer_fee_cap
+    bench_fees = fees.bench_total if fees is not None else 0
+    load_fees = fees.load_total if fees is not None else 0
     return Bound(
         transfers,
         load_externals,
@@ -203,6 +236,7 @@ def work_bound(plan: Plan) -> Bound:
         bench_fees,
         load_fees,
         funding + bench_fees,
+        bench_fees + load_fees,
         max(0, funding - load_fees),
     )
 
@@ -322,9 +356,25 @@ def destinations(sender: int, seqno: int, size: int, batch: int, wallets: int) -
     return [(sender + 1 + (seqno * batch + i) % (wallets - 1)) % wallets for i in range(size)]
 
 
+def transfer_actions(
+    sender: Address, destinations: list[Address], values: list[int]
+) -> list[MessageAny]:
+    """The send actions of one transfer external; the sender and the fee bound build them alike."""
+    return [transfer_message(sender, d, v) for d, v in zip(destinations, values, strict=True)]
+
+
+def unsigned_external(
+    wallet: QuantumWallet, actions: list[MessageAny], mode: int = SEND_MODE
+) -> MessageAny:
+    """A load wallet's external as it will be sent, with a placeholder of the signature's size.
+
+    Nonce and deadline are fixed-width fields, so their values do not change the size.
+    """
+    return wallet.external(wallet.request(0, actions, 1, mode=mode), bytes(SIGNATURE_BYTES))
+
+
 def external_size(wallet: QuantumWallet, actions: list[MessageAny], mode: int = SEND_MODE) -> int:
-    request = wallet.request(0, actions, 1, mode=mode)
-    return len(wallet.external(request, bytes(SIGNATURE_BYTES)).serialize().to_boc())
+    return len(unsigned_external(wallet, actions, mode).serialize().to_boc())
 
 
 def size_plan(code: Cell, batch: int, value: int, funding: int) -> tuple[int, int, int]:
@@ -350,6 +400,187 @@ def size_plan(code: Cell, batch: int, value: int, funding: int) -> tuple[int, in
             break
         take = max(0, min(take - 1, take * EXT_MESSAGE_BUDGET // deploy_bytes - 1))
     return transfer_bytes, take, deploy_bytes
+
+
+# ─── the fee bound from the live configuration ───────────────────────
+#
+# Every term comes from shard.remote's fee model (ConfigParams 21, 25 and 18
+# priced as crypto/block/transaction.cpp does); nothing here restates it.
+# The bench wallet and every load wallet are self-pay Quantum wallets on the
+# basechain (QuantumWallet.address is always workchain 0), so ConfigParams 21
+# and 25 price all of them; ``derive_fees`` refuses any other workchain.
+
+
+@dataclass(frozen=True)
+class RampFees:
+    """The fee bound of the whole planned ramp, every term derived before anything is sent."""
+
+    horizon: int
+    funding: list[remote.ExternalFee]  # the bench wallet's funding externals, in send order
+    bench_storage: remote.StorageFee
+    transfers: dict[int, remote.ExternalFee]  # one load external, by its action count
+    transfer_counts: dict[int, int]  # load externals of each action count the plan may send
+    sweep: remote.ExternalFee  # one load wallet's return sweep
+    receipts: int  # load wallets' computation on the funding they receive
+    recipients: int  # load wallets' computation on every planned transfer they receive
+    load_storage: list[remote.StorageFee]  # one per load wallet, in index order
+
+    @property
+    def bench_total(self) -> int:
+        return sum(x.total for x in self.funding) + self.bench_storage.fee
+
+    @property
+    def transfer_total(self) -> int:
+        return sum(self.transfers[k].total * n for k, n in self.transfer_counts.items())
+
+    @property
+    def load_total(self) -> int:
+        storage = sum(x.fee for x in self.load_storage)
+        sweeps = len(self.load_storage) * self.sweep.total
+        return self.transfer_total + sweeps + self.receipts + self.recipients + storage
+
+    def as_dict(self) -> dict[str, Any]:
+        storage = [x.fee for x in self.load_storage]
+        return {
+            "horizon": self.horizon,
+            "bench": {
+                "funding_externals": [asdict(x) for x in self.funding],
+                "storage": asdict(self.bench_storage),
+                "total": self.bench_total,
+            },
+            "load": {
+                "transfer_externals": {
+                    str(k): {
+                        "count": self.transfer_counts[k],
+                        **asdict(self.transfers[k]),
+                    }
+                    for k in sorted(self.transfer_counts)
+                },
+                "transfer_total": self.transfer_total,
+                "sweep": asdict(self.sweep),
+                "sweeps": len(self.load_storage),
+                "receipts": self.receipts,
+                "recipients": self.recipients,
+                "storage_per_wallet_max": max(storage, default=0),
+                "storage_total": sum(storage),
+                "total": self.load_total,
+            },
+        }
+
+
+# Chain seconds past the fee horizon a transfer sent before it may still be
+# delivered in; the load wallets' storage bound runs this much further.
+DELIVERY_SLACK = 3600
+
+
+def fee_horizon(now: int, plan: Plan, a: argparse.Namespace, funding_externals: int) -> int:
+    """The latest chain time any request of the run may execute at.
+
+    The funding externals each wait at most ``--deploy-wait``, as does the
+    activation check; every step attempt runs ``--step-seconds``, drains and
+    reaches the head within ``--drain`` each and waits ``--finality-wait``;
+    the end waits for the last deadline and finality, then sweeps. Every
+    request is signed to expire by this horizon, so the storage bound up to
+    it holds even if chain time runs ahead of these waits.
+    """
+    funding = (funding_externals + 1) * a.deploy_wait
+    attempt = plan.step_seconds + 2 * a.drain + a.finality_wait
+    ramp = (1 + plan.repeats) * plan.steps * attempt
+    tail = a.drain + 2 * a.lifetime + a.deadline_grace + a.finality_wait
+    horizon = now + 2 * remote.REQUEST_LIFETIME + math.ceil(funding + ramp + tail)
+    if not now < horizon < (1 << 32):
+        raise ValueError(f"the fee horizon {horizon} does not fit a request deadline")
+    return horizon
+
+
+def transfer_bounds(
+    config: remote.FeeConfig, wallets: list[QuantumWallet], plan: Plan
+) -> dict[int, remote.ExternalFee]:
+    """The fee bound of one load external of every action count the plan uses.
+
+    The external is built as ``Ramp.issue`` builds it: wallet 0 sending
+    ``transfer_value + i`` to its peers in turn. Addresses, nonce and
+    deadline are fixed-width, so every wallet's external of that count has
+    the same size, and so the same bound.
+    """
+    out: dict[int, remote.ExternalFee] = {}
+    sender = wallets[0]
+    for size in planned_sizes(plan):
+        peers = destinations(0, 0, size, plan.batch, len(wallets))
+        values = [plan.transfer_value + i for i in range(size)]
+        actions = transfer_actions(sender.address, [wallets[p].address for p in peers], values)
+        out[size] = remote.external_fee_bound(
+            config, f"transfer x{size}", unsigned_external(sender, actions), actions
+        )
+    return out
+
+
+def derive_fees(
+    config: remote.FeeConfig,
+    plan: Plan,
+    horizon: int,
+    now: int,
+    bench: BenchWallet,
+    bench_deployed: bool,
+    bench_stat: tuple[int, int, int, int],
+    funding_actions: list[MessageAny],
+    funding_amounts: list[int],
+    wallets: list[QuantumWallet],
+    wallet_stats: list[tuple[int, int, int, int] | None],
+    sweep_target: Address,
+) -> RampFees:
+    """The whole ramp's fee bound from the configuration and what the survey read."""
+    if config.workchain != 0:
+        raise ValueError("the ramp's wallets run on the basechain")
+    for what, address in [("bench wallet", bench.address)] + [
+        (f"load wallet {i}", w.address) for i, w in enumerate(wallets)
+    ]:
+        if address.wc != config.workchain:
+            raise ValueError(f"the {what} is on workchain {address.wc}, not the basechain")
+    if len(wallet_stats) != len(wallets) or len(funding_amounts) != len(funding_actions):
+        raise ValueError("the survey does not match the load wallets")
+    funding = [
+        remote.external_fee_bound(
+            config,
+            f"funding {k}",
+            bench.unsigned_external(
+                funding_actions[i : i + plan.deploy_batch], k == 0 and not bench_deployed
+            ),
+            funding_actions[i : i + plan.deploy_batch],
+        )
+        for k, i in enumerate(range(0, len(funding_actions), plan.deploy_batch))
+    ]
+    bench_storage = remote.account_storage(
+        config, bench.wallet.state_init.serialize(), bench_stat, now, horizon
+    )
+    counts = planned_sizes(plan)
+    transfers = transfer_bounds(config, wallets, plan)
+    sweep_actions = [transfer_message(wallets[0].address, sweep_target, 0)]
+    sweep = remote.external_fee_bound(
+        config, "sweep", unsigned_external(wallets[0], sweep_actions, SWEEP_MODE), sweep_actions
+    )
+    gas = config.gas
+    receipts = sum(gas.internal_fee(x) for x in funding_amounts)
+    recipients = sum(
+        n * sum(gas.internal_fee(plan.transfer_value + i) for i in range(size))
+        for size, n in counts.items()
+    )
+    until = horizon + DELIVERY_SLACK
+    load_storage = [
+        remote.account_storage(config, w.state_init.serialize(), s, now, until)
+        for w, s in zip(wallets, wallet_stats, strict=True)
+    ]
+    return RampFees(
+        horizon,
+        funding,
+        bench_storage,
+        transfers,
+        counts,
+        sweep,
+        receipts,
+        recipients,
+        load_storage,
+    )
 
 
 # ─── send outcomes ───────────────────────────────────────────────────
@@ -464,8 +695,13 @@ class Ramp:
     signer: Signs
     wallets: list[LoadWallet]
     ledger: Ledger
+    horizon: int  # no request may expire after this chain time (``fee_horizon``)
+    fee_bounds: dict[int, int]  # one load external's fee bound by action count, storage aside
+    storage_bounds: list[int]  # each load wallet's storage bound over the whole run
     follower: Follower | None = None
     stop_reason: str | None = None
+    fee_overruns: list[dict[str, Any]] = field(default_factory=list)
+    fees_unreported: int = 0
     tasks: set[asyncio.Task[None]] = field(default_factory=set)
     steps_done: list[dict[str, Any]] = field(default_factory=list)
     stated_rate: float | None = None
@@ -489,6 +725,30 @@ class Ramp:
         w.nonce = max(w.nonce, ext.nonce + 1)
         if w.busy is ext:
             w.busy = None
+        self.check_fee(ext)
+
+    def check_fee(self, ext: External) -> None:
+        """Stop the ramp when an executed external cost more than its derived bound.
+
+        The node reports total_fees, which holds the import, storage and gas
+        fees and the share of every forwarding fee collected in this block;
+        it never exceeds what the wallet paid, so a total_fees over the
+        bound plus all the storage the wallet may owe proves the fee model
+        wrong, and with it the cost bound.
+        """
+        if ext.tx_fee is None or ext.fee_bound is None:
+            self.fees_unreported += 1
+            return
+        limit = ext.fee_bound + self.storage_bounds[ext.wallet]
+        if ext.tx_fee <= limit:
+            return
+        self.fee_overruns.append({"external": ext.msg_hash, "fee": ext.tx_fee, "bound": limit})
+        if self.stop_reason is None:
+            self.stop_reason = (
+                f"load external {ext.msg_hash} cost {ext.tx_fee} nanotos in fees, over its"
+                f" derived bound {limit}"
+            )
+            log.error("stopping new submissions: %s", self.stop_reason)
 
     def release(self, ext: External, resync: bool) -> None:
         w = self.wallets[ext.wallet]
@@ -604,11 +864,22 @@ class Ramp:
             if endpoint is None:
                 self.ledger.refuse(ext, "local: no send budget")
                 continue
-            ext.deadline = self.chain_now() + self.a.lifetime
-            actions = [
-                transfer_message(w.wallet.address, Address(d), v)
-                for d, v in zip(ext.destinations, ext.values)
-            ]
+            now = self.chain_now()
+            # Capped at the fee horizon, so the storage bound covers every execution.
+            ext.deadline = min(now + self.a.lifetime, self.horizon)
+            if ext.deadline <= now:
+                self.ledger.refuse(ext, "local: past the fee horizon")
+                if self.stop_reason is None:
+                    self.stop_reason = f"chain time {now} reached the fee horizon {self.horizon}"
+                    log.error("stopping new submissions: %s", self.stop_reason)
+                continue
+            ext.fee_bound = self.fee_bounds.get(size)
+            if ext.fee_bound is None:
+                self.ledger.refuse(ext, f"local: no fee bound for {size} actions")
+                continue
+            actions = transfer_actions(
+                w.wallet.address, [Address(d) for d in ext.destinations], list(ext.values)
+            )
             request = w.wallet.request(ext.nonce, actions, ext.deadline, mode=SEND_MODE)
             w.busy = ext
             ready.append((ext, w, endpoint, request))
@@ -790,9 +1061,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--layout-repeats", type=int, default=1)
     p.add_argument("--transfer-value", type=float, default=0.001, help="TOS per transfer")
     p.add_argument("--wallet-funding", type=float, required=True, help="TOS per load wallet")
-    p.add_argument("--wallet-fee-cap", type=float, default=1.0, help="TOS per bench external")
-    p.add_argument("--external-fee-cap", type=float, default=0.1, help="TOS per load external")
-    p.add_argument("--transfer-fee-cap", type=float, default=0.01, help="TOS per transfer")
     p.add_argument("--max-cost", type=float, required=True, help="TOS the run may cost at most")
     p.add_argument("--max-transfers", type=int, required=True)
     p.add_argument("--tolerance", type=float, default=0.01, help="completed vs offered")
@@ -811,13 +1079,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--poll", type=float, default=0.5)
     p.add_argument("--tick", type=float, default=0.1)
     p.add_argument("--stop-file", type=Path, help="stop new submissions once this file exists")
-    p.add_argument("--return-to", help="address for the load wallets' leftovers")
+    p.add_argument("--return-to", help="basechain address for the load wallets' leftovers")
     p.add_argument("--no-sweep", action="store_true", help="leave the load wallets funded")
     a = p.parse_args(argv)
     if not 0 < a.rpc_share <= 1:
         p.error("--rpc-share must be in (0, 1]")
     if not 1 <= a.lifetime <= 3000:
         p.error("--lifetime must be in [1, 3000] seconds")
+    for name in ("deadline_grace", "drain", "finality_wait", "deploy_wait", "poll", "tick"):
+        value = getattr(a, name)
+        if not (math.isfinite(value) and value >= 0):
+            p.error(f"--{name.replace('_', '-')} must be a finite non-negative number")
     try:
         a.auth = bytes.fromhex(a.auth_tag)
     except ValueError:
@@ -851,67 +1123,135 @@ def plan_of(a: argparse.Namespace, deploy_batch: int) -> Plan:
         repeats=a.layout_repeats,
         transfer_value=nano(a.transfer_value),
         wallet_funding=nano(a.wallet_funding),
-        wallet_fee_cap=nano(a.wallet_fee_cap),
-        external_fee_cap=nano(a.external_fee_cap),
-        transfer_fee_cap=nano(a.transfer_fee_cap),
         deploy_batch=deploy_batch,
     )
 
 
-async def prepare_wallets(
-    bench: BenchWallet,
-    remote_: Remote,
-    wallets: list[LoadWallet],
-    plan: Plan,
-    deploy_wait: float,
-) -> dict[str, Any]:
-    """Deploy every load wallet that is not active and top up every one below its funding."""
-    actions: list[MessageAny] = []
-    amounts: list[int] = []
-    deployed = topped = 0
+# ─── exit statuses ───────────────────────────────────────────────────
+#
+# 0 PASSED   the ramp ran as specified: every step counted and passed, or it
+#            ended at the first counted failing step (the stated rate is the
+#            last passing step's, None when step 0 failed);
+# 1 FAILED   the ledger saw an anomaly or a duplicate: a transfer or external
+#            the chain showed does not match what was sent, so no rate holds;
+# 3 REFUSED  refused before anything was sent (shard.remote.REFUSED): a plan
+#            or bound over its limit, or no fee bound, with no out directory;
+# 4 STOPPED  stopped after sending without an answer (shard.remote.INCONCLUSIVE):
+#            a stop file, a stalled head, no stable layout within the repeats,
+#            the fee horizon reached, a real fee over its derived bound, a
+#            funding or activation failure, or an unexpected error.
+PASSED = 0
+FAILED = 1
+STOPPED = remote.INCONCLUSIVE
+
+
+def exit_status(stop_reason: str | None, anomalies: int, duplicates: int) -> int:
+    """The process status of a ramp that sent something; a ledger anomaly outranks a stop."""
+    if anomalies or duplicates:
+        return FAILED
+    if stop_reason is not None:
+        return STOPPED
+    return PASSED
+
+
+# ─── preparation: survey, bound, funding ─────────────────────────────
+
+
+class Stopped(Exception):
+    """The run stopped after it sent something, before the ramp could start."""
+
+
+@dataclass
+class Survey:
+    """What the load wallets need, read before anything is sent."""
+
+    actions: list[MessageAny]
+    amounts: list[int]
+    deployed: int
+    topped: int
+    stats: list[tuple[int, int, int, int] | None]
+
+
+async def survey(
+    bench: BenchWallet, remote_: Remote, wallets: list[LoadWallet], plan: Plan
+) -> Survey:
+    """Read every load wallet; the actions that deploy or top it up to its funding. Reads only."""
+    out = Survey([], [], 0, 0, [])
     for w in wallets:
         state = await remote_.account(w.wallet.address)
         balance = int(state.get("balance", 0))
+        stat = remote.storage_stat(state)
         if state.get("state") == "active":
             data = state.get("data")
             if not isinstance(data, str) or not data:
                 raise ValueError(f"load wallet {w.index} is active but has no data")
+            if stat is None:
+                raise ValueError(
+                    f"the node reports no storage statistics for load wallet {w.index}"
+                )
             w.nonce = primary_nonce(Cell.one_from_boc(base64.b64decode(data)))
             if balance < plan.wallet_funding:
                 amount = plan.wallet_funding - balance
-                actions.append(transfer_message(bench.address, w.wallet.address, amount))
-                amounts.append(amount)
-                topped += 1
+                out.actions.append(transfer_message(bench.address, w.wallet.address, amount))
+                out.amounts.append(amount)
+                out.topped += 1
         else:
-            actions.append(w.wallet.deployment_message(bench.address, plan.wallet_funding))
-            amounts.append(plan.wallet_funding)
-            deployed += 1
-    fees: list[int] = []
-    for i in range(0, len(actions), plan.deploy_batch):
-        chunk = actions[i : i + plan.deploy_batch]
-        attached = sum(amounts[i : i + plan.deploy_batch])
-        spent = await bench.send(chunk, "load-wallet funding", deploy_wait)
+            out.actions.append(w.wallet.deployment_message(bench.address, plan.wallet_funding))
+            out.amounts.append(plan.wallet_funding)
+            out.deployed += 1
+        out.stats.append(stat)
+    return out
+
+
+async def fund(
+    bench: BenchWallet,
+    remote_: Remote,
+    wallets: list[LoadWallet],
+    plan: Plan,
+    found: Survey,
+    fees: RampFees,
+    deploy_wait: float,
+) -> dict[str, Any]:
+    """Send the surveyed funding, checking every external's real fee against its bound."""
+    paid: list[int] = []
+    for k, i in enumerate(range(0, len(found.actions), plan.deploy_batch)):
+        chunk = found.actions[i : i + plan.deploy_batch]
+        attached = sum(found.amounts[i : i + plan.deploy_batch])
+        try:
+            spent = await bench.send(chunk, "load-wallet funding", deploy_wait, fees.horizon)
+        except (remote.HorizonPassed, RuntimeError, ValueError, RpcError, RateLimited) as error:
+            raise Stopped(f"funding external {k}: {error}") from error
         fee = spent - attached
-        fees.append(fee)
-        if fee > plan.wallet_fee_cap:
-            raise RuntimeError(f"a funding external cost {fee} nanotos in fees, over the cap")
+        paid.append(fee)
+        # Cross-check the fee model on a real transaction: no funding external may
+        # cost more than its own bound plus all the storage the bench wallet may owe.
+        limit = fees.funding[k].total + fees.bench_storage.fee
+        if fee > limit:
+            raise Stopped(
+                f"funding external {k} cost {fee} nanotos in fees, over its bound {limit}"
+            )
     missing = await remote_.wait_active([w.wallet.address for w in wallets], deploy_wait)
     if missing:
-        raise RuntimeError(f"{len(missing)} load wallets never became active")
+        raise Stopped(f"{len(missing)} load wallets never became active")
     return {
-        "deployed": deployed,
-        "topped_up": topped,
-        "funding_attached": sum(amounts),
-        "funding_fees": fees,
+        "deployed": found.deployed,
+        "topped_up": found.topped,
+        "funding_attached": sum(found.amounts),
+        "funding_fees": paid,
+        "funding_fee_bounds": [x.total + fees.bench_storage.fee for x in fees.funding],
     }
 
 
 async def sweep(ramp: Ramp, target: Address) -> dict[str, Any]:
     """Return each load wallet's balance to ``target`` with one external (mode 130)."""
     await asyncio.gather(*(ramp.resync(w) for w in ramp.wallets))
-    out: dict[str, int] = {"accepted": 0, "refused": 0, "ambiguous": 0, "skipped": 0}
+    out: dict[str, Any] = {"accepted": 0, "refused": 0, "ambiguous": 0, "skipped": 0}
     ready: list[tuple[LoadWallet, Cell]] = []
-    deadline = ramp.chain_now() + ramp.a.lifetime
+    now = ramp.chain_now()
+    deadline = min(now + ramp.a.lifetime, ramp.horizon)
+    if deadline <= now:
+        out |= {"skipped": len(ramp.wallets), "not_executed": 0, "reason": "past the fee horizon"}
+        return out
     for w in ramp.wallets:
         if w.resync:
             out["skipped"] += 1
@@ -952,6 +1292,11 @@ async def sweep(ramp: Ramp, target: Address) -> dict[str, Any]:
     return out
 
 
+def refuse(why: str) -> int:
+    print(f"refused: {why}", file=sys.stderr)
+    return REFUSED
+
+
 async def run(a: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory() as scratch:
         try:
@@ -963,9 +1308,10 @@ async def run(a: argparse.Namespace) -> int:
             rule = StepRule(
                 a.tolerance, a.p95_limit, plan.batch if a.backlog_slack is None else a.backlog_slack
             )
+            return_to = Address(a.return_to) if a.return_to else None
         except (ValueError, OSError) as error:
-            print(f"refused: {error}", file=sys.stderr)
-            return REFUSED
+            return refuse(str(error))
+    # Nothing is read before this first check: the funding alone must fit.
     bound = work_bound(plan)
     sizes = {"transfer_external_bytes": transfer_bytes, "deploy_external_bytes": deploy_bytes}
     print(
@@ -980,8 +1326,81 @@ async def run(a: argparse.Namespace) -> int:
     if deploy_batch < 1:
         why = (why + "; " if why else "") + "no deployment fits one external"
     if why is not None:
-        print(f"refused: {why}", file=sys.stderr)
-        return REFUSED
+        return refuse(why)
+
+    try:
+        key = remote.load_key(a.key_file)
+        bench_signer = remote.Signer(a.signer, key)
+        signer = BatchSigner(a.signer, a.signer_threads)
+    except (ValueError, OSError) as error:
+        return refuse(str(error))
+    endpoints = []
+    for url in a.rpc:
+        reader = PacedRpc(url, a.rpc_share)
+        endpoints.append(
+            Endpoint(url, reader, PacedRpc(url, a.rpc_share, attempts=1, budget=reader.budget))
+        )
+    remote_ = Remote([e.rpc for e in endpoints], a.poll)
+
+    # Reads only from here to the second check: the configuration, the bench
+    # wallet and every load wallet, and the fee bound derived from them.
+    try:
+        header = await remote_.mc_header()
+        now, global_id = int(header["gen_utime"]), int(header["global_id"])
+        bench = BenchWallet(
+            remote.bench_wallet(code, global_id, a.auth, key, bench_signer.public_key()),
+            bench_signer,
+            remote_,
+        )
+        seeds = [load_seed(key.seed, i) for i in range(plan.wallets)]
+        keys = await asyncio.to_thread(signer.public_keys, seeds)
+        wallets = [
+            LoadWallet(i, load_wallet(code, global_id, a.auth, i, pk, key.rescue_public_key), s)
+            for i, (s, pk) in enumerate(zip(seeds, keys))
+        ]
+        if len({w.address for w in wallets}) != len(wallets):
+            raise ValueError("two load wallets share an address")
+        config = await remote_.fee_config(0)
+        balance_before, bench_nonce = await bench.state()
+        bench_stat = await bench.storage()
+        found = await survey(bench, remote_, wallets, plan)
+        funding_externals = externals_for(len(found.actions), plan.deploy_batch)
+        horizon = fee_horizon(now, plan, a, funding_externals)
+        fees = derive_fees(
+            config,
+            plan,
+            horizon,
+            now,
+            bench,
+            bench_nonce is not None,
+            bench_stat,
+            found.actions,
+            found.amounts,
+            [w.wallet for w in wallets],
+            found.stats,
+            return_to if return_to is not None else bench.address,
+        )
+    except (ValueError, RpcError, RateLimited, RuntimeError) as error:
+        return refuse(f"no fee bound: {error}")
+    bound = work_bound(plan, fees)
+    print(
+        json.dumps(
+            {
+                "work_bound": bound.as_dict(),
+                "fee_bound": fees.as_dict(),
+                "fee_config": config.as_dict(),
+            },
+            indent=2,
+        ),
+        flush=True,
+    )
+    why = refusal(bound, nano(a.max_cost), a.max_transfers)
+    if why is not None:
+        return refuse(why)
+    if balance_before < bound.cost:
+        return refuse(
+            f"the bench wallet holds {balance_before} nanotos; the run may cost {bound.cost}"
+        )
 
     a.out = a.out.resolve()
     a.out.mkdir(parents=True, exist_ok=False)
@@ -991,25 +1410,7 @@ async def run(a: argparse.Namespace) -> int:
         handlers=[logging.StreamHandler(), logging.FileHandler(a.out / "bench.log")],
         force=True,
     )
-    key = remote.load_key(a.key_file)
-    bench_signer = remote.Signer(a.signer, key)
-    signer = BatchSigner(a.signer, a.signer_threads)
-    endpoints = []
-    for url in a.rpc:
-        reader = PacedRpc(url, a.rpc_share)
-        endpoints.append(
-            Endpoint(url, reader, PacedRpc(url, a.rpc_share, attempts=1, budget=reader.budget))
-        )
-    remote_ = Remote([e.rpc for e in endpoints], a.poll)
-    header = await remote_.mc_header()
-    global_id = int(header["global_id"])
-    bench = BenchWallet(
-        remote.bench_wallet(code, global_id, a.auth, key, bench_signer.public_key()),
-        bench_signer,
-        remote_,
-    )
     log.info("bench wallet %s on global id %d", raw(bench.address), global_id)
-    balance_before, _ = await bench.state()
     record: dict[str, Any] = {
         "scope": "REMOTE: T4 transfer ramp over JSON-RPC",
         "source_commit": remote.source_commit(),
@@ -1018,42 +1419,42 @@ async def run(a: argparse.Namespace) -> int:
         "plan": asdict(plan),
         "rule": asdict(rule),
         "work_bound": bound.as_dict(),
+        "fee_bound": fees.as_dict(),
+        "fee_config": config.as_dict(),
+        "fee_horizon": horizon,
         "sizes": sizes,
         "bench_wallet": raw(bench.address),
         "wallet_code_hash": code.hash.hex(),
+        "load_wallets": [w.address for w in wallets],
     }
     out_record = a.out / "results.json"
 
     def write() -> None:
         out_record.write_text(json.dumps(record, indent=2) + "\n")
 
-    if balance_before < bound.cost:
-        record["stopped"] = (
-            f"the bench wallet holds {balance_before} nanotos; the run may cost {bound.cost}"
-        )
-        write()
-        log.error(record["stopped"])
-        return REFUSED
-
-    seeds = [load_seed(key.seed, i) for i in range(plan.wallets)]
-    keys = await asyncio.to_thread(signer.public_keys, seeds)
-    wallets = [
-        LoadWallet(i, load_wallet(code, global_id, a.auth, i, pk, key.rescue_public_key), s)
-        for i, (s, pk) in enumerate(zip(seeds, keys))
-    ]
-    if len({w.address for w in wallets}) != len(wallets):
-        raise RuntimeError("two load wallets share an address")
-    record["load_wallets"] = [w.address for w in wallets]
     try:
-        record["preparation"] = await prepare_wallets(bench, remote_, wallets, plan, a.deploy_wait)
-    except RuntimeError as error:
-        record["stopped"] = str(error)
+        record["preparation"] = await fund(
+            bench, remote_, wallets, plan, found, fees, a.deploy_wait
+        )
+    except Stopped as error:
+        record |= {"stopped": str(error), "exit_status": STOPPED}
         write()
         log.error(record["stopped"])
-        return REFUSED
+        return STOPPED
 
     ledger = Ledger(w.address for w in wallets)
-    ramp = Ramp(a, plan, rule, endpoints, signer, wallets, ledger)
+    ramp = Ramp(
+        a,
+        plan,
+        rule,
+        endpoints,
+        signer,
+        wallets,
+        ledger,
+        horizon,
+        {k: x.total for k, x in fees.transfers.items()},
+        [x.fee for x in fees.load_storage],
+    )
     first = (await t2collect.read_masterchain(ramp.reader, (h := await ramp.head()), h))[0]
     ramp.follower = Follower(ramp.reader, ledger, ramp.included, first, a.poll)
     follower_task = asyncio.ensure_future(ramp.follower.run())
@@ -1082,6 +1483,7 @@ async def run(a: argparse.Namespace) -> int:
     (a.out / "masterchain.json").write_text(
         json.dumps([asdict(m) for m in ramp.follower.mcs]) + "\n"
     )
+    status = exit_status(ramp.stop_reason, len(ledger.anomalies), ledger.duplicates)
     record |= {
         "steps": ramp.steps_done,
         "stated_rate": ramp.stated_rate,
@@ -1089,12 +1491,18 @@ async def run(a: argparse.Namespace) -> int:
             (s["layout"]["layout"] for s in reversed(ramp.steps_done) if s["passed"]), None
         ),
         "stopped": ramp.stop_reason,
+        "exit_status": status,
         "finalized_mc": finalized,
         "outcomes": ledger.counts(finalized),
         "anomalies": ledger.anomalies[:1000],
         "anomaly_count": len(ledger.anomalies),
         "duplicates": ledger.duplicates,
         "foreign_externals": ledger.foreign_externals,
+        "fee_check": {
+            "overruns": ramp.fee_overruns[:1000],
+            "overrun_count": len(ramp.fee_overruns),
+            "unreported": ramp.fees_unreported,
+        },
         "follower": {
             "errors": ramp.follower.errors,
             "incomplete_blocks": ramp.follower.incomplete_blocks,
@@ -1104,16 +1512,26 @@ async def run(a: argparse.Namespace) -> int:
         "config_end": await ramp.config(),
     }
     if not a.no_sweep:
-        target = Address(a.return_to) if a.return_to else bench.address
+        target = return_to if return_to is not None else bench.address
         record["sweep"] = {"to": raw(target), **await sweep(ramp, target)}
     balance_after, _ = await bench.state()
-    record["wallet_balance"] = {"before": balance_before, "after": balance_after}
+    record["wallet_balance"] = {
+        "before": balance_before,
+        "after": balance_after,
+        "spent": balance_before - balance_after,
+        "cost_bound": bound.cost,
+    }
     record["rpc"] = [e.rpc.stats() for e in endpoints]
     write()
     log.info("stated rate %s; outcomes %s", ramp.stated_rate, record["outcomes"])
-    return 0 if ramp.stop_reason is None else STOPPED
+    return status
 
 
 def main(argv: list[str]) -> int:
     os.umask(0o077)
-    return asyncio.run(run(parse_args(argv)))
+    try:
+        return asyncio.run(run(parse_args(argv)))
+    except Exception:
+        # A crash is not a verdict: exit 1 would read as a failed ramp.
+        log.exception("the ramp stopped on an unexpected error")
+        return STOPPED

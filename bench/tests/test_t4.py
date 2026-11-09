@@ -22,7 +22,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src")]
@@ -332,9 +332,6 @@ def plan(**kw: Any) -> ramp.Plan:
         repeats=1,
         transfer_value=NANO // 1000,
         wallet_funding=50 * NANO,
-        wallet_fee_cap=NANO,
-        external_fee_cap=NANO // 10,
-        transfer_fee_cap=NANO // 100,
         deploy_batch=35,
     )
     base.update(kw)
@@ -347,19 +344,26 @@ class Bound(unittest.TestCase):
         per_step = [30_000, 60_000, 120_000]
         self.assertEqual(b.transfers, 2 * sum(per_step))
         self.assertEqual(b.load_externals, 2 * sum(t // 100 for t in per_step))
+        self.assertEqual(ramp.planned_sizes(plan()), {100: 2 * 2100})
         self.assertEqual(b.deploy_externals, 1)
         self.assertEqual(b.funding, 500 * NANO)
-        self.assertEqual(b.cost, b.funding + NANO)
-        self.assertEqual(
-            b.load_fees, (b.load_externals + 10) * (NANO // 10) + b.transfers * (NANO // 100)
-        )
+        # Before the configuration is read there is no fee bound: the funding alone.
+        self.assertEqual((b.cost, b.bench_fees, b.load_fees), (b.funding, 0, 0))
+        # A remainder external is counted at its own size, once per run of its step.
+        odd = plan(start_rate=7.0, step_seconds=10, warmup=1, steps=2, batch=4)
+        self.assertEqual(ramp.planned_sizes(odd), {2: 2, 4: 2 * (17 + 35)})
+        self.assertEqual(ramp.work_bound(odd).transfers, 2 * (70 + 140))
 
     def test_over_a_cap_is_refused(self):
-        b = ramp.work_bound(plan(wallet_funding=10_000 * NANO))
+        p = plan(wallet_funding=10_000 * NANO, wallets=3, steps=1, step_seconds=2, warmup=1)
+        b = ramp.work_bound(p, derived_fees(p))
+        self.assertGreater(b.bench_fees, 0)
         self.assertIsNone(ramp.refusal(b, b.cost, b.transfers))
         self.assertIn("cost bound", ramp.refusal(b, b.cost - 1, b.transfers) or "")
         self.assertIn("transfer bound", ramp.refusal(b, b.cost, b.transfers - 1) or "")
-        starved = ramp.work_bound(plan(wallet_funding=NANO))
+        starved_plan = plan(wallet_funding=NANO, wallets=3, steps=1, step_seconds=2, warmup=1)
+        starved = ramp.work_bound(starved_plan, derived_fees(starved_plan))
+        self.assertGreater(starved.load_fees, starved.funding)
         self.assertIn("load fee bound", ramp.refusal(starved, 1 << 100, 1 << 30) or "")
 
     def test_plans_outside_their_bounds_are_refused(self):
@@ -392,6 +396,159 @@ class Bound(unittest.TestCase):
         self.assertLessEqual(transfer, ramp.EXT_MESSAGE_BUDGET)
         self.assertLessEqual(deploy, ramp.EXT_MESSAGE_BUDGET)
         self.assertGreaterEqual(deploy_batch, 1)
+
+
+# ─── the fee bound from hand-built ConfigParams ───────────────────────
+
+
+def test_loads(n: int) -> list[Any]:
+    return [
+        ramp.load_wallet(tr.WALLET_CODE, 3, tr.AUTH, i, bytes([i]) * 1312, bytes(32))
+        for i in range(n)
+    ]
+
+
+def test_bench() -> remote.BenchWallet:
+    key = remote.WalletKey(remote.Secret(tr.TEST_SEED), tr.TEST_RESCUE, 0)
+    w = remote.bench_wallet(tr.WALLET_CODE, 3, tr.AUTH, key, tr.fake_public_key(tr.TEST_SEED))
+    return remote.BenchWallet(w, cast(Any, None), cast(Any, None))
+
+
+def derived_fees(p: ramp.Plan, return_to: Address | None = None) -> ramp.RampFees:
+    """The whole ramp's fee bound for ``p`` under the hand-built ConfigParams 18, 21 and 25."""
+    loads = test_loads(p.wallets)
+    bench = test_bench()
+    actions = [w.deployment_message(bench.address, p.wallet_funding) for w in loads]
+    return ramp.derive_fees(
+        tr.fake_fee_config(),
+        p,
+        2_000_000,
+        1_000_000,
+        bench,
+        False,
+        (3, 900, 1_000_000, 17),
+        actions,
+        [p.wallet_funding] * p.wallets,
+        loads,
+        [None] * p.wallets,
+        return_to or bench.address,
+    )
+
+
+# ConfigParam 21 of test_remote: 40,000 nanotos for the first 100 gas, then 400 a gas
+# (26,214,400 / 2^16), up to 1,000,000 gas. ConfigParam 25: lump 100,000, a bit
+# 655,361 / 2^16, a cell 65,536,000 / 2^16 = 1,000.
+GAS_AT_LIMIT = 40_000 + 400 * (1_000_000 - 100)
+EMPTY_BODY_FORWARD = 100_000 + 1_000
+
+
+class FeeBound(unittest.TestCase):
+    def test_a_100_action_external_matches_a_hand_computation(self):
+        p = plan(wallets=4, batch=100, steps=1, step_seconds=1, warmup=0, repeats=0)
+        self.assertEqual(ramp.planned_sizes(p), {100: 1})
+        loads = test_loads(4)
+        fee = ramp.transfer_bounds(tr.fake_fee_config(), loads, p)[100]
+        # The same external, built by hand: wallet 0 pays wallets 1, 2, 3, 1, ... in turn.
+        sender = loads[0]
+        actions = [
+            transfer_message(sender.address, loads[1 + i % 3].address, NANO // 1000 + i)
+            for i in range(100)
+        ]
+        request = sender.request(0, actions, 1, mode=3)
+        root = sender.external(request, bytes(remote.SIGNATURE_BYTES)).serialize()
+        cells = tr.all_cells([root])
+        import_cells = len(cells) - 1
+        import_bits = sum(len(c.bits) for c in cells.values())
+        self.assertGreater(import_cells, 200)  # 100 action nodes and 100 messages at least
+        import_fee = 100_000 + tr.ceil16(655_361 * import_bits + 65_536_000 * import_cells)
+        self.assertEqual((fee.import_cells, fee.import_bits), (import_cells, import_bits))
+        self.assertEqual(fee.import_fee, import_fee)
+        self.assertEqual(GAS_AT_LIMIT, 400_000_000)
+        self.assertEqual(fee.gas_fee, 400_000_000)
+        self.assertEqual(fee.out_messages, [{"cells": 1, "bits": 0, "fee": 101_000}] * 100)
+        self.assertEqual(fee.total, import_fee + 400_000_000 + 100 * EMPTY_BODY_FORWARD)
+
+    def test_every_sender_and_seqno_has_the_same_bound(self):
+        p = plan(wallets=5, batch=100, steps=1, step_seconds=1, warmup=0, repeats=0)
+        config = tr.fake_fee_config()
+        loads = test_loads(5)
+        expected = ramp.transfer_bounds(config, loads, p)[100].total
+        for sender in range(5):
+            for seqno in range(3):
+                peers = ramp.destinations(sender, seqno, 100, 100, 5)
+                actions = ramp.transfer_actions(
+                    loads[sender].address,
+                    [loads[x].address for x in peers],
+                    [p.transfer_value + i for i in range(100)],
+                )
+                external = ramp.unsigned_external(loads[sender], actions)
+                got = remote.external_fee_bound(config, "x", external, actions).total
+                self.assertEqual(got, expected, (sender, seqno))
+
+    def test_the_computation_a_received_value_can_buy(self):
+        gas = tr.fake_fee_config().gas
+        # (1,000,000 - 40,000) * 2^16 / 26,214,400 = 2,400 gas past the flat 100.
+        self.assertEqual(gas.bought_for(1_000_000), 2_500)
+        self.assertEqual(gas.internal_fee(1_000_000), 40_000 + 400 * 2_400)
+        self.assertEqual(gas.internal_fee(39_999), 40_000)  # buys nothing: the flat price
+        self.assertEqual(gas.internal_fee(10 * NANO), 400_000_000)  # capped at gas_limit
+
+    def test_the_whole_ramp_bound_sums_every_external_of_every_step_and_repeat(self):
+        p = plan(start_rate=7.0, step_seconds=10, warmup=1, steps=2, batch=4, wallets=6)
+        fees = derived_fees(p)
+        sizes = {2: 2, 4: 104}
+        self.assertEqual(fees.transfer_counts, sizes)
+        self.assertEqual(
+            fees.transfer_total, sum(fees.transfers[k].total * n for k, n in sizes.items())
+        )
+        for k in sizes:
+            self.assertEqual(
+                fees.transfers[k].total,
+                fees.transfers[k].import_fee + 400_000_000 + k * EMPTY_BODY_FORWARD,
+            )
+        # 50 TOS of funding buys gas_limit; 0.001 TOS + i buys exactly 1,000,000 nanotos of gas.
+        self.assertEqual(fees.receipts, 6 * 400_000_000)
+        self.assertEqual(fees.recipients, 2 * (70 + 140) * 1_000_000)
+        self.assertEqual(len(fees.load_storage), 6)
+        self.assertEqual(
+            fees.load_total,
+            fees.transfer_total
+            + 6 * fees.sweep.total
+            + fees.receipts
+            + fees.recipients
+            + sum(x.fee for x in fees.load_storage),
+        )
+        self.assertEqual(len(fees.funding), 1)
+        self.assertEqual(fees.funding[0].gas_fee, 400_000_000)
+        self.assertEqual(fees.bench_storage.due_payment, 17)
+        self.assertEqual(fees.bench_total, fees.funding[0].total + fees.bench_storage.fee)
+        b = ramp.work_bound(p, fees)
+        self.assertEqual(b.cost, b.funding + fees.bench_total)
+        self.assertEqual(b.fee_spend, fees.bench_total + fees.load_total)
+
+    def test_a_fee_bound_not_covered_by_max_cost_is_refused(self):
+        p = plan(wallets=3, steps=1, step_seconds=2, warmup=1)
+        with_fees = ramp.work_bound(p, derived_fees(p))
+        covered = with_fees.funding + with_fees.bench_fees
+        self.assertIsNone(ramp.refusal(with_fees, covered, with_fees.transfers))
+        self.assertIn("cost bound", ramp.refusal(with_fees, covered - 1, 1 << 30) or "")
+        # The funding alone fits, so only the derived fee bound makes it refuse.
+        self.assertIsNone(ramp.refusal(ramp.work_bound(p), covered - 1, 1 << 30))
+
+    def test_a_sweep_off_the_basechain_is_refused(self):
+        p = plan(wallets=3, steps=1, step_seconds=2, warmup=1)
+        with self.assertRaises(ValueError):
+            derived_fees(p, Address((-1, bytes(32))))
+
+    def test_the_horizon_covers_the_plan_and_fits_a_deadline(self):
+        args = argparse.Namespace(
+            deploy_wait=10.0, drain=2.0, finality_wait=3.0, lifetime=5, deadline_grace=1.0
+        )
+        p = plan(steps=2, step_seconds=10, warmup=1, repeats=1)
+        horizon = ramp.fee_horizon(1_000, p, args, 2)
+        self.assertEqual(horizon, 1_000 + 1_200 + 30 + 2 * 2 * 17 + 2 + 10 + 1 + 3)
+        with self.assertRaises(ValueError):
+            ramp.fee_horizon((1 << 32) - 10, p, args, 2)
 
 
 # ─── submissions: refused, ambiguous, never resent ───────────────────
@@ -431,7 +588,13 @@ def rpc_error(code: int, message: str) -> tuple[int, dict[str, Any]]:
     return 200, {"error": {"code": code, "message": message}}
 
 
-def make_ramp(transport: Transport, wallets: int = 2) -> ramp.Ramp:
+def make_ramp(
+    transport: Transport,
+    wallets: int = 2,
+    horizon: int = 1 << 31,
+    fee_bound: int = NANO,
+    storage: int = 0,
+) -> ramp.Ramp:
     args = argparse.Namespace(lifetime=60, deadline_grace=5.0, stop_file=None, tick=0.0)
     p = plan(wallets=wallets, batch=3)
     reader = PacedRpc("http://fake", 1.0, transport=transport)
@@ -446,7 +609,16 @@ def make_ramp(transport: Transport, wallets: int = 2) -> ramp.Ramp:
     ]
     lg = Ledger(w.address for w in load)
     r = ramp.Ramp(
-        args, p, StepRule(), [ramp.Endpoint("http://fake", reader, sender)], FakeSigner(), load, lg
+        args,
+        p,
+        StepRule(),
+        [ramp.Endpoint("http://fake", reader, sender)],
+        FakeSigner(),
+        load,
+        lg,
+        horizon,
+        {3: fee_bound},
+        [storage] * wallets,
     )
     r.follower = ramp.Follower(reader, lg, r.included, McRecord(1, 1000, "00" * 32, ()), 0.0)
     return r
@@ -534,6 +706,36 @@ class Submissions(unittest.TestCase):
         self.assertNotEqual(fresh.key, first.key)
         self.assertEqual({first.outcome(i, 99)[0] for i in range(first.size)}, {UNKNOWN})
 
+    def test_request_deadlines_are_capped_at_the_fee_horizon(self):
+        transport = Transport([])
+        r = make_ramp(transport, wallets=3, horizon=1_030)
+        [ext] = asyncio.run(issue_and_wait(r))
+        self.assertEqual(ext.deadline, 1_030)  # now 1,000 + lifetime 60, capped
+        self.assertEqual(ext.fee_bound, NANO)
+        self.assertIsNone(r.stop_reason)
+        assert r.follower is not None
+        r.follower.mcs.append(McRecord(2, 1_030, "11" * 32, ()))
+        [late] = asyncio.run(issue_and_wait(r))
+        self.assertEqual(late.outcome(0, 99), (REFUSED, "local: past the fee horizon"))
+        self.assertIn("fee horizon", r.stop_reason or "")
+        self.assertEqual(len(transport.sends), 1)
+
+    def test_a_fee_over_its_bound_stops_the_ramp(self):
+        r = make_ramp(Transport([]), wallets=3, fee_bound=1_000, storage=5)
+        first, second, third = (asyncio.run(issue_and_wait(r))[0] for _ in range(3))
+        first.tx_fee = 1_005  # the bound plus all the storage the wallet may owe: inside
+        r.included(first)
+        self.assertIsNone(r.stop_reason)
+        r.included(second)  # no fee reported: counted, never assumed inside
+        self.assertEqual(r.fees_unreported, 1)
+        self.assertIsNone(r.stop_reason)
+        third.tx_fee = 1_006
+        r.included(third)
+        self.assertIn("over its derived bound 1005", r.stop_reason or "")
+        self.assertEqual(
+            r.fee_overruns, [{"external": third.msg_hash, "fee": 1_006, "bound": 1_005}]
+        )
+
     def test_classify_send_error(self):
         from shard.rpc import RpcError
 
@@ -547,6 +749,45 @@ class Submissions(unittest.TestCase):
             RpcError("sendBoc", 200, {"code": -32602, "message": "Invalid base64"})
         )
         self.assertTrue(definite)
+
+
+# ─── exit statuses ───────────────────────────────────────────────────
+
+
+class ExitStatus(unittest.TestCase):
+    def test_the_mapping(self):
+        self.assertEqual(ramp.exit_status(None, 0, 0), 0)
+        self.assertEqual(ramp.exit_status("stop file present", 0, 0), 4)
+        self.assertEqual(ramp.exit_status(None, 2, 0), 1)
+        self.assertEqual(ramp.exit_status(None, 0, 1), 1)
+        self.assertEqual(ramp.exit_status("the ledger saw a duplicate", 1, 1), 1)
+        self.assertEqual((ramp.REFUSED, ramp.STOPPED), (remote.REFUSED, remote.INCONCLUSIVE))
+        self.assertEqual((ramp.PASSED, ramp.FAILED), (0, 1))
+
+    def run_steps(self, records: list[dict[str, Any]]) -> ramp.Ramp:
+        r = make_ramp(Transport([]))
+        r.plan = plan(steps=3, repeats=1)
+        queue = list(records)
+
+        async def step(index: int, attempt: int, rate: float) -> dict[str, Any]:
+            return queue.pop(0)
+
+        r.step = step  # pyright: ignore[reportAttributeAccessIssue]
+        asyncio.run(r.ramp())
+        return r
+
+    def test_a_ramp_ending_at_its_first_counted_failing_step_ran_as_specified(self):
+        r = self.run_steps([{"counts": True, "passed": True}, {"counts": True, "passed": False}])
+        self.assertEqual(r.stated_rate, 100.0)
+        self.assertEqual(ramp.exit_status(r.stop_reason, 0, 0), 0)
+        every = self.run_steps([{"counts": True, "passed": True}] * 3)
+        self.assertEqual(every.stated_rate, 400.0)
+        self.assertEqual(ramp.exit_status(every.stop_reason, 0, 0), 0)
+
+    def test_no_stable_layout_within_the_repeats_is_stopped(self):
+        r = self.run_steps([{"counts": False, "passed": False}] * 2)
+        self.assertIn("no stable layout", r.stop_reason or "")
+        self.assertEqual(ramp.exit_status(r.stop_reason, 0, 0), 4)
 
 
 # ─── a remote run against a fake node ────────────────────────────────
@@ -602,12 +843,21 @@ def parse_external(boc: str) -> tuple[bytes, str, int, list[tuple[str, int, bool
     return cell.hash, account, nonce, actions
 
 
+# What the fake chain charges a load external, reported as the transaction's total_fees.
+LOAD_FEE = NANO // 100
+
+
 class FakeChain:
     """One basechain shard; a masterchain block every BLOCK_INTERVAL seconds commits shard
     block of the same seqno. An accepted external executes in the next block and its
-    transfers are delivered in the one after. Finality lags the head by one block."""
+    transfers are delivered in the one after. Finality lags the head by one block.
 
-    def __init__(self, bench: str, scenario: dict[str, set[Any]]):
+    It serves test_remote's hand-built ConfigParams 18, 21 and 25. A bench-wallet
+    external costs the bench wallet NANO // 100 on top of the value it attaches; a load
+    external is reported with total_fees LOAD_FEE, or ``overcharge`` for the load
+    sends the scenario names there; ``bench_fee`` replaces the bench wallet's fee."""
+
+    def __init__(self, bench: str, scenario: dict[str, Any]):
         self.lock = threading.Lock()
         self.t0, self.base = time.time(), 100
         self.bench, self.bench_balance, self.bench_nonce = bench, 10**6 * NANO, None
@@ -615,6 +865,7 @@ class FakeChain:
         self.txs: dict[int, list[dict[str, Any]]] = {}
         self.scenario = scenario
         self.load_sends = 0
+        self.charged: list[int] = []  # total_fees of every executed load external
         self.bodies: list[bytes] = []
         self.methods: list[str] = []
         self.bocs: list[str] = []
@@ -626,12 +877,20 @@ class FakeChain:
     def utime(self, seqno: int) -> int:
         return int(self.t0 + (seqno - self.base) * BLOCK_INTERVAL)
 
-    def tx(self, account: str, in_msg: dict[str, Any], out: list[dict[str, Any]], skipped: int = 0):
+    def tx(
+        self,
+        account: str,
+        in_msg: dict[str, Any],
+        out: list[dict[str, Any]],
+        skipped: int = 0,
+        fee: int = 0,
+    ):
         self.lt += 1
         return {
             "account": account.split(":", 1)[1],
             "lt": str(self.lt),
             "hash": b64(hashlib.sha256(f"tx{self.lt}".encode()).digest()),
+            "fee": str(fee),
             "in_msg": in_msg,
             "out_msgs": out,
             "aborted": False,
@@ -640,7 +899,12 @@ class FakeChain:
         }
 
     def execute(
-        self, digest: bytes, account: str, actions: list[tuple[str, int, bool, int]], skip: set[int]
+        self,
+        digest: bytes,
+        account: str,
+        actions: list[tuple[str, int, bool, int]],
+        skip: set[int],
+        fee: int,
     ):
         at = self.head() + 1
         out = []
@@ -658,7 +922,7 @@ class FakeChain:
             out.append(m)
             self.txs.setdefault(at + 1, []).append(self.tx(dest, m, []))
         external = {"hash": b64(digest), "kind": "external"}
-        self.txs.setdefault(at, []).append(self.tx(account, external, out, len(skip)))
+        self.txs.setdefault(at, []).append(self.tx(account, external, out, len(skip), fee))
 
     def send(self, boc: str) -> tuple[int, Any]:
         digest, account, nonce, actions = parse_external(boc)
@@ -668,7 +932,7 @@ class FakeChain:
             for dest, value, _, _ in actions:
                 self.wallets.setdefault(dest, 0)
                 self.bench_balance -= value
-            self.bench_balance -= NANO // 100
+            self.bench_balance -= self.scenario.get("bench_fee", NANO // 100)
             return 200, {"result": {"status": 1}}
         k = self.load_sends
         self.load_sends += 1
@@ -685,7 +949,9 @@ class FakeChain:
             }
         self.wallets[account] = nonce + 1
         skip = {i for (s, i) in self.scenario.get("skip", set()) if s == k}
-        self.execute(digest, account, actions, skip)
+        fee = self.scenario.get("overcharge", {}).get(k, LOAD_FEE)
+        self.charged.append(fee)
+        self.execute(digest, account, actions, skip, fee)
         if k in self.scenario.get("ambiguous", set()):
             return 502, b"bad gateway"
         return 200, {"result": {"status": 1}}
@@ -698,6 +964,12 @@ class FakeChain:
                 "balance": str(self.bench_balance),
                 "state": "active" if active else "uninitialized",
                 "data": data,
+                "storage_stat": {
+                    "used_cells": "3",
+                    "used_bits": "900",
+                    "last_paid": int(self.t0) - 100,
+                    "due_payment": "17",
+                },
             }
         if address in self.wallets:
             data = b64(tr.wallet_data(self.wallets[address]).to_boc())
@@ -722,7 +994,9 @@ class FakeChain:
         if method == "getConsensusBlock":
             return 200, {"result": {"consensus_block": head - 1}}
         if method == "getConfigParam":
-            return 200, {"result": {"config": {"bytes": "AA=="}, "param": p["param"]}}
+            cell = tr.FAKE_CONFIG.get(p["param"])
+            boc = b64(cell.to_boc()) if cell is not None else "AA=="
+            return 200, {"result": {"config": {"bytes": boc}, "param": p["param"]}}
         if method == "getBlockTransactionsExt":
             txs = self.txs.get(p["seqno"], []) if p["workchain"] == 0 else []
             return 200, {
@@ -834,7 +1108,7 @@ class RemoteRun(unittest.TestCase):
         return remote.raw(w.address)
 
     def test_ramp_binds_every_transfer_over_json_rpc_and_never_leaks_a_key(self):
-        scenario: dict[str, set[Any]] = {
+        scenario: dict[str, Any] = {
             # Step 0 carries sends 0..5 and stays clean, so the ramp goes on to step 1.
             "ambiguous": {7},
             "rate_limited": {9},
@@ -888,6 +1162,32 @@ class RemoteRun(unittest.TestCase):
             self.assertLessEqual(a["recipient_mc"], record["finalized_mc"])
         self.assertEqual(sum(record["outcomes"].values()), planned)
         self.assertEqual(record["anomaly_count"], 0, record["anomalies"])
+        self.assertEqual((record["stopped"], record["exit_status"]), (None, 0))
+        # The fee bound, derived from the node's ConfigParams before any send, covers the
+        # fee the node charged for every external: the funding external from the bench
+        # wallet and every executed load external, each against its own bound.
+        prep = record["preparation"]
+        self.assertEqual(prep["funding_fees"], [NANO // 100])
+        for paid, bound in zip(prep["funding_fees"], prep["funding_fee_bounds"], strict=True):
+            self.assertGreaterEqual(bound, paid)
+        executed = [r for r in rows if r["tx"] is not None]
+        self.assertEqual(len(executed) + record["sweep"]["accepted"], len(chain.charged))
+        self.assertEqual({r["tx_fee"] for r in executed}, {LOAD_FEE})
+        for r in executed:
+            self.assertGreaterEqual(r["fee_bound"], r["tx_fee"], r)
+            self.assertEqual(
+                r["fee_bound"],
+                record["fee_bound"]["load"]["transfer_externals"][str(len(r["actions"]))]["total"],
+            )
+        self.assertEqual(record["fee_check"], {"overruns": [], "overrun_count": 0, "unreported": 0})
+        bound = record["work_bound"]
+        self.assertEqual(bound["cost"], bound["funding"] + record["fee_bound"]["bench"]["total"])
+        self.assertEqual(
+            record["fee_config"]["config_param_hashes"]["21"], tr.gas_cell().hash.hex()
+        )
+        self.assertLessEqual(record["wallet_balance"]["spent"], bound["cost"])
+        # Every request expires by the horizon its storage bound covers.
+        self.assertTrue(all(r["deadline"] <= record["fee_horizon"] for r in executed))
         # Never resent: every boc the node received is distinct, one per submitted external.
         self.assertEqual(len(chain.bocs), len(set(chain.bocs)))
         load_bocs = len(chain.bocs) - 1 - 6  # one funding external, six sweeps
@@ -911,6 +1211,63 @@ class RemoteRun(unittest.TestCase):
                     self.assertNotIn(form, text)
             for blob in list(written.values()) + chain.bodies:
                 self.assertNotIn(seed, blob)
+
+    def test_a_fee_bound_over_max_cost_is_refused_before_any_send(self):
+        # 6 load wallets of 10 TOS: the funding alone (60 TOS) fits --max-cost 60.2,
+        # and only the fee bound derived from the node's ConfigParams shows it cannot.
+        chain = FakeChain(self.bench_address(), {})
+        server, url = chain.serve()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                result = self.run_ramp(d, url, ["--max-cost", "60.2"])
+                self.assertFalse((d / "out").exists())
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(result.returncode, remote.REFUSED, result.stderr[-2000:])
+        self.assertIn("cost bound", result.stderr)
+        self.assertIn("fee_bound", result.stdout)
+        self.assertIn("getConfigParam", chain.methods)
+        self.assertNotIn("sendBoc", chain.methods)
+        self.assertEqual(chain.bocs, [])
+
+    def test_a_fee_over_its_bound_stops_the_ramp(self):
+        # The third load external is charged 5 TOS, over its derived bound of about 0.4 TOS.
+        chain = FakeChain(self.bench_address(), {"overcharge": {2: 5 * NANO}})
+        server, url = chain.serve()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                result = self.run_ramp(d, url)
+                record = json.loads((d / "out/results.json").read_text())
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(result.returncode, ramp.STOPPED, result.stderr[-4000:])
+        self.assertIn("over its derived bound", record["stopped"])
+        self.assertEqual(record["exit_status"], ramp.STOPPED)
+        self.assertEqual(record["fee_check"]["overrun_count"], 1)
+        self.assertEqual(record["fee_check"]["overruns"][0]["fee"], 5 * NANO)
+        # It stopped in step 0: no further step was offered.
+        self.assertEqual(len(record["steps"]), 1)
+        self.assertLess(chain.load_sends, 6 + 12)
+
+    def test_a_funding_fee_over_its_bound_stops_before_the_ramp(self):
+        chain = FakeChain(self.bench_address(), {"bench_fee": 5 * NANO})
+        server, url = chain.serve()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                result = self.run_ramp(d, url)
+                record = json.loads((d / "out/results.json").read_text())
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(result.returncode, ramp.STOPPED, result.stderr[-4000:])
+        self.assertIn("funding external 0 cost 5000000000 nanotos", record["stopped"])
+        self.assertEqual(chain.load_sends, 0)
+        self.assertEqual(len(chain.bocs), 1)
 
     def test_over_the_cap_is_refused_before_any_request(self):
         chain = FakeChain(self.bench_address(), {})

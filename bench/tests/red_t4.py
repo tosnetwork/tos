@@ -22,11 +22,16 @@ COPIED = ["bench/t4", "bench/shard", "bench/pqbench", "bench/run_t4_ramp.py", "b
 
 L = "bench/t4/ledger.py"
 R = "bench/t4/ramp.py"
+RM = "bench/shard/remote.py"
 LO = "LedgerOutcomes"
 SUB = "Submissions"
 PASS = "PassRule"
 E2E = "RemoteRun.test_ramp_binds_every_transfer_over_json_rpc_and_never_leaks_a_key"
 CAP = "RemoteRun.test_over_the_cap_is_refused_before_any_request"
+FEE_CAP = "RemoteRun.test_a_fee_bound_over_max_cost_is_refused_before_any_send"
+OVERCHARGE = "RemoteRun.test_a_fee_over_its_bound_stops_the_ramp"
+FUNDING = "RemoteRun.test_a_funding_fee_over_its_bound_stops_before_the_ramp"
+HAND = "FeeBound.test_a_100_action_external_matches_a_hand_computation"
 
 # (name, file, old, new, test)
 MUTANTS: list[tuple[str, str, str, str, str]] = [
@@ -153,8 +158,8 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     (
         "bound: refusal not enforced",
         R,
-        '    if why is not None:\n        print(f"refused: {why}", file=sys.stderr)\n        return REFUSED\n',
-        "    if False:\n        return REFUSED\n",
+        "    if why is not None:\n        return refuse(why)\n\n    try:\n        key",
+        "    if False:\n        return refuse(why)\n\n    try:\n        key",
         CAP,
     ),
     (
@@ -167,8 +172,8 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     (
         "key: load seeds written to the results",
         R,
-        'record["load_wallets"] = [w.address for w in wallets]',
-        'record["load_wallets"] = [w.seed.reveal().hex() for w in wallets]',
+        '"load_wallets": [w.address for w in wallets],',
+        '"load_wallets": [w.seed.reveal().hex() for w in wallets],',
         E2E,
     ),
     (
@@ -184,6 +189,111 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
         "walk_blocks(self.rpc, [self.last, cur], max_blocks=4096)",
         "walk_blocks(self.rpc, [cur, cur], max_blocks=4096)",
         E2E,
+    ),
+    (
+        "fee bound: forward fees dropped",
+        RM,
+        "        import_fee + gas_fee + forward_fees,\n",
+        "        import_fee + gas_fee,\n",
+        HAND,
+    ),
+    (
+        "fee bound: forward fees rounded down",
+        RM,
+        "return self.lump_price + _ceil_shr16(self.bit_price * bits + self.cell_price * cells)",
+        "return self.lump_price + ((self.bit_price * bits + self.cell_price * cells) >> 16)",
+        HAND,
+    ),
+    (
+        "fee bound: gas dropped (end to end)",
+        RM,
+        "    gas_fee = config.gas.max_fee()\n",
+        "    gas_fee = 0\n",
+        E2E,
+    ),
+    (
+        "fee bound: a received value buys gas_limit",
+        RM,
+        "        return self.fee(self.bought_for(value))\n",
+        "        return self.max_fee()\n",
+        "FeeBound.test_the_computation_a_received_value_can_buy",
+    ),
+    (
+        "fee bound: one size priced for every external",
+        R,
+        "        sizes[plan.batch] += runs * full\n        if rest:\n            sizes[rest] += runs\n",
+        "        sizes[plan.batch] += runs * full\n",
+        "FeeBound.test_the_whole_ramp_bound_sums_every_external_of_every_step_and_repeat",
+    ),
+    (
+        "fee bound: recipients not counted",
+        R,
+        "        return self.transfer_total + sweeps + self.receipts + self.recipients + storage\n",
+        "        return self.transfer_total + sweeps + self.receipts + storage\n",
+        "FeeBound.test_the_whole_ramp_bound_sums_every_external_of_every_step_and_repeat",
+    ),
+    (
+        "cost: the bench fee bound left out",
+        R,
+        "        funding + bench_fees,\n",
+        "        funding,\n",
+        FEE_CAP,
+    ),
+    (
+        "cost: the second refusal skipped",
+        R,
+        "    if why is not None:\n        return refuse(why)\n    if balance_before",
+        "    if False:\n        return refuse(why)\n    if balance_before",
+        FEE_CAP,
+    ),
+    (
+        "cost: load fees over the funding accepted",
+        R,
+        "    if bound.load_fees > bound.funding:\n",
+        "    if False:\n",
+        "Bound.test_over_a_cap_is_refused",
+    ),
+    (
+        "horizon: deadlines not capped",
+        R,
+        "ext.deadline = min(now + self.a.lifetime, self.horizon)",
+        "ext.deadline = now + self.a.lifetime",
+        f"{SUB}.test_request_deadlines_are_capped_at_the_fee_horizon",
+    ),
+    (
+        "cross-check: a load fee over its bound ignored",
+        R,
+        "        if ext.tx_fee <= limit:\n",
+        "        if True:\n",
+        OVERCHARGE,
+    ),
+    (
+        "cross-check: the wallet's storage not allowed for",
+        R,
+        "        limit = ext.fee_bound + self.storage_bounds[ext.wallet]\n",
+        "        limit = ext.fee_bound\n",
+        f"{SUB}.test_a_fee_over_its_bound_stops_the_ramp",
+    ),
+    (
+        "cross-check: a funding fee over its bound ignored",
+        R,
+        "        if fee > limit:\n",
+        "        if False:\n",
+        FUNDING,
+    ),
+    (
+        "exit: a ledger anomaly passes",
+        R,
+        "    if anomalies or duplicates:\n        return FAILED\n",
+        "    if False:\n        return FAILED\n",
+        "ExitStatus.test_the_mapping",
+    ),
+    (
+        "exit: a stopped ramp passes (end to end)",
+        R,
+        "    if stop_reason is not None:\n        return STOPPED\n",
+        "    if False:\n        return STOPPED\n",
+        OVERCHARGE,
     ),
 ]
 
