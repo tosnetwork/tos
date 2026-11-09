@@ -96,6 +96,9 @@ class NetworkConfig:
     # (crypto/smartcont/gen-zerostate.fif), instead of the development profile
     # below. Performance measurements use it; it cannot combine with block_limit_mul.
     production_block_limits: bool = False
+    # With production_block_limits: replace only the basechain (ConfigParam 23) byte limits,
+    # as (underload, soft, hard) bytes. Gas, lt and the masterchain stay canonical.
+    production_basechain_bytes: tuple[int, int, int] | None = None
     mc_valgroup_lifetime: int = 100000  # DEV: long lifetime for local testnet stability
     mc_consensus: SimplexConsensusConfig | None = field(
         default_factory=SimplexConsensusConfig
@@ -651,7 +654,17 @@ def _block_limits_fift(config: "NetworkConfig") -> str:
     if config.production_block_limits:
         if config.block_limit_mul != 1:
             raise ValueError("production block limits cannot be combined with block_limit_mul")
-        return _PRODUCTION_BLOCK_LIMITS
+        if config.production_basechain_bytes is None:
+            return _PRODUCTION_BLOCK_LIMITS
+        underload, soft, hard = config.production_basechain_bytes
+        if not 0 < underload <= soft <= hard <= 4 << 20:
+            raise ValueError("basechain bytes must satisfy 0 < underload <= soft <= hard <= 4 MiB")
+        canonical = "256 *Ki 1 *Mi 2 *Mi triple        // basechain bytes: underload soft hard"
+        if _PRODUCTION_BLOCK_LIMITS.count(canonical) != 1:
+            raise ValueError("canonical basechain byte limits not found")
+        return _PRODUCTION_BLOCK_LIMITS.replace(
+            canonical, f"{underload} {soft} {hard} triple  // basechain bytes: underload soft hard"
+        )
     if type(config.block_limit_mul) is not int or config.block_limit_mul < 1:
         raise ValueError("block_limit_mul must be a positive integer")
     return _DEV_BLOCK_LIMITS.format(mul=config.block_limit_mul)

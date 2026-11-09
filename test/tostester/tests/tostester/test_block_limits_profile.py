@@ -75,3 +75,37 @@ def test_production_profile_equals_gen_zerostate():
     )
     assert len(expected) == 6
     assert _triples(profile) == expected
+
+
+def test_production_basechain_bytes_override_only_the_basechain_byte_triple():
+    canonical = _block_limits_fift(
+        NetworkConfig(auth_network_tag=bytes(32), production_block_limits=True)
+    )
+    soft, hard = 2560 << 10, 3 << 20
+    profile = _block_limits_fift(
+        NetworkConfig(
+            auth_network_tag=bytes(32),
+            production_block_limits=True,
+            production_basechain_bytes=(256 << 10, soft, hard),
+        )
+    )
+    old, new = _triples(canonical), _triples(profile)
+    assert len(old) == len(new) == 6
+    # Masterchain bytes, gas, lt (0-2) and basechain gas, lt (4-5) stay canonical.
+    assert [new[i] for i in (0, 1, 2, 4, 5)] == [old[i] for i in (0, 1, 2, 4, 5)]
+    assert new[3] == [256 << 10, soft, hard]
+
+
+@pytest.mark.parametrize(
+    "triple",
+    [(0, 1 << 20, 2 << 20), (2 << 20, 1 << 20, 2 << 20), (1, 2, 1), (1, 2, (4 << 20) + 1)],
+)
+def test_production_basechain_bytes_refuse_an_unordered_or_oversized_triple(triple):
+    with pytest.raises(ValueError):
+        _ = _block_limits_fift(
+            NetworkConfig(
+                auth_network_tag=bytes(32),
+                production_block_limits=True,
+                production_basechain_bytes=triple,
+            )
+        )

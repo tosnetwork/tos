@@ -22,14 +22,18 @@ import asyncio
 import csv
 import datetime
 import hashlib
+import http.client
 import json
 import logging
 import math
 import os
 import platform
+import shlex
 import subprocess
 import sys
 import time
+import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -99,7 +103,7 @@ def parse_args() -> argparse.Namespace:
         "--max-senders",
         type=int,
         default=512,
-        help="cap on sending connections; a node admits 30 externals per 10 s from each",
+        help="cap on sending connections; each sends at most SOURCE_SEND_RATE externals/s",
     )
     p.add_argument(
         "--connections-per-node",
@@ -115,6 +119,17 @@ def parse_args() -> argparse.Namespace:
         "harness profile (half the block bytes, 100M gas), scalable with --block-limit-mul",
     )
     p.add_argument(
+        "--shard-block-rate-ms",
+        type=int,
+        default=0,
+        help="basechain Simplex target block rate in ms (0: the default 400)",
+    )
+    p.add_argument(
+        "--basechain-block-bytes",
+        default="",
+        help="with --block-limits production: basechain byte limits as UNDERLOAD,SOFT,HARD bytes",
+    )
+    p.add_argument(
         "--block-limit-mul",
         type=int,
         default=1,
@@ -124,6 +139,32 @@ def parse_args() -> argparse.Namespace:
         "--seed", default="tos-local-pq-bench", help="public run seed (keys are test material)"
     )
     p.add_argument("--stop-on-saturation", action="store_true")
+    p.add_argument(
+        "--metrics-base-port",
+        type=int,
+        default=0,
+        help="export each node's Prometheus metrics on consecutive ports from this one (0: off)",
+    )
+    p.add_argument(
+        "--ingress-ls-priority",
+        type=int,
+        default=-1,
+        help="set local_ls_message_priority on the ingress full nodes after they sync (-1: keep)",
+    )
+    p.add_argument(
+        "--node-arg",
+        action="append",
+        default=[],
+        metavar="ARG",
+        help="extra validator-engine argument for every node, repeatable "
+        "(e.g. --node-arg=--celldb-cell-cache-max-size=100000)",
+    )
+    p.add_argument(
+        "--send-via",
+        choices=("all", "validators", "ingress"),
+        default="all",
+        help="which nodes stage load is sent to",
+    )
     p.add_argument(
         "--ingress-nodes",
         type=int,
@@ -234,9 +275,7 @@ class Bench:
         ]
 
     async def _now(self) -> int:
-        info = await self.pool.call("get_masterchain_info")
-        header = await self.pool.call("get_block_header", info.last)
-        return int(header.gen_utime)
+        return await chain.chain_now(self.pool)
 
     async def wait_nonce(self, wallet: QuantumWallet, nonce: int, what: str, timeout: float = 180):
         deadline = time.time() + timeout
@@ -385,6 +424,7 @@ class Bench:
         n = len(self.load_addresses)
         used = self.load_addresses[: min(count, n)]
         start = await self.counters(used)
+        metrics_before = scrape_metrics() if METRIC_PORTS else {}
         sinks_before = await chain.read_balances(self.pool, self.sinks)
         deadline = await self._now() + a.duration + a.drain + 600
         transfer = nano(a.transfer_value)
@@ -429,7 +469,8 @@ class Bench:
                 raise SystemExit(
                     f"{rate:g}/s needs more than {cap} sender connections; one host can offer at most "
                     f"{cap * chain.SOURCE_SEND_RATE:g} externals/s to {len(self.configs)} nodes "
-                    "(64 connections per source IP per node, 30 externals per 10 s per connection)"
+                    f"({chain.SENDERS_PER_NODE} sender connections per node, "
+                    f"{chain.SOURCE_SEND_RATE:g} externals/s per connection)"
                 )
             senders = cap
         t0, records = await asyncio.to_thread(
@@ -445,6 +486,7 @@ class Bench:
         )
         t_sent = time.time()
         await asyncio.sleep(a.drain)
+        metrics_after = scrape_metrics() if METRIC_PORTS else {}
         scanner.stop()
         await scan_task
         end = await self.counters(used)
@@ -462,6 +504,8 @@ class Bench:
         result["requests_accepted_but_not_delivered"] = consumed - executed
         result["sink_value_gained_nanotos"] = gained
         result["sender_connections"] = senders
+        if METRIC_PORTS:
+            result["node_metrics_delta"] = metrics_delta(metrics_before, metrics_after)
         result["block_limits_evidence"] = self.block_limits_evidence(t0 + a.warmup, t_sent)
         result["gas_sample"] = await chain.gas_sample(self.pool, {LOAD_CLASS: used})
         result["cpu_package_celsius_end"] = package_temperatures()
@@ -605,7 +649,7 @@ class Bench:
             "connections": len(by_connection),
             "max_sends_per_connection_per_10s": peak,
             "connections_with_rate_limit_refusals": len(refused_on),
-            "admission_window": "30 externals per 10 s per client identity",
+            "sender_pacing_per_connection_per_s": chain.SOURCE_SEND_RATE,
         }
         # An ingress refusal breaks its wallet's nonce chain, so at most every later
         # transfer of that wallet in the stage is then refused as stale (exit 1804/133).
@@ -752,6 +796,117 @@ async def wait_synced(
             await c.aclose()
 
 
+METRIC_PORTS: dict[str, int] = {}
+
+
+def set_ingress_ls_priority(ingress: list[FullNode], priority: int, out: Path) -> None:
+    """Give externals submitted to each ingress node's liteserver this check priority.
+
+    Externals relayed from the overlay keep priority 0, so a positive value lets a node's own
+    clients' messages take checker slots ahead of relayed re-checks. Fields left at -1 keep
+    their current value.
+    """
+    config = {
+        "max_mempool_messages": -1,
+        "num_regular_checkers": -1,
+        "num_priority_checkers": -1,
+        "max_admission_waiters": -1,
+        "max_ext_msg_per_addr": -1,
+        "max_ext_msg_per_addr_time_window": -1.0,
+        "local_ls_message_priority": priority,
+    }
+    path = out / "ingress-ext-pool-options.json"
+    path.write_text(json.dumps(config))
+    for node in ingress:
+        command = f"{node.engine_console_cmd} -c {shlex.quote(f'set-ext-message-pool-options-json {path}')}"
+        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0 or "success" not in result.stdout:
+            raise RuntimeError(
+                f"setting the ingress check priority failed on {node.name}: {result.stdout[-400:]}"
+            )
+    log.info("ingress liteserver check priority set to %d on %d nodes", priority, len(ingress))
+
+
+def node_arg_conflict(node_arg: list[str], metrics_base_port: int) -> str | None:
+    """Why --node-arg would clash with an option the harness sets itself, or None.
+
+    A second --exporter-address makes the engine open a second exporter and abort; a second
+    --session-logs moves the logs away from where the collation evidence is read.
+    """
+    for arg in node_arg:
+        name = arg.split("=", 1)[0]
+        if name == "--session-logs":
+            return "--node-arg cannot set --session-logs: the harness reads its own session logs"
+        if name == "--exporter-address" and metrics_base_port:
+            return "--node-arg cannot set --exporter-address together with --metrics-base-port"
+    return None
+
+
+def node_args(a: argparse.Namespace, node_name: str) -> list[str]:
+    """The extra validator-engine arguments of one node: its metrics exporter, then --node-arg."""
+    extra = list(a.node_arg)
+    if not a.metrics_base_port:
+        return extra
+    port = METRIC_PORTS.setdefault(node_name, a.metrics_base_port + len(METRIC_PORTS))
+    return ["--exporter-address", f"127.0.0.1:{port}", *extra]
+
+
+METRIC_WORDS = ("ext_message", "external", "broadcast", "mempool")
+
+
+def parse_metrics(text: str) -> dict[str, float]:
+    """The ext-message, external, broadcast and mempool series of a Prometheus text page."""
+    series: dict[str, float] = {}
+    for line in text.splitlines():
+        if line.startswith("#") or not line.strip():
+            continue
+        key, _, value = line.rpartition(" ")
+        if any(word in key for word in METRIC_WORDS):
+            try:
+                series[key] = float(value)
+            except ValueError:
+                continue
+    return series
+
+
+def scrape_metrics() -> dict[str, dict[str, float] | None]:
+    """Every node's counters keyed by node name; None for a node whose scrape failed."""
+    out: dict[str, dict[str, float] | None] = {}
+    for name, port in METRIC_PORTS.items():
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=10) as reply:
+                text = reply.read().decode()
+        except (OSError, http.client.HTTPException) as error:
+            # A refused, timed-out or truncated response fails this node only.
+            out[name] = None
+            log.warning("metrics scrape of %s failed: %s", name, error)
+            continue
+        out[name] = parse_metrics(text)
+    return out
+
+
+def metrics_delta(
+    before: Mapping[str, Mapping[str, float] | None],
+    after: Mapping[str, Mapping[str, float] | None],
+) -> dict[str, dict[str, Any]]:
+    """Per node, the series that changed during the stage.
+
+    A node whose scrape failed at either end gets ``{"scrape_failed": [...]}`` naming the
+    failed end(s) and no deltas: cumulative counters must never be reported as a stage's
+    change, and a failure must not look like a stage in which nothing changed. A series
+    first seen at the end counts from zero, as a Prometheus counter does.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for node in sorted(set(before) | set(after)):
+        start, end = before.get(node), after.get(node)
+        failed = [side for side, value in (("before", start), ("after", end)) if value is None]
+        if start is None or end is None:
+            out[node] = {"scrape_failed": failed}
+            continue
+        out[node] = {k: v - start.get(k, 0.0) for k, v in end.items() if v != start.get(k, 0.0)}
+    return out
+
+
 def source_commit() -> str:
     return subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True, text=True
@@ -759,6 +914,18 @@ def source_commit() -> str:
 
 
 async def main(a: argparse.Namespace) -> int:
+    # Refuse before anything is created: an ingress-only run without ingress nodes would
+    # otherwise measure something else than it claims.
+    if a.send_via == "ingress" and a.ingress_nodes <= 0:
+        raise SystemExit("--send-via ingress needs --ingress-nodes 1 or more")
+    if a.ingress_ls_priority >= 0 and a.ingress_nodes <= 0:
+        raise SystemExit("--ingress-ls-priority needs --ingress-nodes 1 or more")
+    reason = node_arg_conflict(a.node_arg, a.metrics_base_port)
+    if reason:
+        raise SystemExit(reason)
+    # The engine console splits its command on whitespace, so the options file path must have none.
+    if a.ingress_ls_priority >= 0 and any(c.isspace() for c in str(a.out.resolve())):
+        raise SystemExit("--ingress-ls-priority needs an --out path without whitespace")
     a.out = a.out.resolve()
     a.out.mkdir(parents=True, exist_ok=False)
     commit = source_commit()
@@ -786,6 +953,22 @@ async def main(a: argparse.Namespace) -> int:
         network.config.shard_validators = a.validators
         network.config.block_limit_mul = a.block_limit_mul
         network.config.production_block_limits = a.block_limits == "production"
+        if a.shard_block_rate_ms:
+            if network.config.shard_consensus is None:
+                raise SystemExit("--shard-block-rate-ms needs a Simplex basechain")
+            network.config.shard_consensus.target_block_rate_ms = a.shard_block_rate_ms
+        if a.basechain_block_bytes:
+            if a.block_limits != "production":
+                raise SystemExit(
+                    "--basechain-block-bytes applies only to --block-limits production"
+                )
+            parts = a.basechain_block_bytes.split(",")
+            if len(parts) != 3 or not all(part.strip().isdigit() for part in parts):
+                raise SystemExit(
+                    "--basechain-block-bytes takes UNDERLOAD,SOFT,HARD as three byte counts"
+                )
+            underload, soft, hard = (int(part) for part in parts)
+            network.config.production_basechain_bytes = (underload, soft, hard)
         net_id = network.config.global_id
         dht = network.create_dht_node()
         nodes: list[FullNode] = []
@@ -808,14 +991,22 @@ async def main(a: argparse.Namespace) -> int:
         async with asyncio.TaskGroup() as group:
             group.create_task(dht.run())
             for node in nodes:
-                group.create_task(node.run(StartOptions(verbosity=a.node_verbosity)))
+                group.create_task(
+                    node.run(StartOptions(verbosity=a.node_verbosity, args=node_args(a, node.name)))
+                )
         await network.wait_mc_block(seqno=1)
         await network.wait_block(workchain=0, shard=chain.BASECHAIN_SHARD, seqno=1)
         if ingress:
             async with asyncio.TaskGroup() as group:
                 for node in ingress:
-                    group.create_task(node.run(StartOptions(verbosity=a.node_verbosity)))
+                    group.create_task(
+                        node.run(
+                            StartOptions(verbosity=a.node_verbosity, args=node_args(a, node.name))
+                        )
+                    )
             await wait_synced(ingress, nodes[0], install)
+            if a.ingress_ls_priority >= 0:
+                set_ingress_ls_priority(ingress, a.ingress_ls_priority, a.out)
         log.info(
             "net up: %d validators, %d ingress full nodes, global id %d",
             a.validators,
@@ -856,7 +1047,10 @@ async def main(a: argparse.Namespace) -> int:
                 pool.send_rate,
             )
             bench = Bench(a, network, client, pool, scan, signer, code, net_id, auth_tag)
-            bench.configs = [node.liteserver_config.to_json() for node in [*nodes, *ingress]]
+            targets = {"all": [*nodes, *ingress], "validators": nodes, "ingress": ingress}[
+                a.send_via
+            ]
+            bench.configs = [node.liteserver_config.to_json() for node in targets]
             bench.check_reuse()
             bench.check_funding()
             chain_config = await chain.config_snapshot(pool)
@@ -882,11 +1076,26 @@ async def main(a: argparse.Namespace) -> int:
                 "block_limits": a.block_limits,
                 "block_limit_mul": a.block_limit_mul,
                 "limits_profile": (
-                    "production: ConfigParams 22/23 as the canonical genesis"
+                    (
+                        "production: ConfigParams 22/23 as the canonical genesis"
+                        if not a.basechain_block_bytes
+                        else "production, except basechain bytes (ConfigParam 23) set to "
+                        + a.basechain_block_bytes
+                    )
                     if a.block_limits == "production"
                     else "dev: test-harness profile (bytes 128K/512K/1M x mul, gas 100M)"
                 )
                 + "; see chain_config for the exact parameters",
+                "submission": {
+                    "send_via": a.send_via,
+                    "targets": len(bench.configs),
+                    "ingress_nodes": a.ingress_nodes,
+                    "ingress_ls_priority": a.ingress_ls_priority,
+                    "sender_pacing_per_connection_per_s": chain.SOURCE_SEND_RATE,
+                },
+                "basechain_block_bytes": a.basechain_block_bytes or None,
+                "shard_block_rate_ms": a.shard_block_rate_ms or None,
+                "node_args": list(a.node_arg),
                 "chain_config": chain_config,
                 "wallets": a.wallets,
                 "max_senders": a.max_senders,

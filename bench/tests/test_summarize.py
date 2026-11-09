@@ -3,16 +3,20 @@
 Run: uv run python bench/tests/test_summarize.py
 """
 
+import argparse
+import asyncio
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src")]
 
 import run_local_bench as bench  # noqa: E402
+from pqbench import chain  # noqa: E402
 from pqbench.chain import BlockRow, SendRecord  # noqa: E402
 
 RATE_LIMIT = "LITE_SERVER_NOTREADY: external message source rate limit exceeded"
@@ -198,6 +202,157 @@ class CollationStatsTests(unittest.TestCase):
         self.assertEqual(s["full_blocks"]["count"], 1)
         self.assertEqual(s["full_blocks"]["bytes_median"], 1_400_000)
         self.assertEqual(s["bytes"]["max"], 1_400_000)
+
+
+class NodeMetricsTests(unittest.TestCase):
+    def test_parse_keeps_only_the_ingress_series(self):
+        page = "\n".join(
+            [
+                "# HELP x",
+                'tos_ext_message_admission_total{outcome="ok"} 7',
+                "tos_overlay_broadcast_received_total 3",
+                "process_resident_memory_bytes 1e9",
+                "tos_mempool_size NaN-not-a-number",
+            ]
+        )
+        self.assertEqual(
+            bench.parse_metrics(page),
+            {
+                'tos_ext_message_admission_total{outcome="ok"}': 7.0,
+                "tos_overlay_broadcast_received_total": 3.0,
+            },
+        )
+
+    def test_delta_reports_only_changed_series(self):
+        before = {"node-1": {"a": 1.0, "b": 5.0}}
+        after = {"node-1": {"a": 4.0, "b": 5.0, "c": 2.0}}
+        self.assertEqual(bench.metrics_delta(before, after), {"node-1": {"a": 3.0, "c": 2.0}})
+
+    def test_a_failed_scrape_is_reported_not_turned_into_counters(self):
+        before = {"node-1": None, "node-2": {"a": 1.0}, "node-3": None}
+        after = {"node-1": {"a": 9.0}, "node-2": None, "node-3": None}
+        self.assertEqual(
+            bench.metrics_delta(before, after),
+            {
+                "node-1": {"scrape_failed": ["before"]},
+                "node-2": {"scrape_failed": ["after"]},
+                "node-3": {"scrape_failed": ["before", "after"]},
+            },
+        )
+
+    def test_node_args_append_every_node_arg_after_the_exporter(self):
+        extra = ["--celldb-cell-cache-max-size=100000", "--celldb-cache-min-size=0"]
+        bench.METRIC_PORTS.pop("node-test", None)
+        off = argparse.Namespace(node_arg=extra, metrics_base_port=0)
+        self.assertEqual(bench.node_args(off, "node-test"), extra)
+        on = argparse.Namespace(node_arg=extra, metrics_base_port=39100)
+        args = bench.node_args(on, "node-test")
+        self.assertEqual(args[0], "--exporter-address")
+        self.assertEqual(args[2:], extra)
+        bench.METRIC_PORTS.pop("node-test", None)
+        none = argparse.Namespace(node_arg=[], metrics_base_port=0)
+        self.assertEqual(bench.node_args(none, "node-test"), [])
+
+    def test_a_node_missing_at_one_end_is_a_failure(self):
+        self.assertEqual(
+            bench.metrics_delta({}, {"node-1": {"a": 2.0}}),
+            {"node-1": {"scrape_failed": ["before"]}},
+        )
+
+
+class ScrapeTests(unittest.TestCase):
+    """A broken exporter fails only its own node, including a truncated chunked reply."""
+
+    @staticmethod
+    def serve(reply: bytes) -> int:
+        import socket
+        import threading
+
+        listener = socket.create_server(("127.0.0.1", 0))
+
+        def run():
+            with listener:
+                connection, _ = listener.accept()
+                with connection:
+                    _ = connection.recv(65536)
+                    connection.sendall(reply)
+
+        threading.Thread(target=run, daemon=True).start()
+        return listener.getsockname()[1]
+
+    def test_a_truncated_reply_fails_only_its_node(self):
+        good = b"tos_ext_message_admission_total 3\n"
+        ok_port = self.serve(
+            b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s"
+            % (len(good), good)
+        )
+        cut_port = self.serve(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n"
+        )
+        saved = dict(bench.METRIC_PORTS)
+        bench.METRIC_PORTS.clear()
+        bench.METRIC_PORTS.update({"node-ok": ok_port, "node-cut": cut_port})
+        try:
+            out = bench.scrape_metrics()
+        finally:
+            bench.METRIC_PORTS.clear()
+            bench.METRIC_PORTS.update(saved)
+        self.assertEqual(out["node-ok"], {"tos_ext_message_admission_total": 3.0})
+        self.assertIsNone(out["node-cut"])
+
+
+class NodeArgTests(unittest.TestCase):
+    def test_harness_options_cannot_be_forwarded(self):
+        self.assertIsNone(bench.node_arg_conflict(["--celldb-cache-min-size=0"], 39100))
+        self.assertIsNotNone(bench.node_arg_conflict(["--session-logs=x.log"], 0))
+        self.assertIsNotNone(bench.node_arg_conflict(["--exporter-address=127.0.0.1:1"], 39100))
+        # Without the harness exporter, forwarding one is the caller's choice.
+        self.assertIsNone(bench.node_arg_conflict(["--exporter-address=127.0.0.1:1"], 0))
+
+
+class ChainNowTests(unittest.TestCase):
+    """The masterchain time is read from one node, so a lagging node cannot fail it."""
+
+    class Node:
+        def __init__(self, applied: int, errors: list[str] | None = None):
+            self.applied = applied
+            self.errors = list(errors or [])
+            self.calls: list[str] = []
+
+        async def call(self, method: str, *args):
+            self.calls.append(method)
+            if self.errors:
+                raise RuntimeError(self.errors.pop(0))
+            if method == "get_masterchain_info":
+                return SimpleNamespace(last=SimpleNamespace(seqno=self.applied))
+            if args[0].seqno > self.applied:
+                raise RuntimeError(f"LITE_SERVER_NOTREADY: block {args[0].seqno} is not in db")
+            return SimpleNamespace(gen_utime=1000 + args[0].seqno)
+
+    class Pool:
+        def __init__(self, *nodes):
+            self.nodes, self.i = nodes, 0
+
+        def pick(self):
+            node = self.nodes[self.i % len(self.nodes)]
+            self.i += 1
+            return node
+
+    def now(self, pool, **kw) -> int:
+        return asyncio.run(chain.chain_now(cast(chain.ClientPool, pool), pause=0, **kw))
+
+    def test_both_reads_go_to_one_node(self):
+        ahead, behind = self.Node(2258), self.Node(2257)
+        self.assertEqual(self.now(self.Pool(ahead, behind)), 3258)
+        self.assertEqual(behind.calls, [])
+
+    def test_notready_is_retried_and_other_errors_are_raised(self):
+        flaky = self.Node(5, ["LITE_SERVER_NOTREADY: not in db", "LITE_SERVER_NOTREADY: not in db"])
+        self.assertEqual(self.now(self.Pool(flaky)), 1005)
+        with self.assertRaises(RuntimeError):
+            self.now(self.Pool(self.Node(5, ["LITE_SERVER_UNKNOWN: boom"])))
+        with self.assertRaises(RuntimeError):
+            self.now(self.Pool(self.Node(5, ["LITE_SERVER_NOTREADY: x"] * 3)), attempts=3)
 
 
 if __name__ == "__main__":
