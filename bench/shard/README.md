@@ -137,16 +137,34 @@ liteserver or local-net module, and every read and send goes through
 Before anything is read or sent it checks the burst caps (`--chains`
 1..255, `--forks` 0..12, `--hops` 1..1,000,000, `--accounts`
 2..65,536, positive funding) and prints an upper bound on the run's
-messages, transactions and cost. It refuses to go on when the bound
-exceeds `--max-messages` or `--max-cost`. The bound holds because
+messages, transactions and attached value. It refuses to go on when the
+bound exceeds `--max-messages` or `--max-cost`. The bound holds because
 `hop.fc` enforces it: every hop decrements `remaining` and the chain
 ends at 0, forks only while `forks` is positive, decrementing it, and
 hop messages never bounce; the start message carries `--hops` and
 `--forks`. A chain with `remaining = r` and `forks = f` executes
 `2^(r+1) - 1` transactions when `f >= r`, otherwise
-`2^f - 1 + 2^f (r - f + 1)`. Cost is the value the bench wallet
-attaches plus `--wallet-fee-cap` per external; the deployment's actual
-wallet fee is checked against that cap before the burst starts.
+`2^f - 1 + 2^f (r - f + 1)`.
+
+Cost is the value the bench wallet attaches plus a bound on the wallet's
+own fees, derived before anything is written or sent from the live
+configuration (the wallet must be on the basechain: ConfigParam 21 for
+gas, 25 for forwarding, 18 for storage). For each of the two wallet
+externals it adds the import fee of the external at its exact size, the
+computation fee at the gas limit, and the forwarding fee of every message
+it sends, at the size of its init and body; on top it adds the storage
+the wallet can owe up to the run's fee horizon, at the highest storage
+rate the network sets, plus any due payment. Requests are signed to
+expire by that horizon. `results.json` records the bound and every input.
+The run refuses when attached value plus fee bound exceeds `--max-cost`,
+and stops before the start when the deployment's real fee exceeds its
+bound.
+
+`--local` must be 0 in remote mode: the start message carries shard
+depth 0, and `hop.fc` keeps hops local only at a positive depth. If chain
+time stops advancing after the start, the wait ends after the time left
+to the deadline plus `--drain-wait`, and the run is recorded INCONCLUSIVE
+(exit status 4) instead of hanging.
 
 The bench wallet is a self-pay Quantum wallet. `--key-file` is a JSON
 file, mode 0600, with `mldsa44_seed` and `rescue_public_key` (hex);

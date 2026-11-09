@@ -8,15 +8,21 @@ boots a node. Every read and send goes through ``rpc.PacedRpc`` inside
 A run:
 
 1. checks the burst caps and computes an upper bound on the burst's work
-   (messages and transactions) and on what it can cost the bench wallet,
-   prints the bound, and refuses to go on when it exceeds ``--max-messages``
-   or ``--max-cost``. Nothing is read or sent before this step;
-2. funds the hop accounts from the supplied bench wallet (a self-pay Quantum
+   (messages and transactions) and on the value it attaches, and refuses
+   to go on when it exceeds ``--max-messages`` or ``--max-cost``. Nothing
+   is read or sent before this step;
+2. reads the gas, forwarding and storage prices from the live configuration
+   (ConfigParams 21, 25 and 18 for the basechain), derives a bound on the
+   bench wallet's own fees for both of its externals, and refuses when the
+   attached value plus that bound exceeds ``--max-cost``. Nothing is
+   written or sent before this step either;
+3. funds the hop accounts from the supplied bench wallet (a self-pay Quantum
    wallet whose ML-DSA-44 seed is read from ``--key-file``) in one
-   deployment tree, and checks the wallet's own fee against its cap;
-3. opens the window at an empty outbound queue, sends the start message, waits
-   past the deadline and closes the window at an empty queue;
-4. counts by an RPC chain walk (``t2collect``), and records the value left in
+   deployment tree, and checks the deployment's real fee against its bound;
+4. opens the window at an empty outbound queue, sends the start message, waits
+   past the deadline and closes the window at an empty queue. When chain
+   time stops advancing the wait ends and the run is recorded INCONCLUSIVE;
+5. counts by an RPC chain walk (``t2collect``), and records the value left in
    the hop accounts, which nothing can withdraw.
 
 How the work bound holds: ``hop.fc`` decrements ``remaining`` on every hop
@@ -33,10 +39,13 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import os
+import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -53,7 +62,7 @@ from pqbench.workload import (
 from pytosiq_core import Address, Cell, ExternalMsgInfo, MessageAny
 
 from shard import hopbench, t2collect
-from shard.rpc import PacedRpc
+from shard.rpc import PacedRpc, RpcError
 
 NANO = 1_000_000_000
 MAX_CHAINS = hopbench.MAX_CHAINS
@@ -62,9 +71,9 @@ MAX_HOPS = 1_000_000
 MAX_ACCOUNTS = 65_536
 # A self-pay request is valid for at most an hour after the chain's now().
 REQUEST_LIFETIME = 600
-# The wallet sends two externals: the deployment and the start.
-WALLET_EXTERNALS = 2
 REFUSED = 3
+# The run stopped without an answer, for example because chain time stopped advancing.
+INCONCLUSIVE = 4
 log = logging.getLogger("shard-bench-remote")
 
 
@@ -79,7 +88,6 @@ class Caps:
     accounts: int
     account_funding: int  # nanotos kept by every hop account
     load_funding: int  # nanotos attached to the start message
-    wallet_fee_cap: int  # nanotos one wallet external may cost in fees
 
 
 def _int_in(name: str, value: object, lo: int, hi: int) -> int:
@@ -94,7 +102,7 @@ def validate_caps(caps: Caps) -> Caps:
     _int_in("forks", caps.forks, 0, MAX_FORKS)
     _int_in("hops", caps.hops, 1, MAX_HOPS)
     _int_in("accounts", caps.accounts, 2, MAX_ACCOUNTS)
-    for name in ("account_funding", "load_funding", "wallet_fee_cap"):
+    for name in ("account_funding", "load_funding"):
         _int_in(name, getattr(caps, name), 1, (1 << 120) - 1)
     return caps
 
@@ -131,7 +139,7 @@ class Bound:
         return out
 
 
-def work_bound(caps: Caps) -> Bound:
+def work_bound(caps: Caps, wallet_fees: int = 0) -> Bound:
     """An upper bound on the run's messages, transactions and cost to the bench wallet.
 
     Deployment: one external, one message from the wallet to copy 0 and one
@@ -139,17 +147,20 @@ def work_bound(caps: Caps) -> Bound:
     the start message, and ``chains`` hop trees of ``hop_transactions(hops,
     forks)`` transactions, each executing one inbound message. Cost: the
     value the wallet attaches (account funding and load funding; every
-    hop's fee comes out of that value) plus the wallet's own fees, capped
-    per external.
+    hop's fee comes out of that value) plus ``wallet_fees``, the bound on
+    the wallet's own fees that ``wallet_fee_bound`` derives from the live
+    configuration. Before the configuration is read the bound is taken
+    with no wallet fees, which already refuses a run whose attached value
+    alone exceeds ``--max-cost``.
     """
     validate_caps(caps)
+    fees = _int_in("wallet fees", wallet_fees, 0, 1 << 120)
     tree = hop_transactions(caps.hops, caps.forks)
     deploy_messages = caps.accounts
     deploy_transactions = 1 + caps.accounts
     burst_messages = 1 + caps.chains * tree
     burst_transactions = 2 + caps.chains * tree
     attached = caps.accounts * caps.account_funding + caps.load_funding
-    fees = WALLET_EXTERNALS * caps.wallet_fee_cap
     return Bound(
         deploy_messages,
         deploy_transactions,
@@ -173,6 +184,316 @@ def refusal(bound: Bound, max_messages: int, max_cost: int) -> str | None:
     if bound.cost > max_cost:
         reasons.append(f"cost bound {bound.cost} nanotos exceeds --max-cost {max_cost}")
     return "; ".join(reasons) or None
+
+
+# ─── the wallet fee bound from the live configuration ────────────────
+#
+# What one wallet external can cost the wallet, mirrored from the node's
+# transaction code (crypto/block/transaction.cpp):
+#
+# - import: Transaction::unpack_input_msg charges an inbound external
+#   MsgPrices::compute_fwd_fees(cells, bits) of the message tree without its
+#   root cell and root bits: lump_price + ceil((bit_price * bits +
+#   cell_price * cells) / 2^16).
+# - computation: compute_gas_limits caps gas at gas_max, the gas the balance
+#   buys and never more than gas_limit, and the fee is
+#   ComputePhaseConfig::compute_gas_price(gas_used): flat_gas_price up to
+#   flat_gas_limit, then + ceil(gas_price * (gas_used - flat_gas_limit) /
+#   2^16). The fee at gas_limit bounds every external.
+# - forwarding: try_action_send_message prices every out message by the init
+#   and body trees it carries; send mode 1 (the bench's mode 3) takes the
+#   whole fwd_fee from the wallet's balance. first_frac only splits that fee
+#   between this block and the next, so the wallet pays all of it. A failed
+#   send is fined at most (cell_price >> 16) / 4 per cell instead, which the
+#   forwarding fee covers.
+# - storage: StoragePrices::compute_storage_fees charges ceil(sum over the
+#   elapsed seconds of (bit_price_ps * bits + cell_price_ps * cells) / 2^16)
+#   since last_paid, plus any due payment.
+#
+# The prices come from ConfigParam 21 (gas) and 25 (forwarding) for the
+# basechain, 20 and 24 for the masterchain, and 18 (storage), in the TL-B
+# of crypto/block/block.tlb.
+
+CONFIG_PARAM_ABSENT = -32004
+# Gas and forwarding ConfigParams by workchain.
+FEE_PARAMS = {0: (21, 25), -1: (20, 24)}
+STORAGE_PARAM = 18
+# An account root holds the address, the storage statistics and the balance
+# next to the StateInit; a whole cell of bits covers it.
+ACCOUNT_ROOT_BITS = 1023
+
+
+def _ceil_shr16(value: int) -> int:
+    return -((-value) >> 16)
+
+
+@dataclass(frozen=True)
+class GasPrices:
+    gas_price: int
+    gas_limit: int
+    special_gas_limit: int
+    gas_credit: int
+    flat_gas_limit: int
+    flat_gas_price: int
+
+    def fee(self, gas: int) -> int:
+        """ComputePhaseConfig::compute_gas_price."""
+        if gas <= self.flat_gas_limit:
+            return self.flat_gas_price
+        return _ceil_shr16(self.gas_price * (gas - self.flat_gas_limit)) + self.flat_gas_price
+
+    def max_fee(self) -> int:
+        """The fee at gas_limit, the most gas a non-special account can buy."""
+        return self.fee(self.gas_limit)
+
+
+def parse_gas_prices(cell: Cell) -> GasPrices:
+    """GasLimitsPrices: gas_prices#dd, gas_prices_ext#de, or either behind gas_flat_pfx#d1."""
+    s = cell.begin_parse()
+    flat_limit = flat_price = 0
+    tag = s.load_uint(8)
+    if tag == 0xD1:
+        flat_limit, flat_price = s.load_uint(64), s.load_uint(64)
+        tag = s.load_uint(8)
+    if tag == 0xDE:
+        price, limit, special, credit = (s.load_uint(64) for _ in range(4))
+    elif tag == 0xDD:
+        price, limit, credit = (s.load_uint(64) for _ in range(3))
+        special = limit
+    else:
+        raise ValueError(f"not a GasLimitsPrices cell (tag {tag:#x})")
+    for _ in range(3):  # block_gas_limit, freeze_due_limit, delete_due_limit must be present
+        s.load_uint(64)
+    return GasPrices(price, limit, special, credit, flat_limit, flat_price)
+
+
+@dataclass(frozen=True)
+class MsgPrices:
+    lump_price: int
+    bit_price: int
+    cell_price: int
+    ihr_price_factor: int
+    first_frac: int
+    next_frac: int
+
+    def fee(self, cells: int, bits: int) -> int:
+        """MsgPrices::compute_fwd_fees."""
+        return self.lump_price + _ceil_shr16(self.bit_price * bits + self.cell_price * cells)
+
+
+def parse_msg_prices(cell: Cell) -> MsgPrices:
+    """msg_forward_prices#ea lump_price bit_price cell_price ihr_price_factor first_frac next_frac."""
+    s = cell.begin_parse()
+    tag = s.load_uint(8)
+    if tag != 0xEA:
+        raise ValueError(f"not a MsgForwardPrices cell (tag {tag:#x})")
+    return MsgPrices(
+        s.load_uint(64),
+        s.load_uint(64),
+        s.load_uint(64),
+        s.load_uint(32),
+        s.load_uint(16),
+        s.load_uint(16),
+    )
+
+
+@dataclass(frozen=True)
+class StoragePrice:
+    utime_since: int
+    bit_price_ps: int
+    cell_price_ps: int
+    mc_bit_price_ps: int
+    mc_cell_price_ps: int
+
+
+def _storage_price(s: Any) -> StoragePrice:
+    tag = s.load_uint(8)
+    if tag != 0xCC:
+        raise ValueError(f"not a StoragePrices value (tag {tag:#x})")
+    return StoragePrice(*(s.load_uint(32 if i == 0 else 64) for i in range(5)))
+
+
+def parse_storage_prices(cell: Cell) -> list[StoragePrice]:
+    """ConfigParam 18: Hashmap 32 StoragePrices, in key order."""
+    prices = cell.begin_parse().load_hashmap(32, value_deserializer=_storage_price)
+    if not prices:
+        raise ValueError("ConfigParam 18 holds no storage prices")
+    return [prices[k] for k in sorted(prices)]
+
+
+def tree_size(cells: list[Cell]) -> tuple[int, int]:
+    """(cells, bits) of the distinct cells under ``cells``, roots included."""
+    seen: set[bytes] = set()
+    bits = 0
+    stack = list(cells)
+    while stack:
+        cell = stack.pop()
+        if cell.hash in seen:
+            continue
+        seen.add(cell.hash)
+        bits += len(cell.bits)
+        stack.extend(cell.refs)
+    return len(seen), bits
+
+
+def import_size(external: MessageAny) -> tuple[int, int]:
+    """The size an inbound external is charged for: its tree without the root cell.
+
+    The root's bits are counted too, which the node leaves to the lump price.
+    """
+    cells, bits = tree_size([external.serialize()])
+    return cells - 1, bits
+
+
+def forward_size(message: MessageAny) -> tuple[int, int]:
+    """The size an out message is charged for: every cell of its init and body.
+
+    The node skips the init and body roots when they sit inline in the
+    message root and counts them when the rewritten message moves them into
+    references; counting them always covers both.
+    """
+    trees = [message.body] + ([message.init.serialize()] if message.init is not None else [])
+    return tree_size(trees)
+
+
+@dataclass(frozen=True)
+class FeeConfig:
+    workchain: int
+    gas: GasPrices
+    forwarding: MsgPrices
+    storage: list[StoragePrice]  # empty when ConfigParam 18 is absent
+    params: dict[str, str]  # ConfigParam number -> its cell's hash, or "absent"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "workchain": self.workchain,
+            "gas": asdict(self.gas),
+            "forwarding": asdict(self.forwarding),
+            "storage": [asdict(x) for x in self.storage],
+            "config_param_hashes": self.params,
+        }
+
+
+def fee_config(
+    workchain: int,
+    gas: Cell,
+    forwarding: Cell,
+    storage: Cell | None,
+    params: dict[str, str] | None = None,
+) -> FeeConfig:
+    if workchain not in FEE_PARAMS:
+        raise ValueError(f"no fee ConfigParams for workchain {workchain}")
+    return FeeConfig(
+        workchain,
+        parse_gas_prices(gas),
+        parse_msg_prices(forwarding),
+        parse_storage_prices(storage) if storage is not None else [],
+        params or {},
+    )
+
+
+@dataclass(frozen=True)
+class ExternalFee:
+    """The most one wallet external can cost the wallet, storage aside, and its inputs."""
+
+    what: str
+    import_cells: int
+    import_bits: int
+    import_fee: int
+    gas_limit: int
+    gas_fee: int
+    out_messages: list[dict[str, int]]
+    forward_fees: int
+    total: int
+
+
+def external_fee_bound(
+    config: FeeConfig, what: str, external: MessageAny, actions: list[MessageAny]
+) -> ExternalFee:
+    """The import, computation and forwarding fee bound of ``external``.
+
+    ``external`` must be the wallet external exactly as it will be sent,
+    built from ``actions``; a signature of the right length stands in for
+    the real one, which has the same size.
+    """
+    if not actions:
+        raise ValueError("a wallet external sends at least one message")
+    cells, bits = import_size(external)
+    import_fee = config.forwarding.fee(cells, bits)
+    gas_fee = config.gas.max_fee()
+    out: list[dict[str, int]] = []
+    for message in actions:
+        destination = getattr(message.info, "dest", None)
+        if not isinstance(destination, Address) or destination.wc != config.workchain:
+            raise ValueError("an out message leaves the wallet's workchain; its prices differ")
+        m_cells, m_bits = forward_size(message)
+        out.append(
+            {"cells": m_cells, "bits": m_bits, "fee": config.forwarding.fee(m_cells, m_bits)}
+        )
+    forward_fees = sum(x["fee"] for x in out)
+    return ExternalFee(
+        what,
+        cells,
+        bits,
+        import_fee,
+        config.gas.gas_limit,
+        gas_fee,
+        out,
+        forward_fees,
+        import_fee + gas_fee + forward_fees,
+    )
+
+
+@dataclass(frozen=True)
+class StorageFee:
+    cells: int
+    bits: int
+    since: int
+    until: int
+    due_payment: int
+    fee: int
+
+
+def storage_fee_bound(
+    config: FeeConfig, cells: int, bits: int, since: int, until: int, due: int
+) -> StorageFee:
+    """The storage the wallet can be charged between ``since`` and ``until``.
+
+    Every second is priced at the highest rate any ConfigParam 18 entry
+    sets, so no change of prices inside the interval can exceed it.
+    """
+    for name, value in (("cells", cells), ("bits", bits), ("due payment", due)):
+        _int_in(name, value, 0, 1 << 120)
+    if until < since:
+        raise ValueError("a storage interval cannot end before it starts")
+    masterchain = config.workchain == -1
+    rate = max(
+        (
+            (p.mc_bit_price_ps if masterchain else p.bit_price_ps) * bits
+            + (p.mc_cell_price_ps if masterchain else p.cell_price_ps) * cells
+            for p in config.storage
+        ),
+        default=0,
+    )
+    return StorageFee(cells, bits, since, until, due, _ceil_shr16(rate * (until - since)) + due)
+
+
+@dataclass(frozen=True)
+class WalletFeeBound:
+    externals: list[ExternalFee]
+    storage: StorageFee
+    total: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "externals": [asdict(x) for x in self.externals],
+            "storage": asdict(self.storage),
+            "total": self.total,
+        }
+
+
+def wallet_fee_bound(externals: list[ExternalFee], storage: StorageFee) -> WalletFeeBound:
+    return WalletFeeBound(externals, storage, sum(x.total for x in externals) + storage.fee)
 
 
 # ─── the bench wallet key ────────────────────────────────────────────
@@ -292,6 +613,50 @@ class Remote:
     async def now(self) -> int:
         return int((await self.mc_header())["gen_utime"])
 
+    async def wait_past(self, target: int, slack: float) -> int | None:
+        """The first chain time after ``target``, or None when it does not come in time.
+
+        The wait is bounded on the monotonic clock: the chain-time distance
+        still to go when the wait starts, plus ``slack`` seconds. A network
+        whose block production stalls ends the wait instead of holding it.
+        """
+        first = await self.now()
+        limit = time.monotonic() + max(0, target - first) + slack
+        now = first
+        while now <= target:
+            if time.monotonic() >= limit:
+                return None
+            await asyncio.sleep(self.poll)
+            now = await self.now()
+        return now
+
+    async def config_cell(self, param: int) -> Cell | None:
+        """ConfigParam ``param`` as a cell, None when the network does not set it."""
+        try:
+            answer = await self.rpc.call("getConfigParam", {"param": param})
+        except RpcError as error:
+            if isinstance(error.error, dict) and error.error.get("code") == CONFIG_PARAM_ABSENT:
+                return None
+            raise
+        boc = answer.get("config", {}).get("bytes") if isinstance(answer, dict) else None
+        if not isinstance(boc, str):
+            raise ValueError(f"ConfigParam {param}: the answer carries no cell")
+        return Cell.one_from_boc(base64.b64decode(boc))
+
+    async def fee_config(self, workchain: int) -> FeeConfig:
+        """The gas, forwarding and storage prices of ``workchain`` from the live configuration."""
+        if workchain not in FEE_PARAMS:
+            raise ValueError(f"no fee ConfigParams for workchain {workchain}")
+        gas_param, fwd_param = FEE_PARAMS[workchain]
+        cells: dict[int, Cell | None] = {}
+        for param in (gas_param, fwd_param, STORAGE_PARAM):
+            cells[param] = await self.config_cell(param)
+        gas, fwd = cells[gas_param], cells[fwd_param]
+        if gas is None or fwd is None:
+            raise ValueError(f"the network sets no ConfigParam {gas_param} or {fwd_param}")
+        hashes = {str(k): (v.hash.hex() if v is not None else "absent") for k, v in cells.items()}
+        return fee_config(workchain, gas, fwd, cells[STORAGE_PARAM], hashes)
+
     async def account(self, address: Address) -> dict[str, Any]:
         answer = await self.rpc.call("getAddressInformation", {"address": raw(address)})
         if not isinstance(answer, dict):
@@ -331,6 +696,19 @@ class Remote:
         await self.rpc.call("sendBoc", {"boc": boc})
 
 
+def _count(value: object, name: str) -> int:
+    """A non-negative integer the node writes as a JSON number or a decimal string."""
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    if type(value) is int and value >= 0:
+        return value
+    raise ValueError(f"the bench wallet's storage statistic {name} is malformed")
+
+
+class HorizonPassed(Exception):
+    """A request could no longer execute inside the horizon the fee bound covers."""
+
+
 def bench_wallet(
     code: Cell, global_id: int, auth: bytes, key: WalletKey, public_key: bytes
 ) -> QuantumWallet:
@@ -367,21 +745,52 @@ class BenchWallet:
             raise ValueError("the bench wallet is active but has no data")
         return balance, primary_nonce(Cell.one_from_boc(base64.b64decode(data)))
 
-    async def send(self, actions: list[MessageAny], what: str, timeout: float) -> int:
-        """Send one signed request; wait until its nonce is consumed. Returns the balance spent."""
-        balance, nonce = await self.state()
-        deployed = nonce is not None
-        request = self.wallet.request(
-            nonce or 0, actions, await self.remote.now() + REQUEST_LIFETIME
+    async def storage(self) -> tuple[int, int, int, int]:
+        """(cells, bits, last_paid, due payment) of the wallet's storage as the node reports it."""
+        stat = (await self.remote.account(self.address)).get("storage_stat")
+        if not isinstance(stat, dict):
+            raise ValueError("the node reports no storage statistics for the bench wallet")
+        due = stat.get("due_payment")
+        return (
+            _count(stat.get("used_cells"), "used_cells"),
+            _count(stat.get("used_bits"), "used_bits"),
+            _count(stat.get("last_paid"), "last_paid"),
+            0 if due is None else _count(due, "due_payment"),
         )
-        external = self.wallet.external(request, self.signer.sign(request.hash))
-        if not deployed:
-            # The first request also deploys the wallet from its funded address.
-            external = MessageAny(
-                info=ExternalMsgInfo(None, self.address, 0),
-                init=self.wallet.state_init,
-                body=external.body,
-            )
+
+    def external(self, request: Cell, signature: bytes, deploy: bool) -> MessageAny:
+        """The external of a signed request; a deploying external carries the StateInit."""
+        external = self.wallet.external(request, signature)
+        if not deploy:
+            return external
+        # The first request also deploys the wallet from its funded address.
+        return MessageAny(
+            info=ExternalMsgInfo(None, self.address, 0),
+            init=self.wallet.state_init,
+            body=external.body,
+        )
+
+    def unsigned_external(self, actions: list[MessageAny], deploy: bool) -> MessageAny:
+        """The external as it will be sent, with a placeholder of the signature's size.
+
+        Nonce and deadline are fixed-width fields, so their values do not change the size.
+        """
+        request = self.wallet.request(0, actions, 0)
+        return self.external(request, bytes(SIGNATURE_BYTES), deploy)
+
+    async def send(self, actions: list[MessageAny], what: str, timeout: float, latest: int) -> int:
+        """Send one signed request; wait until its nonce is consumed. Returns the balance spent.
+
+        The request expires at chain time ``latest`` at the latest, so the
+        wallet cannot execute it after the horizon its storage bound covers.
+        """
+        balance, nonce = await self.state()
+        now = await self.remote.now()
+        deadline = min(now + REQUEST_LIFETIME, latest)
+        if deadline <= now:
+            raise HorizonPassed(f"the {what} request would expire before chain time {now}")
+        request = self.wallet.request(nonce or 0, actions, deadline)
+        external = self.external(request, self.signer.sign(request.hash), nonce is None)
         await self.remote.send(external)
         deadline = time.monotonic() + timeout
         while True:
@@ -431,7 +840,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--local", type=float, default=0.0)
     p.add_argument("--account-funding", type=float, required=True, help="TOS per hop account")
     p.add_argument("--load-funding", type=float, required=True, help="TOS attached to the burst")
-    p.add_argument("--wallet-fee-cap", type=float, default=1.0, help="TOS per wallet external")
     p.add_argument("--max-cost", type=float, required=True, help="TOS the run may cost at most")
     p.add_argument("--max-messages", type=int, required=True)
     p.add_argument("--duration", type=int, default=60, help="seconds the chains may run")
@@ -447,6 +855,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         p.error("--rpc-share must be in (0, 1]")
     if a.duration < 1:
         p.error("--duration must be positive")
+    for name in ("deploy_wait", "drain_wait", "poll"):
+        if not getattr(a, name) >= 0:
+            p.error(f"--{name.replace('_', '-')} must not be negative")
     try:
         a.auth = bytes.fromhex(a.auth_tag)
     except ValueError:
@@ -468,7 +879,21 @@ def caps_of(a: argparse.Namespace) -> Caps:
         a.accounts,
         nano(a.account_funding),
         nano(a.load_funding),
-        nano(a.wallet_fee_cap),
+    )
+
+
+def local_refusal(local: float) -> str | None:
+    """Why ``--local`` cannot run remotely, or None for 0.
+
+    The start message carries shard depth 0, and hop.fc applies locality
+    only when the depth is positive, so any other value would silently run
+    the uniform workload instead of the one asked for.
+    """
+    if local == 0:
+        return None
+    return (
+        f"--local {local} has no effect in remote mode: the start message carries shard "
+        "depth 0 and hop.fc keeps hops local only at a positive depth; use --local 0"
     )
 
 
@@ -482,97 +907,119 @@ def load_code(path: Path | None, build: Path, compile_to: Path, which: str) -> C
     return contracts.build(build, compile_to)["quantum"]
 
 
+def fee_horizon(now: int, deploy_wait: float, drain_wait: float) -> int:
+    """The latest chain time a wallet request of the run may execute at.
+
+    The deployment request is signed at once; the start request after the
+    deployment wait, the activation wait and the opening queue wait. Each
+    expires within ``REQUEST_LIFETIME``. Requests are signed to expire by
+    this horizon, so the storage bound up to it holds even if chain time
+    runs ahead of these waits.
+    """
+    return now + 2 * REQUEST_LIFETIME + math.ceil(2 * deploy_wait + drain_wait)
+
+
+async def fee_plan(
+    remote: Remote,
+    bench: "BenchWallet",
+    now: int,
+    horizon: int,
+    deploy_actions: list[MessageAny],
+    start_actions: list[MessageAny],
+) -> tuple[FeeConfig, WalletFeeBound]:
+    """The wallet fee bound of the run, from the live configuration; reads only."""
+    workchain = bench.address.wc
+    if workchain != 0:
+        raise ValueError(
+            f"the bench wallet is on workchain {workchain}; the self-pay Quantum wallet "
+            "runs on the basechain"
+        )
+    config = await remote.fee_config(workchain)
+    _, nonce = await bench.state()
+    externals = [
+        external_fee_bound(
+            config,
+            "deployment",
+            bench.unsigned_external(deploy_actions, nonce is None),
+            deploy_actions,
+        ),
+        external_fee_bound(
+            config, "start", bench.unsigned_external(start_actions, False), start_actions
+        ),
+    ]
+    cells, bits, last_paid, due = await bench.storage()
+    state_cells, state_bits = tree_size([bench.wallet.state_init.serialize()])
+    since = last_paid if last_paid > 0 else now
+    if since > horizon:
+        raise ValueError("the bench wallet's last storage payment lies past the fee horizon")
+    storage = storage_fee_bound(
+        config,
+        max(cells, state_cells + 1),
+        max(bits, state_bits + ACCOUNT_ROOT_BITS),
+        since,
+        horizon,
+        due,
+    )
+    return config, wallet_fee_bound(externals, storage)
+
+
+def refuse(why: str) -> int:
+    print(f"refused: {why}", file=sys.stderr)
+    return REFUSED
+
+
 async def run(a: argparse.Namespace) -> int:
     try:
         caps = validate_caps(caps_of(a))
     except ValueError as error:
-        print(f"refused: {error}", file=sys.stderr)
-        return REFUSED
+        return refuse(str(error))
+    why = local_refusal(a.local)
+    if why is not None:
+        return refuse(why)
+    # Nothing is read before this first check: the attached value alone must fit.
     bound = work_bound(caps)
     print(json.dumps({"work_bound": bound.as_dict(), "caps": asdict(caps)}, indent=2), flush=True)
     why = refusal(bound, a.max_messages, nano(a.max_cost))
     if why is not None:
-        print(f"refused: {why}", file=sys.stderr)
-        return REFUSED
+        return refuse(why)
+    with tempfile.TemporaryDirectory() as scratch:
+        return await run_bounded(a, caps, Path(scratch))
 
-    a.out = a.out.resolve()
-    a.out.mkdir(parents=True, exist_ok=False)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="[%(levelname)s][%(asctime)s][%(name)s] %(message)s",
-        handlers=[logging.StreamHandler(), logging.FileHandler(a.out / "bench.log")],
-        force=True,
-    )
+
+async def run_bounded(a: argparse.Namespace, caps: Caps, scratch: Path) -> int:
     key = load_key(a.key_file)
     signer = Signer(a.signer, key)
-    hop_code = load_code(a.hop_code, a.build, a.out / "contracts", "hop")
-    wallet_code = load_code(a.wallet_code, a.build, a.out / "contracts", "wallet")
+    hop_code = load_code(a.hop_code, a.build, scratch / "contracts", "hop")
+    wallet_code = load_code(a.wallet_code, a.build, scratch / "contracts", "wallet")
     rpcs = [PacedRpc(url, a.rpc_share) for url in a.rpc]
     remote = Remote(rpcs, a.poll)
 
     header = await remote.mc_header()
+    now = int(header["gen_utime"])
     global_id = int(header["global_id"])
     cp12 = await remote.rpc.call("getConfigParam", {"param": 12})
     wallet = bench_wallet(wallet_code, global_id, a.auth, key, signer.public_key())
     bench = BenchWallet(wallet, signer, remote)
-    log.info("bench wallet %s on global id %d", raw(wallet.address), global_id)
-    balance, _ = await bench.state()
-    if balance < bound.cost:
-        log.error("the bench wallet holds %d nanotos; the run may cost %d", balance, bound.cost)
-        return REFUSED
 
     seed = hashlib.sha256(a.seed.encode()).digest()
     family = hopbench.HopFamily(hop_code, int.from_bytes(seed[:8], "big"), caps.accounts)
     addresses = family.addresses()
     deploy_value = caps.accounts * caps.account_funding
-    spent_deploy = await bench.send(
-        [
-            transfer_message(
-                wallet.address,
-                addresses[0],
-                deploy_value,
-                body=hopbench.deploy_body(0, caps.accounts),
-                init=family.state_init(0),
-            )
-        ],
-        "deployment",
-        a.deploy_wait,
-    )
-    deploy_fee = spent_deploy - deploy_value
-    record: dict[str, Any] = {
-        "scope": "REMOTE: bounded hop burst over JSON-RPC",
-        "source_commit": source_commit(),
-        "endpoints": a.rpc,
-        "global_id": global_id,
-        "config_param_12": cp12,
-        "caps": asdict(caps),
-        "work_bound": bound.as_dict(),
-        "bench_wallet": raw(wallet.address),
-        "hop_code_hash": hop_code.hash.hex(),
-        "deployment_wallet_fee": deploy_fee,
-    }
-    out_record = a.out / "results.json"
-    if deploy_fee > caps.wallet_fee_cap:
-        record["stopped"] = "the deployment's wallet fee exceeded --wallet-fee-cap"
-        out_record.write_text(json.dumps(record, indent=2) + "\n")
-        log.error("%s: %d > %d", record["stopped"], deploy_fee, caps.wallet_fee_cap)
-        return REFUSED
-    missing = await remote.wait_active(addresses, a.deploy_wait)
-    if missing:
-        record["stopped"] = f"{len(missing)} hop accounts never became active"
-        out_record.write_text(json.dumps(record, indent=2) + "\n")
-        log.error(record["stopped"])
-        return REFUSED
-    before = await remote.balances(addresses)
-
-    opening = await t2collect.wait_empty_queue(remote.rpc, a.drain_wait, a.poll)
-    log.info("opening boundary: %s", opening)
-    deadline = await remote.now() + a.duration
+    deploy_actions = [
+        transfer_message(
+            wallet.address,
+            addresses[0],
+            deploy_value,
+            body=hopbench.deploy_body(0, caps.accounts),
+            init=family.state_init(0),
+        )
+    ]
     flags = (hopbench.FLAG_WITH_INIT if a.with_init else 0) | (
         hopbench.FLAG_VERIFY_SENDER if a.verify_sender else 0
     )
-    spent_start = await bench.send(
-        [
+
+    def start_actions(deadline: int) -> list[MessageAny]:
+        return [
             transfer_message(
                 wallet.address,
                 addresses[0],
@@ -589,12 +1036,104 @@ async def run(a: argparse.Namespace) -> int:
                     hopbench.payload_cell(a.payload),
                 ),
             )
-        ],
-        "start",
-        a.drain_wait,
+        ]
+
+    # The second check, before anything is written or sent: the attached value
+    # plus the wallet fee bound derived from the live configuration must fit.
+    horizon = fee_horizon(now, a.deploy_wait, a.drain_wait)
+    try:
+        # The deadline is a fixed-width field; its value does not change the size.
+        config, fees = await fee_plan(remote, bench, now, horizon, deploy_actions, start_actions(0))
+    except (ValueError, RpcError) as error:
+        return refuse(f"no wallet fee bound: {error}")
+    bound = work_bound(caps, fees.total)
+    print(
+        json.dumps(
+            {
+                "work_bound": bound.as_dict(),
+                "wallet_fee_bound": fees.as_dict(),
+                "fee_config": config.as_dict(),
+            },
+            indent=2,
+        ),
+        flush=True,
     )
-    while await remote.now() <= deadline + 5:
-        await asyncio.sleep(a.poll)
+    why = refusal(bound, a.max_messages, nano(a.max_cost))
+    if why is not None:
+        return refuse(why)
+    balance, _ = await bench.state()
+    if balance < bound.cost:
+        return refuse(f"the bench wallet holds {balance} nanotos; the run may cost {bound.cost}")
+
+    a.out = a.out.resolve()
+    a.out.mkdir(parents=True, exist_ok=False)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(levelname)s][%(asctime)s][%(name)s] %(message)s",
+        handlers=[logging.StreamHandler(), logging.FileHandler(a.out / "bench.log")],
+        force=True,
+    )
+    if (scratch / "contracts").is_dir():
+        shutil.copytree(scratch / "contracts", a.out / "contracts")
+    log.info("bench wallet %s on global id %d", raw(wallet.address), global_id)
+    out_record = a.out / "results.json"
+    record: dict[str, Any] = {
+        "scope": "REMOTE: bounded hop burst over JSON-RPC",
+        "source_commit": source_commit(),
+        "endpoints": a.rpc,
+        "global_id": global_id,
+        "config_param_12": cp12,
+        "caps": asdict(caps),
+        "work_bound": bound.as_dict(),
+        "wallet_fee_bound": fees.as_dict(),
+        "fee_config": config.as_dict(),
+        "fee_horizon": horizon,
+        "bench_wallet": raw(wallet.address),
+        "hop_code_hash": hop_code.hash.hex(),
+    }
+
+    def stop(outcome: str, why: str, code: int) -> int:
+        record["outcome"], record["stopped"] = outcome, why
+        record["rpc"] = [r.stats() for r in rpcs]
+        out_record.write_text(json.dumps(record, indent=2) + "\n")
+        log.error(why)
+        return code
+
+    spent_deploy = await bench.send(deploy_actions, "deployment", a.deploy_wait, horizon)
+    deploy_fee = spent_deploy - deploy_value
+    record["deployment_wallet_fee"] = deploy_fee
+    # A cross-check of the fee model on a real transaction: the deployment
+    # cannot cost more than its own bound plus all the storage the run may owe.
+    deploy_bound = fees.externals[0].total + fees.storage.fee
+    if deploy_fee > deploy_bound:
+        return stop(
+            "REFUSED",
+            f"the deployment's wallet fee {deploy_fee} exceeds its derived bound {deploy_bound}",
+            REFUSED,
+        )
+    missing = await remote.wait_active(addresses, a.deploy_wait)
+    if missing:
+        return stop("REFUSED", f"{len(missing)} hop accounts never became active", REFUSED)
+    before = await remote.balances(addresses)
+
+    opening = await t2collect.wait_empty_queue(remote.rpc, a.drain_wait, a.poll)
+    log.info("opening boundary: %s", opening)
+    record["boundaries"] = {"opening": asdict(opening)}
+    deadline = await remote.now() + a.duration
+    record["deadline"] = deadline
+    try:
+        spent_start = await bench.send(start_actions(deadline), "start", a.drain_wait, horizon)
+    except HorizonPassed as error:
+        return stop("INCONCLUSIVE", str(error), INCONCLUSIVE)
+    record["start_wallet_fee"] = spent_start - caps.load_funding
+    past = await remote.wait_past(deadline + 5, a.drain_wait)
+    if past is None:
+        return stop(
+            "INCONCLUSIVE",
+            f"chain time did not pass the deadline {deadline} + 5 within the wait "
+            f"--drain-wait {a.drain_wait} s allows",
+            INCONCLUSIVE,
+        )
     closing = await t2collect.wait_empty_queue(remote.rpc, a.drain_wait, a.poll)
     log.info("closing boundary: %s", closing)
     result = await t2collect.check_window(
@@ -608,9 +1147,9 @@ async def run(a: argparse.Namespace) -> int:
     )
     after = await remote.balances(addresses)
     wallet_after, _ = await bench.state()
+    attached = deploy_value + caps.load_funding
     record |= {
-        "start_wallet_fee": spent_start - caps.load_funding,
-        "deadline": deadline,
+        "outcome": "COUNTED",
         "boundaries": {"opening": asdict(opening), "closing": asdict(closing)},
         "counts": window_counts(result),
         "t2_status": result["status"],
@@ -625,6 +1164,8 @@ async def run(a: argparse.Namespace) -> int:
             "before": balance,
             "after": wallet_after,
             "spent": balance - wallet_after,
+            "fees_spent": balance - wallet_after - attached,
+            "fee_bound": fees.total,
         },
         "rpc": [r.stats() for r in rpcs],
     }

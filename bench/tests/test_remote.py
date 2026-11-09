@@ -8,6 +8,7 @@ local-net modules made unimportable, a fake signer, and a key made of test
 material only.
 """
 
+import asyncio
 import hashlib
 import http.server
 import json
@@ -16,16 +17,17 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src")]
 
 import base64  # noqa: E402
 
-from pytosiq_core import Builder, Cell  # noqa: E402
+from pytosiq_core import Builder, Cell, HashMap  # noqa: E402
 from shard import remote  # noqa: E402
 
 NANO = remote.NANO
@@ -39,7 +41,6 @@ def caps(**kw: int) -> remote.Caps:
         accounts=8,
         account_funding=NANO,
         load_funding=10 * NANO,
-        wallet_fee_cap=NANO,
     )
     base.update(kw)
     return remote.Caps(**base)
@@ -92,11 +93,21 @@ class Bound(unittest.TestCase):
 
     def test_bound_totals_and_cost(self):
         c = caps()
-        b = remote.work_bound(c)
+        b = remote.work_bound(c, 12345)
         self.assertEqual(b.deploy_messages, c.accounts)
         self.assertEqual(b.messages, b.deploy_messages + b.burst_messages)
         self.assertEqual(b.attached_value, c.accounts * c.account_funding + c.load_funding)
-        self.assertEqual(b.cost, b.attached_value + 2 * c.wallet_fee_cap)
+        self.assertEqual(b.wallet_fees, 12345)
+        self.assertEqual(b.cost, b.attached_value + 12345)
+
+    def test_a_fee_bound_not_covered_by_max_cost_is_refused(self):
+        fees = 400_123_456
+        b = remote.work_bound(caps(), fees)
+        covered = b.attached_value + fees
+        self.assertIsNone(remote.refusal(b, b.messages, covered))
+        self.assertIn("cost bound", remote.refusal(b, b.messages, covered - 1) or "")
+        # The attached value alone fits, so only the fee bound makes it refuse.
+        self.assertIsNone(remote.refusal(remote.work_bound(caps()), b.messages, covered - 1))
 
     def test_bound_over_a_cap_is_refused(self):
         b = remote.work_bound(caps())
@@ -116,12 +127,162 @@ class Bound(unittest.TestCase):
             dict(accounts=remote.MAX_ACCOUNTS + 1),
             dict(account_funding=0),
             dict(load_funding=0),
-            dict(wallet_fee_cap=0),
             dict(load_funding=1 << 120),
         ):
             with self.assertRaises(ValueError, msg=bad):
                 remote.validate_caps(caps(**bad))
         remote.validate_caps(caps(chains=255, forks=12, hops=remote.MAX_HOPS))
+
+
+# ─── the wallet fee bound from hand-built ConfigParams ───────────────
+
+
+def ceil16(value: int) -> int:
+    return -(-value // 65536)
+
+
+def gas_cell(
+    price: int = 26_214_400,
+    limit: int = 1_000_000,
+    flat: tuple[int, int] | None = (100, 40_000),
+    ext: bool = True,
+) -> Cell:
+    """ConfigParam 21 as block.tlb lays it out: [gas_flat_pfx#d1] gas_prices[_ext]."""
+    b = Builder()
+    if flat is not None:
+        b.store_uint(0xD1, 8).store_uint(flat[0], 64).store_uint(flat[1], 64)
+    if ext:
+        b.store_uint(0xDE, 8).store_uint(price, 64).store_uint(limit, 64).store_uint(limit, 64)
+    else:
+        b.store_uint(0xDD, 8).store_uint(price, 64).store_uint(limit, 64)
+    b.store_uint(10_000, 64)  # gas_credit
+    for value in (10_000_000, 100 * NANO, 1000 * NANO):  # block gas, freeze due, delete due
+        b.store_uint(value, 64)
+    return b.end_cell()
+
+
+def fwd_cell(lump: int = 100_000, bit: int = 655_361, cell: int = 65_536_000) -> Cell:
+    """ConfigParam 25: msg_forward_prices#ea."""
+    return (
+        Builder()
+        .store_uint(0xEA, 8)
+        .store_uint(lump, 64)
+        .store_uint(bit, 64)
+        .store_uint(cell, 64)
+        .store_uint(98_304, 32)
+        .store_uint(21_845, 16)
+        .store_uint(21_845, 16)
+        .end_cell()
+    )
+
+
+def storage_cell(entries: dict[int, tuple[int, int]]) -> Cell:
+    """ConfigParam 18: Hashmap 32 StoragePrices; values are (bit_price_ps, cell_price_ps)."""
+
+    def store(value: tuple[int, int, int], dest: Builder) -> None:
+        since, bit, cell = value
+        dest.store_uint(0xCC, 8).store_uint(since, 32).store_uint(bit, 64).store_uint(cell, 64)
+        dest.store_uint(bit * 1000, 64).store_uint(cell * 1000, 64)
+
+    prices = HashMap(32, value_serializer=store)
+    for key, (bit, cell) in entries.items():
+        prices.set_int_key(key, (key, bit, cell))
+    out = prices.serialize()
+    assert out is not None
+    return out
+
+
+STORAGE_ENTRIES = {0: (1, 500), 1_000: (3, 200)}
+
+
+def fake_fee_config() -> remote.FeeConfig:
+    return remote.fee_config(0, gas_cell(), fwd_cell(), storage_cell(STORAGE_ENTRIES))
+
+
+def all_cells(roots: list[Cell]) -> dict[bytes, Cell]:
+    found: dict[bytes, Cell] = {}
+    stack = list(roots)
+    while stack:
+        cell = stack.pop()
+        if cell.hash not in found:
+            found[cell.hash] = cell
+            stack.extend(cell.refs)
+    return found
+
+
+class FeeBound(unittest.TestCase):
+    def test_gas_bound_from_a_hand_built_config_param_21(self):
+        # Flat prefix: 40,000 for the first 100 gas, then 400 nanotos a gas (26,214,400 / 2^16).
+        gas = remote.parse_gas_prices(gas_cell())
+        self.assertEqual(
+            (gas.gas_price, gas.gas_limit, gas.flat_gas_limit, gas.flat_gas_price),
+            (26_214_400, 1_000_000, 100, 40_000),
+        )
+        self.assertEqual(gas.max_fee(), 40_000 + 400 * (1_000_000 - 100))
+        self.assertEqual(gas.fee(100), 40_000)
+        # Without a flat prefix, and with a price that does not divide 2^16: rounded up.
+        plain = remote.parse_gas_prices(gas_cell(price=65_537, limit=1_000, flat=None, ext=False))
+        self.assertEqual(plain.max_fee(), ceil16(65_537 * 1_000))
+        self.assertEqual(plain.max_fee(), 1_001)
+        with self.assertRaises(ValueError):
+            remote.parse_gas_prices(Builder().store_uint(0xDF, 8).end_cell())
+
+    def test_forward_fee_from_a_hand_built_config_param_25(self):
+        prices = remote.parse_msg_prices(fwd_cell())
+        self.assertEqual(prices.fee(3, 1_000), 100_000 + ceil16(655_361 * 1_000 + 65_536_000 * 3))
+        self.assertEqual(prices.fee(3, 1_000), 113_001)
+        self.assertEqual(prices.first_frac, 21_845)
+        with self.assertRaises(ValueError):
+            remote.parse_msg_prices(Builder().store_uint(0xEB, 8).end_cell())
+
+    def test_external_bound_is_import_plus_gas_plus_every_forward(self):
+        config = fake_fee_config()
+        key = remote.WalletKey(remote.Secret(TEST_SEED), TEST_RESCUE, 0)
+        wallet = remote.bench_wallet(WALLET_CODE, GLOBAL_ID, AUTH, key, fake_public_key(TEST_SEED))
+        bench = remote.BenchWallet(wallet, cast(Any, None), cast(Any, None))
+        target = remote.Address((0, bytes(range(32))))
+        actions = [
+            remote.transfer_message(wallet.address, target, NANO, body=HOP_CODE),
+            remote.transfer_message(wallet.address, target, 2 * NANO),
+        ]
+        external = bench.unsigned_external(actions, deploy=True)
+        fee = remote.external_fee_bound(config, "deployment", external, actions)
+        # Import: every cell but the root, every bit (the root's too, which is conservative).
+        root = external.serialize()
+        cells = all_cells([root])
+        self.assertEqual(fee.import_cells, len(cells) - 1)
+        self.assertEqual(fee.import_bits, sum(len(c.bits) for c in cells.values()))
+        self.assertGreater(fee.import_cells, 30)  # the ML-DSA-44 signature and the StateInit
+        self.assertEqual(fee.import_fee, config.forwarding.fee(fee.import_cells, fee.import_bits))
+        self.assertEqual(fee.gas_fee, 400_000_000)
+        expected_out = [
+            {"cells": 1, "bits": 16, "fee": 100_000 + ceil16(655_361 * 16 + 65_536_000)},
+            {"cells": 1, "bits": 0, "fee": 100_000 + ceil16(65_536_000)},
+        ]
+        self.assertEqual(fee.out_messages, expected_out)
+        self.assertEqual(
+            fee.total, fee.import_fee + 400_000_000 + sum(x["fee"] for x in expected_out)
+        )
+        # A deploying external carries the StateInit, so it costs more to import.
+        plain = remote.external_fee_bound(
+            config, "start", bench.unsigned_external(actions, deploy=False), actions
+        )
+        self.assertLess(plain.import_fee, fee.import_fee)
+        # A message to another workchain is priced by other ConfigParams: refused.
+        away = [remote.transfer_message(wallet.address, remote.Address((-1, bytes(32))), 1)]
+        with self.assertRaises(ValueError):
+            remote.external_fee_bound(config, "x", bench.unsigned_external(away, False), away)
+
+    def test_storage_bound_takes_the_highest_rate_and_the_due_payment(self):
+        config = fake_fee_config()
+        self.assertEqual(len(config.storage), 2)
+        bound = remote.storage_fee_bound(config, 10, 2_000, 1_000, 1_100, 7)
+        rate = max(1 * 2_000 + 500 * 10, 3 * 2_000 + 200 * 10)
+        self.assertEqual(bound.fee, ceil16(rate * 100) + 7)
+        none = remote.fee_config(0, gas_cell(), fwd_cell(), None)
+        self.assertEqual(remote.storage_fee_bound(none, 10, 2_000, 0, 10**9, 7).fee, 7)
+        with self.assertRaises(ValueError):
+            remote.storage_fee_bound(config, 1, 1, 10, 9, 0)
 
 
 # ─── test key material and a fake signer ─────────────────────────────
@@ -186,6 +347,11 @@ class Key(unittest.TestCase):
 
 # ─── a fake JSON-RPC node ────────────────────────────────────────────
 
+# The node's fee ConfigParams: a computation bound of 0.4 TOS per external,
+# far above the 0.01 TOS the fake node charges, and forwarding prices that
+# alone stay below it.
+FAKE_CONFIG = {18: storage_cell(STORAGE_ENTRIES), 21: gas_cell(), 25: fwd_cell()}
+
 ROOT_SHARD = -(1 << 63)
 
 
@@ -238,10 +404,25 @@ class FakeNode:
     The start request puts the wallet's start transaction in the next shard
     block and the first hop account's import of it in the one after. Other
     blocks, masterchain blocks included, carry no transactions.
+
+    Every wallet external costs the wallet ``fee`` on top of the value it
+    attaches. With ``stall``, chain time stops at the first send, as on a
+    network whose block production has stopped.
     """
 
-    def __init__(self, wallet: str, wallet_balance: int, account_funding: int, hop0: str = ""):
+    def __init__(
+        self,
+        wallet: str,
+        wallet_balance: int,
+        account_funding: int,
+        hop0: str = "",
+        fee: int = NANO // 100,
+        stall: bool = False,
+    ):
         self.lock = threading.Lock()
+        self.fee, self.stall = fee, stall
+        self.last_time = 0
+        self.frozen_time: int | None = None
         self.hop0 = hop0
         self.txs: dict[tuple[int, int], list[dict[str, Any]]] = {}
         self.tx_reads: list[tuple[int, int]] = []
@@ -264,6 +445,9 @@ class FakeNode:
             out: dict[str, Any] = {"id": block_id(wc, seqno), "gen_utime": 1_000_000 + 5 * seqno}
             if wc == -1:
                 out["global_id"] = GLOBAL_ID
+                if self.frozen_time is not None:
+                    out["gen_utime"] = self.frozen_time
+                self.last_time = out["gen_utime"]
             else:
                 out |= {"after_merge": False, "after_split": False, "before_split": False}
                 out["prev_blocks"] = [block_id(0, seqno - 1)]
@@ -284,7 +468,10 @@ class FakeNode:
         if method == "getConsensusBlock":
             return {"consensus_block": self.mc}
         if method == "getConfigParam":
-            return {"config": {"bytes": "AA=="}}
+            cell = FAKE_CONFIG.get(p["param"])
+            if cell is None:
+                return {"config": {"bytes": "AA=="}}
+            return {"config": {"bytes": base64.b64encode(cell.to_boc()).decode()}}
         if method == "getBlockTransactionsExt":
             where = (p["workchain"], p["seqno"])
             self.tx_reads.append(where)
@@ -302,6 +489,13 @@ class FakeNode:
                     "data": base64.b64encode(wallet_data(self.nonce or 0).to_boc()).decode()
                     if active
                     else "",
+                    "storage_stat": {
+                        "@type": "storage.stat",
+                        "used_cells": "3",
+                        "used_bits": "900",
+                        "last_paid": 1_000_000,
+                        "due_payment": "17",
+                    },
                 }
             deployed = len(self.sends) >= 1
             return {
@@ -310,10 +504,12 @@ class FakeNode:
             }
         if method == "sendBoc":
             self.sends.append(p["boc"])
+            if self.stall and self.frozen_time is None:
+                self.frozen_time = self.last_time
             if len(self.sends) == 2 and self.hop0:
                 self.start_traffic()
             self.nonce = (self.nonce or 0) + 1
-            self.wallet_balance -= NANO // 100 + (
+            self.wallet_balance -= self.fee + (
                 8 * self.account_funding if len(self.sends) == 1 else 10 * NANO
             )
             return {"@type": "ok"}
@@ -384,7 +580,7 @@ finally:
 
 
 class RemoteRun(unittest.TestCase):
-    def run_remote(self, d: Path, url: str, extra: list[str] | None = None):
+    def run_remote(self, d: Path, url: str, extra: list[str] | None = None, timeout: float = 300):
         signer = d / "signer.py"
         signer.write_text(FAKE_SIGNER)
         signer.chmod(0o700)
@@ -439,7 +635,7 @@ class RemoteRun(unittest.TestCase):
             [sys.executable, str(driver), *argv],
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=timeout,
             env=env,
             cwd=d,
         )
@@ -485,6 +681,24 @@ class RemoteRun(unittest.TestCase):
         self.assertEqual(
             record["work_bound"]["burst_messages"], 1 + 4 * remote.hop_transactions(10, 2)
         )
+        self.assertEqual(record["outcome"], "COUNTED")
+        # The fee bound, derived from the node's ConfigParams before any send, covers the
+        # fee the node really charged for each external and for the run.
+        fees = record["wallet_fee_bound"]
+        deployment, start = fees["externals"]
+        self.assertEqual(deployment["gas_fee"], 400_000_000)
+        self.assertGreaterEqual(deployment["total"], record["deployment_wallet_fee"])
+        self.assertGreaterEqual(start["total"], record["start_wallet_fee"])
+        self.assertEqual(record["deployment_wallet_fee"], node.fee)
+        self.assertEqual(record["wallet_balance"]["fees_spent"], 2 * node.fee)
+        self.assertGreaterEqual(fees["total"], record["wallet_balance"]["fees_spent"])
+        self.assertEqual(record["work_bound"]["wallet_fees"], fees["total"])
+        self.assertEqual(fees["storage"]["due_payment"], 17)
+        self.assertEqual(fees["storage"]["since"], 1_000_000)
+        self.assertEqual(
+            record["fee_config"]["config_param_hashes"],
+            {str(k): v.hash.hex() for k, v in FAKE_CONFIG.items()},
+        )
         self.assertTrue(set(node.methods) <= set(FakeNode_methods()), node.methods)
         texts = [result.stdout, result.stderr] + [
             b.decode(errors="replace") for b in written.values()
@@ -523,6 +737,114 @@ class RemoteRun(unittest.TestCase):
             self.assertIn(reason, result.stderr)
         self.assertIn("work_bound", over_cost.stdout)
         self.assertEqual(node.methods, [])
+
+    def test_a_fee_bound_over_max_cost_is_refused_before_any_send(self):
+        # 1-nanotos funding: the attached value (9 nanotos) fits an 11-nanotos cost cap,
+        # and only the fee bound from the node's ConfigParams shows the run cannot.
+        node = FakeNode(self.wallet_address(), 1000 * NANO, 1)
+        server, url = node.serve()
+        tiny = ["--account-funding", "0.000000001", "--load-funding", "0.000000001"]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                result = self.run_remote(d, url, [*tiny, "--max-cost", "0.000000011"])
+                out_exists = (d / "out").exists()
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(result.returncode, remote.REFUSED, result.stderr[-2000:])
+        self.assertIn("cost bound", result.stderr)
+        self.assertIn("wallet_fee_bound", result.stdout)
+        self.assertFalse(out_exists)
+        self.assertEqual(node.sends, [])
+        self.assertNotIn("sendBoc", node.methods)
+        self.assertIn("getConfigParam", node.methods)
+
+    def test_a_deployment_fee_over_its_bound_stops_before_the_start(self):
+        node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, self.hop0(), fee=10 * NANO)
+        server, url = node.serve()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                result = self.run_remote(d, url)
+                record = json.loads((d / "out/results.json").read_text())
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(result.returncode, remote.REFUSED, result.stderr[-2000:])
+        self.assertEqual(len(node.sends), 1)
+        self.assertEqual(record["outcome"], "REFUSED")
+        self.assertIn("derived bound", record["stopped"])
+        self.assertEqual(record["deployment_wallet_fee"], 10 * NANO)
+
+    def test_a_nonzero_local_is_refused_before_any_request(self):
+        node = FakeNode(self.wallet_address(), 1000 * NANO, NANO)
+        server, url = node.serve()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                result = self.run_remote(d, url, ["--local", "0.5"])
+                out_exists = (d / "out").exists()
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(result.returncode, remote.REFUSED, result.stderr[-2000:])
+        self.assertIn("--local 0.5 has no effect", result.stderr)
+        self.assertFalse(out_exists)
+        self.assertEqual(node.methods, [])
+
+    def test_stalled_chain_time_ends_the_run_inconclusive(self):
+        node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, self.hop0(), stall=True)
+        server, url = node.serve()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                result = self.run_remote(d, url, ["--drain-wait", "1"], timeout=90)
+                record = json.loads((d / "out/results.json").read_text())
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(result.returncode, remote.INCONCLUSIVE, result.stderr[-2000:])
+        self.assertEqual(record["outcome"], "INCONCLUSIVE")
+        self.assertIn("chain time did not pass the deadline", record["stopped"])
+        self.assertEqual(len(node.sends), 2)
+        self.assertNotIn("counts", record)
+
+
+class LocalAndWaits(unittest.TestCase):
+    def test_only_local_zero_runs_remotely(self):
+        self.assertIsNone(remote.local_refusal(0.0))
+        for value in (0.25, 1.0):
+            self.assertIn("has no effect", remote.local_refusal(value) or "")
+
+    def test_the_wait_for_chain_time_ends_when_time_stops(self):
+        class Frozen(remote.Remote):
+            reads = 0
+
+            async def now(self) -> int:
+                self.reads += 1
+                return 1_000
+
+        frozen = Frozen([remote.PacedRpc("http://127.0.0.1:9/jsonRPC")], 0.01)
+
+        async def wait() -> int | None:
+            return await asyncio.wait_for(frozen.wait_past(1_000, 0.2), timeout=10)
+
+        started = time.monotonic()
+        self.assertIsNone(asyncio.run(wait()))
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertGreater(frozen.reads, 1)
+
+    def test_the_wait_for_chain_time_returns_once_time_passes(self):
+        class Ticking(remote.Remote):
+            t = 990
+
+            async def now(self) -> int:
+                self.t += 5
+                return self.t
+
+        ticking = Ticking([remote.PacedRpc("http://127.0.0.1:9/jsonRPC")], 0)
+        self.assertEqual(asyncio.run(ticking.wait_past(1_000, 0)), 1_005)
 
 
 def FakeNode_methods() -> list[str]:
