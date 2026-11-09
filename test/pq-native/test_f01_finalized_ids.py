@@ -358,5 +358,368 @@ class FinalizedIdTests(unittest.TestCase):
             self.assertTrue(json.loads(output.read_text())["passed"])
 
 
+class KeyBlockTransitionTests(unittest.TestCase):
+    """H is a key block whose own finalization marker no node logs.
+
+    Real rehearsals show it: every node lacks BlockFinalizedInMasterchain at
+    exactly the key blocks, because the key block's notice reaches no consensus
+    bus. H must then be proven by its successor's predecessor link.
+    """
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.nodes = fixture()
+        self.paths = {}
+        for name in self.nodes:
+            self.paths[name] = self.root / f"{name}.log"
+            self.paths[name].write_text(f"independent {name} native log\n")
+        self.before = Builder().store_uint(1, 8).end_cell()
+        self.after = Builder().store_uint(2, 8).end_cell()
+        self.manifest, self.transcript = capture_fixture(
+            self.root, self.nodes, self.paths, self.before, self.after
+        )
+        self.sources = {
+            name: (path, hashlib.sha256(path.read_bytes()).hexdigest())
+            for name, path in self.paths.items()
+        }
+        self.rows = [json.loads(line) for line in self.transcript.read_text().splitlines()]
+        # Mark H (2) a key block, give every header its preceding key block (0),
+        # and link each H+1 (3) header to H's exact ID.
+        for row in self.rows:
+            if row["request"]["method"] != "getBlockHeader":
+                continue
+            height = row["request"]["params"]["seqno"]
+            self.edit(
+                row,
+                lambda result, h=height: result.update(
+                    is_key_block=h == 2, prev_key_block_seqno=2 if h == 3 else 0
+                ),
+            )
+            if height == 3:
+                self.edit(
+                    row,
+                    lambda result, name=row["node_name"]: result.update(
+                        prev_blocks=[self.header(name, 2)["id"]]
+                    ),
+                )
+        self.seal()
+        for name in self.nodes:  # no node logs H itself
+            self.nodes[name] = [event for event in self.nodes[name] if event["height"] != 2]
+
+    @staticmethod
+    def edit(row, change):
+        response = json.loads(base64.b64decode(row["response_base64"]))
+        change(response["result"])
+        row["response_base64"] = base64.b64encode(json.dumps(response).encode()).decode()
+
+    def header(self, name, height):
+        row = next(
+            row
+            for row in self.rows
+            if row["node_name"] == name
+            and row["request"]["method"] == "getBlockHeader"
+            and row["request"]["params"]["seqno"] == height
+        )
+        return json.loads(base64.b64decode(row["response_base64"]))["result"]
+
+    def header_row(self, name, height):
+        return next(
+            row
+            for row in self.rows
+            if row["node_name"] == name
+            and row["request"]["method"] == "getBlockHeader"
+            and row["request"]["params"]["seqno"] == height
+        )
+
+    def seal(self):
+        self.transcript.write_text("".join(json.dumps(row) + "\n" for row in self.rows))
+        document = json.loads(self.manifest.read_text())
+        document["source"]["config34_raw_rpc_transcript"]["sha256"] = hashlib.sha256(
+            self.transcript.read_bytes()
+        ).hexdigest()
+        self.manifest.write_text(json.dumps(document))
+
+    def verify(self):
+        return f01.verify_capture(
+            self.manifest,
+            self.nodes,
+            self.sources,
+            2,
+            self.before.hash.hex(),
+            self.after.hash.hex(),
+        )
+
+    def test_key_block_h_without_markers_is_proven_by_its_successor(self):
+        verdict = self.verify()
+        self.assertEqual(set(verdict["h_proven_by"].values()), {"successor_prev"})
+        self.assertEqual(verdict["raw_key_block_heights"], [2])
+        self.assertEqual(verdict["raw_named_key_heights"], [0])
+        exempt = frozenset(verdict["raw_key_block_heights"]) | frozenset(
+            verdict["raw_named_key_heights"]
+        )
+        report = f01.evaluate(self.nodes, 2, BEFORE, AFTER, exempt_heights=exempt)
+        self.assertEqual(report["checked_heights"], [1, 3])
+        self.assertEqual(report["coverage_exempt_key_heights"], [2])
+
+    def test_a_present_h_marker_must_still_match(self):
+        self.nodes["node1"].append(
+            {
+                "height": 2,
+                "id": (-1, "8000000000000000", 2, "f" * 64, "c" * 64),
+                "at": "2026-09-25 10:00:02.000000009",
+                "line": 2,
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "native marker differs"):
+            self.verify()
+
+    def test_nodes_cannot_prove_different_h_ids_with_locally_consistent_evidence(self):
+        original = self.header("node0", 2)["id"]
+        with patch.dict(self.nodes, {"node3": fixture()["node3"]}):
+            self.assertEqual(
+                self.verify()["h_proven_by"],
+                {
+                    "node0": "successor_prev",
+                    "node1": "successor_prev",
+                    "node2": "successor_prev",
+                    "node3": "native",
+                },
+            )
+        for field in ("root_hash", "file_hash"):
+            # Node3's manifest, raw H, and raw successor all support its own fork.
+            fork = {**original, field: base64.b64encode(b"\xff" * 32).decode()}
+            self.edit(self.header_row("node3", 2), lambda result: result.update(id=fork))
+            self.edit(self.header_row("node3", 3), lambda result: result.update(prev_blocks=[fork]))
+            document = json.loads(self.manifest.read_text())
+            observation = next(
+                row
+                for row in document["transitions"][0]["observations"]
+                if row["node_name"] == "node3" and row["height"] == 2
+            )
+            observation["block_id"] = fork
+            self.manifest.write_text(json.dumps(document))
+            self.seal()
+            for marker_node in (None, "node0", "node3"):
+                with self.subTest(field=field, marker_node=marker_node):
+                    markers = {}
+                    if marker_node is not None:
+                        event = fixture()[marker_node][1]
+                        event["id"] = f01.rpc_block_id(self.header(marker_node, 2)["id"])
+                        markers[marker_node] = [*self.nodes[marker_node], event]
+                    with patch.dict(self.nodes, markers):
+                        with self.assertRaisesRegex(ValueError, "disagree|conflict"):
+                            self.verify()
+
+    def test_successor_must_name_h_exactly(self):
+        for field in ("root_hash", "file_hash"):
+            row = self.header_row("node2", 3)
+            saved = row["response_base64"]
+
+            def flip(result, field=field):
+                raw = bytearray(base64.b64decode(result["prev_blocks"][0][field]))
+                raw[0] ^= 1
+                result["prev_blocks"][0][field] = base64.b64encode(bytes(raw)).decode()
+
+            self.edit(row, flip)
+            self.seal()
+            with self.assertRaisesRegex(ValueError, "does not name H's exact ID"):
+                self.verify()
+            row["response_base64"] = saved
+        row = self.header_row("node2", 3)
+        self.edit(row, lambda result: result.update(prev_blocks=result["prev_blocks"] * 2))
+        self.seal()
+        with self.assertRaisesRegex(ValueError, "does not name H's exact ID"):
+            self.verify()
+
+    def test_h_must_be_a_raw_key_block(self):
+        for name in self.nodes:
+            self.edit(self.header_row(name, 2), lambda result: result.update(is_key_block=False))
+            # H+1 no longer names H as its key block either, so only H's own flag decides.
+            self.edit(
+                self.header_row(name, 3), lambda result: result.update(prev_key_block_seqno=0)
+            )
+        self.seal()
+        with self.assertRaisesRegex(ValueError, "not a raw key block"):
+            self.verify()
+        for name in self.nodes:
+            self.edit(self.header_row(name, 2), lambda result: result.pop("is_key_block"))
+        self.seal()
+        with self.assertRaisesRegex(ValueError, "not a raw key block"):
+            self.verify()
+
+    def test_h_plus_one_marker_is_still_required(self):
+        self.nodes["node3"] = [event for event in self.nodes["node3"] if event["height"] != 3]
+        with self.assertRaisesRegex(ValueError, "native marker differs"):
+            self.verify()
+
+    def test_raw_header_facts_are_validated(self):
+        cases = (
+            (lambda result: result.update(is_key_block=1), "not a boolean"),
+            (
+                lambda result: result.update(prev_key_block_seqno=3),
+                "prev_key_block_seqno is invalid",
+            ),
+            (
+                lambda result: result.update(prev_key_block_seqno="0"),
+                "prev_key_block_seqno is invalid",
+            ),
+            (lambda result: result["id"].update(seqno=9), "not the requested height"),
+        )
+        for change, message in cases:
+            row = self.header_row("node1", 3)
+            saved = row["response_base64"]
+            self.edit(row, change)
+            self.seal()
+            with self.assertRaisesRegex(ValueError, message):
+                self.verify()
+            row["response_base64"] = saved
+        self.edit(self.header_row("node2", 2), lambda result: result.update(is_key_block=False))
+        self.seal()
+        with self.assertRaisesRegex(ValueError, "disagree on is_key_block"):
+            self.verify()
+
+    def test_a_named_key_height_cannot_be_a_raw_non_key_block(self):
+        for name in self.nodes:
+            self.edit(
+                self.header_row(name, 1), lambda result: result.update(prev_key_block_seqno=0)
+            )
+            self.edit(
+                self.header_row(name, 3), lambda result: result.update(prev_key_block_seqno=1)
+            )
+        self.seal()
+        with self.assertRaisesRegex(ValueError, "names a non-key block"):
+            self.verify()
+
+    def test_successor_proof_needs_the_nodes_own_key_flag(self):
+        self.edit(self.header_row("node3", 2), lambda result: result.pop("is_key_block"))
+        self.seal()
+        with self.assertRaisesRegex(ValueError, "key.block|key flag"):
+            self.verify()
+
+    def test_successor_headers_cannot_all_skip_the_known_key_predecessor(self):
+        for name in self.nodes:
+            self.edit(
+                self.header_row(name, 3), lambda result: result.update(prev_key_block_seqno=0)
+            )
+        self.seal()
+        with self.assertRaisesRegex(ValueError, "key.block|prev_key"):
+            self.verify()
+
+    def extra_header(self, name, height, *, is_key, previous):
+        row = dict(self.header_row(name, 3))
+        row["request"] = {
+            "method": "getBlockHeader",
+            "params": {"workchain": -1, "shard": str(-(1 << 63)), "seqno": height},
+        }
+        block_id = dict(self.header(name, 3)["id"])
+        block_id.update(
+            seqno=height,
+            root_hash=base64.b64encode(height.to_bytes(32, "big")).decode(),
+            file_hash=base64.b64encode((height + 10).to_bytes(32, "big")).decode(),
+        )
+        result = {"id": block_id, "is_key_block": is_key, "prev_key_block_seqno": previous}
+        row["response_base64"] = base64.b64encode(json.dumps({"result": result}).encode()).decode()
+        self.rows.append(row)
+
+    def test_previous_key_claims_must_agree_across_nodes_and_repeat_answers(self):
+        for name in self.nodes:
+            self.extra_header(name, 8, is_key=False, previous=2)
+        for duplicate in (False, True):
+            with (
+                self.subTest(duplicate=duplicate),
+                patch.object(self, "rows", [dict(r) for r in self.rows]),
+            ):
+                row = self.header_row("node3", 8)
+                if duplicate:
+                    # The last answer on each node still agrees. A duplicate must
+                    # not be discarded by replacing it with a later answer.
+                    row = dict(row)
+                    self.rows.insert(0, row)
+                self.edit(row, lambda result: result.update(prev_key_block_seqno=4))
+                self.seal()
+                with self.assertRaisesRegex(ValueError, "key.block|prev_key"):
+                    self.verify()
+
+    def test_unanchored_headers_cannot_exempt_an_unrelated_native_gap(self):
+        for name, events in self.nodes.items():
+            # Leave 4 missing inside the native range 1..5.
+            events.append(
+                {
+                    "height": 5,
+                    "line": 5,
+                    "at": f"2026-09-25 10:00:05.{int(name[4:]) + 1:09d}",
+                    "id": (-1, "8000000000000000", 5, f"{5:064x}", f"{15:064x}"),
+                }
+            )
+        for senders in (["node0"], list(self.nodes)):
+            for height, is_key, previous in ((4, True, 2), (8, False, 4)):
+                with (
+                    self.subTest(height=height, senders=senders),
+                    patch.object(self, "rows", list(self.rows)),
+                ):
+                    for name in senders:
+                        self.extra_header(name, height, is_key=is_key, previous=previous)
+                    self.seal()
+                    capture = self.verify()
+                    exempt = frozenset(
+                        capture["raw_key_block_heights"] + capture["raw_named_key_heights"]
+                    )
+                    with self.assertRaisesRegex(ValueError, "gap"):
+                        f01.evaluate(self.nodes, 2, BEFORE, AFTER, exempt_heights=exempt)
+
+
+class KeyBlockCoverageTests(unittest.TestCase):
+    def test_gap_outside_key_heights_still_fails(self):
+        nodes = fixture()
+        for name in nodes:
+            nodes[name] = [event for event in nodes[name] if event["height"] != 2]
+        with self.assertRaisesRegex(ValueError, "absent all-node common-height"):
+            f01.evaluate(nodes, 2, BEFORE, AFTER)
+        with self.assertRaisesRegex(ValueError, "absent all-node common-height"):
+            f01.evaluate(nodes, 2, BEFORE, AFTER, exempt_heights=frozenset({7}))
+        report = f01.evaluate(nodes, 2, BEFORE, AFTER, exempt_heights=frozenset({2}))
+        self.assertEqual(report["coverage_exempt_key_heights"], [2])
+
+    def test_gap_at_a_non_key_height_inside_the_range_fails(self):
+        nodes = fixture()
+        for name in nodes:
+            nodes[name] = nodes[name] + [
+                {
+                    "height": h,
+                    "id": (-1, "8000000000000000", h, f"{h:064x}", f"{h + 10:064x}"),
+                    "at": f"2026-09-25 10:00:{h:02d}.{int(name[4:]) + 1:09d}",
+                    "line": h,
+                }
+                for h in (4, 5, 6)
+            ]
+        for name in nodes:
+            nodes[name] = [event for event in nodes[name] if event["height"] != 5]
+        with self.assertRaisesRegex(ValueError, "has a gap"):
+            f01.evaluate(nodes, 2, BEFORE, AFTER, exempt_heights=frozenset({4}))
+        self.assertEqual(
+            f01.evaluate(nodes, 2, BEFORE, AFTER, exempt_heights=frozenset({5}))[
+                "coverage_exempt_key_heights"
+            ],
+            [5],
+        )
+
+    def test_conflict_at_an_exempt_height_is_still_caught(self):
+        nodes = fixture()
+        for name in ("node0", "node1"):
+            nodes[name] = [event for event in nodes[name] if event["height"] != 2]
+        nodes["node3"] = [
+            {**event, "id": (-1, "8000000000000000", 2, "e" * 64, "d" * 64)}
+            if event["height"] == 2
+            else event
+            for event in nodes["node3"]
+        ]
+        with self.assertRaisesRegex(
+            ValueError, "conflicting finalized full BlockIdExt at height 2"
+        ):
+            f01.evaluate(nodes, 2, BEFORE, AFTER, exempt_heights=frozenset({2}))
+
+
 if __name__ == "__main__":
     unittest.main()

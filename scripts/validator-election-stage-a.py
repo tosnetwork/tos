@@ -45,6 +45,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
@@ -139,6 +140,11 @@ ROCKSDB_CACHE_BYTES = 256 * 1024 * 1024
 DEFAULT_EXPERIMENT_DURATION = 3 * 60 * 60
 DEFAULT_SETTLEMENT_TAIL = 15 * 60
 DEFAULT_RPC_BASE_PORT = 8111
+# Each validator allows 600 requests per source IP in a 10-second window.
+# Leave room for other loopback clients, then wait out a full window on refusal.
+F01_RPC_INTERVAL = 1 / 40
+F01_RPC_COOLDOWN = 10.1
+F01_RPC_MAX_ATTEMPTS = 3
 # Masterchain full-shard prefix (0x8000000000000000) as the signed-int64 string the
 # JSON-RPC block-lookup methods expect.
 MASTERCHAIN_SHARD_STR = "-9223372036854775808"
@@ -439,6 +445,7 @@ class ValidatorElectionRehearsal:
         self.f01_segments: dict[str, list[dict[str, Any]]] = {}
         self.f01_process_generations: dict[str, list[dict[str, Any]]] = {}
         self.f01_transitions: list[dict[str, Any]] = []
+        self.f01_next_rpc_at: dict[int, float] = {}
         self.f01_previous_config_height: int | None = None
         self.f01_previous_config_hash: str | None = None
         self.f01_capture_provenance: dict[str, Any] | None = None
@@ -1963,6 +1970,60 @@ class ValidatorElectionRehearsal:
         )
         self.f01_capture_provenance = self.file_provenance(path)
 
+    async def f01_rpc(self, index: int, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        address = f"127.0.0.1:{self.base_port + 500 + index}"
+        payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+        request = urllib.request.Request(
+            f"http://{address}/jsonRPC",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+
+        def call() -> tuple[int, bytes]:
+            try:
+                with urllib.request.urlopen(request, timeout=8) as response:
+                    return response.status, response.read()
+            except urllib.error.HTTPError as error:
+                with error:
+                    return error.code, error.read()
+
+        for attempt in range(1, F01_RPC_MAX_ATTEMPTS + 1):
+            delay = self.f01_next_rpc_at.get(index, 0.0) - time.monotonic()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self.f01_next_rpc_at[index] = time.monotonic() + F01_RPC_INTERVAL
+            status, raw = await asyncio.to_thread(call)
+            document = json.loads(raw) if status == 200 else {}
+            error = document.get("error")
+            throttled = status == 429 or (isinstance(error, dict) and error.get("code") == -32005)
+            # The offline verifier consumes successful reads as evidence. Keep raw
+            # rate-limit replies for diagnosis, including the last failed attempt.
+            filename = "config34-rpc-throttled.jsonl" if throttled else "config34-rpc.jsonl"
+            row = {
+                "node_name": self.nodes[index].name,
+                "node_index": index,
+                "address": address,
+                "request": payload,
+                "http_status": status,
+                "response_base64": base64.b64encode(raw).decode(),
+            }
+            if throttled:
+                row.update(at=utc_now(), attempt=attempt)
+            with (self.f01_directory / filename).open("a") as output:
+                output.write(json.dumps(row, sort_keys=True) + "\n")
+            if throttled:
+                self.f01_next_rpc_at[index] = time.monotonic() + F01_RPC_COOLDOWN
+                continue
+            if status != 200 or error is not None or document.get("result") is None:
+                raise RuntimeError(
+                    f"F01 {self.nodes[index].name} {method} failed (HTTP {status}): {error}"
+                )
+            return document
+        raise RuntimeError(
+            f"F01 {self.nodes[index].name} {method} failed after {F01_RPC_MAX_ATTEMPTS} "
+            f"rate-limited attempts for {params}"
+        )
+
     async def capture_f01_transition(self, label: str) -> None:
         """Bind the exact Config34 change height to all four local RPC views."""
         if not self.pq_full:
@@ -1973,53 +2034,13 @@ class ValidatorElectionRehearsal:
         after_hash = (await self.client.get_config_param(34)).hash.hex()
         upper = await self.masterchain_seqno()
         self.f01_directory.mkdir(parents=True, exist_ok=True)
-        transcript = self.f01_directory / "config34-rpc.jsonl"
-
-        async def query(index: int, method: str, params: dict[str, Any]) -> dict[str, Any]:
-            address = f"127.0.0.1:{self.base_port + 500 + index}"
-
-            def call() -> dict[str, Any]:
-                payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-                request = urllib.request.Request(
-                    f"http://{address}/jsonRPC",
-                    data=json.dumps(payload).encode(),
-                    headers={"Content-Type": "application/json"},
-                )
-                with urllib.request.urlopen(request, timeout=8) as response:
-                    raw = response.read()
-                    status = response.status
-                document = json.loads(raw)
-                with transcript.open("a") as output:
-                    output.write(
-                        json.dumps(
-                            {
-                                "node_name": self.nodes[index].name,
-                                "node_index": index,
-                                "address": address,
-                                "request": payload,
-                                "http_status": status,
-                                "response_base64": base64.b64encode(raw).decode(),
-                            },
-                            sort_keys=True,
-                        )
-                        + "\n"
-                    )
-                if (
-                    status != 200
-                    or document.get("error") is not None
-                    or document.get("result") is None
-                ):
-                    raise RuntimeError(f"F01 {self.nodes[index].name} {method} failed")
-                return document
-
-            return await asyncio.to_thread(call)
 
         async def config_at(height: int) -> dict[str, Any]:
-            return await query(0, "getConfigParam", {"param": 34, "seqno": height})
+            return await self.f01_rpc(0, "getConfigParam", {"param": 34, "seqno": height})
 
         for index, node in enumerate(self.nodes):
             await self.retry(
-                lambda index=index: query(index, "getMasterchainInfo", {}),
+                lambda index=index: self.f01_rpc(index, "getMasterchainInfo", {}),
                 timeout=90,
                 interval=1,
                 description=f"F01 {node.name} reaches Config34 observation height {upper}",
@@ -2034,7 +2055,7 @@ class ValidatorElectionRehearsal:
         )
         for index, node in enumerate(self.nodes):
             await self.retry(
-                lambda index=index: query(index, "getMasterchainInfo", {}),
+                lambda index=index: self.f01_rpc(index, "getMasterchainInfo", {}),
                 timeout=90,
                 interval=1,
                 description=f"F01 {node.name} reaches post-transition height {height + 1}",
@@ -2044,12 +2065,14 @@ class ValidatorElectionRehearsal:
         for boundary in (height - 1, height, height + 1):
             block_ids = []
             for index, node in enumerate(self.nodes):
-                config = await query(index, "getConfigParam", {"param": 34, "seqno": boundary})
+                config = await self.f01_rpc(
+                    index, "getConfigParam", {"param": 34, "seqno": boundary}
+                )
                 observed_hash = config34_hash(config)
                 expected_hash = self.f01_previous_config_hash if boundary < height else after_hash
                 if observed_hash != expected_hash:
                     raise AssertionError(f"F01 {node.name} Config34 differs at height {boundary}")
-                header = await query(
+                header = await self.f01_rpc(
                     index,
                     "getBlockHeader",
                     {

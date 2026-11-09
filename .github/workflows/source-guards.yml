@@ -90,12 +90,14 @@ jobs:
           uv sync --frozen --no-dev
           uv run --frozen test/tostester/generate_tl.py
 
-      - name: Run the Config34 proof tests
+      - name: Run the F01 Stage A capture and Config34 proof tests
         env:
           PYTHONDONTWRITEBYTECODE: '1'
           PYTHONPATH: scripts
         run: >-
           uv run --frozen pytest -q -p no:cacheprovider
+          test/pq-native/test_f01_stage_a_evidence.py
+          test/pq-native/test_f01_finalized_ids.py
           test/pq-native/test_x02_config34_proof.py
 
       - name: Build the TEST ONLY post-quantum signer
