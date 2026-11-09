@@ -1128,6 +1128,14 @@ async def run_bounded(a: argparse.Namespace, caps: Caps, scratch: Path) -> int:
     opening = await t2collect.wait_empty_queue(remote.rpc, a.drain_wait, a.poll)
     log.info("opening boundary: %s", opening)
     record["boundaries"] = {"opening": asdict(opening)}
+    if opening.empty is not True or opening.mc_seqno is None:
+        # A window that does not open at a known-empty queue can only be INCONCLUSIVE,
+        # so the load funding is not spent on it.
+        return stop(
+            "INCONCLUSIVE",
+            "the outbound queue was not known to be empty before the start; nothing sent",
+            INCONCLUSIVE,
+        )
     deadline = await remote.now() + a.duration
     record["deadline"] = deadline
     try:

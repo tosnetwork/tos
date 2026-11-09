@@ -434,8 +434,10 @@ class FakeNode:
         self.tx_reads: list[tuple[int, int]] = []
         # The start message sits in the outbound queue until this masterchain block.
         self.in_flight_until = 0
-        # With never_drain, every queue reading reports a message in flight.
+        # With never_drain, every queue reading reports a message in flight; with
+        # drain_after_start False, only readings after the start do.
         self.never_drain = False
+        self.drain_after_start = True
         self.mc = 100
         self.wallet, self.wallet_balance = wallet, wallet_balance
         self.account_funding = account_funding
@@ -466,7 +468,8 @@ class FakeNode:
             # As the node does: each reading is taken at the newest masterchain block, whose
             # own queue comes first, then each shard top it references.
             self.mc += 1
-            size = 1 if self.never_drain or self.mc < self.in_flight_until else 0
+            stuck = self.never_drain or (not self.drain_after_start and len(self.sends) >= 2)
+            size = 1 if stuck or self.mc < self.in_flight_until else 0
             return {
                 "shards": [
                     {"id": block_id(-1, self.mc), "size": 0},
@@ -860,10 +863,19 @@ class RemoteRun(unittest.TestCase):
 
     def test_an_undrained_closing_queue_exits_inconclusive(self):
         node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, self.hop0())
-        node.never_drain = True
+        node.drain_after_start = False  # the queue drains before the start, never after
         result, record = self.run_counted(node, ["--drain-wait", "1"])
         self.assertEqual(record["t2_status"], "INCONCLUSIVE")
         self.assertEqual(result.returncode, remote.INCONCLUSIVE, result.stderr[-2000:])
+
+    def test_an_undrained_opening_queue_stops_before_the_start(self):
+        node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, self.hop0())
+        node.never_drain = True
+        result, record = self.run_counted(node, ["--drain-wait", "0"])
+        self.assertEqual(result.returncode, remote.INCONCLUSIVE, result.stderr[-2000:])
+        self.assertEqual(record["outcome"], "INCONCLUSIVE")
+        self.assertIn("nothing sent", record["stopped"])
+        self.assertEqual(len(node.sends), 1)  # the deployment only; the burst was not sent
 
 
 class LocalAndWaits(unittest.TestCase):
