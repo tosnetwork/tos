@@ -23,6 +23,9 @@ one host: every validator runs every shard here, so a host that saturates
 caps the total, which a network of separate machines would not.
 
 Outputs (under --out): results.json and blocks.csv.
+
+``--remote`` instead runs one bounded burst against existing JSON-RPC
+endpoints (bench/shard/remote.py); run ``--remote --help`` for its options.
 """
 
 import argparse
@@ -42,6 +45,13 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src")]
+
+if __name__ == "__main__" and "--remote" in sys.argv[1:]:
+    # Remote mode reads and sends over JSON-RPC only: dispatch before any
+    # liteserver or local-net module is imported.
+    from shard import remote
+
+    sys.exit(remote.main(sys.argv[1:]))
 
 from contract.pq_auth import transfer_message  # noqa: E402
 from pqbench import chain  # noqa: E402
@@ -70,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--accounts", type=int, default=4096, help="hop accounts")
     p.add_argument(
-        "--chains", type=int, default=128, help="chains the start message launches (1..255)"
+        "--chains", type=int, default=128, help="chains the start message launches (1..254)"
     )
     p.add_argument("--forks", type=int, default=4, help="times each chain forks in two (0..12)")
     p.add_argument(

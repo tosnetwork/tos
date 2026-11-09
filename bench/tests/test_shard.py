@@ -63,17 +63,23 @@ class Family(unittest.TestCase):
 
 class Bodies(unittest.TestCase):
     def test_start_body_layout(self):
-        body = hopbench.start_body(255, 7, 3, 65535, 2, 1_800_000_000, 4096)
+        body = hopbench.start_body(254, 7, 3, 65535, 2, 1_800_000_000, 4096)
         s = body.begin_parse()
         self.assertEqual(s.load_uint(32), hopbench.OP_START)
         self.assertEqual(
             [s.load_uint(n) for n in (8, 32, 8, 16, 8, 32, 32)],
-            [255, 7, 3, 65535, 2, 1_800_000_000, 4096],
+            [254, 7, 3, 65535, 2, 1_800_000_000, 4096],
         )
         self.assertEqual(s.load_uint(8), 0)  # flags
         self.assertIsNone(s.load_maybe_ref())  # no payload
         self.assertEqual(len(body.bits), 32 + 8 + 32 + 8 + 16 + 8 + 32 + 32 + 8 + 1)
         self.assertEqual(len(body.refs), 0)
+
+    def test_start_body_refuses_more_chains_than_one_transaction_can_send(self):
+        # One reserve plus one send per chain must fit 255 actions.
+        self.assertEqual(hopbench.MAX_CHAINS, 254)
+        with self.assertRaises(ValueError):
+            hopbench.start_body(255, 7, 3, 65535, 2, 1_800_000_000, 4096)
 
     def test_start_body_with_flags_and_payload(self):
         payload = hopbench.payload_cell(300)

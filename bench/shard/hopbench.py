@@ -25,7 +25,10 @@ OP_DEPLOY = 0x64706C79
 OP_START = 0x73746172
 OP_HOP = 0x686F7031
 LOCAL_BASE = 65536
-MAX_CHAINS = 255
+# The start transaction reserves its balance (one action) and sends one message per chain,
+# and a transaction may hold at most 255 actions (kDefaultMaxActions): with 255 chains its
+# action phase fails and no chain starts.
+MAX_CHAINS = 254
 MAX_DEPTH = 60
 # Hop flags (hop.fc): carry the target's StateInit; check the sender's address.
 FLAG_WITH_INIT = 1
