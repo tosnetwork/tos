@@ -1,7 +1,7 @@
 """The pre-broadcast journal of the remote benches, and the wallet lock that guards it.
 
 Every value-moving external the remote benches sign (the shard bench's
-deployment and start, the T4 ramp's funding, transfers and sweeps) is
+deployment and start, the T4 ramp's funding and transfers) is
 written to a run journal and fsynced before its send starts, and every later
 fact about it is appended as it is learnt. The journal is the source of
 truth; a run's ``results.json`` and ledger are summaries.
@@ -33,7 +33,8 @@ returns, and the directory is fsynced when the file is created, so a record
 - ``observed``: the transaction that executed the external. ``id``, ``tx``,
   ``tx_mc`` or ``lt``, ``utime``, ``fee`` and what its phases showed;
 - ``delivered``: one action's recipient transaction (``id``, ``action``,
-  ``recipient_tx``, ``recipient_mc``);
+  ``recipient_tx``, ``recipient_mc``, and ``receipt_failure``: why that
+  transaction did not execute the message, None when it did);
 - ``expired``: the external was not executed by its deadline plus the grace,
   proven by a complete read up to a later chain time (``id``, ``chain_now``);
 - ``unknown``: the tool stopped waiting with the outcome unproven (``id``,
@@ -430,38 +431,69 @@ def account_tx(item: Any) -> AccountTx:
     return AccountTx(tx, utime, success, item)
 
 
+def _entry(item: Any) -> tuple[AccountTx, int, str]:
+    """One getTransactions entry, with the lt and hash (hex) of its predecessor.
+
+    A non-object entry, or one missing any field, raises ValueError.
+    """
+    try:
+        found = account_tx(item)
+        prev_lt, prev_hash = _prev_of(item)
+    except ValueError:
+        raise
+    except Exception as error:  # a malformed entry is an error, never a skipped one
+        raise ValueError(f"a malformed transaction entry: {type(error).__name__}") from None
+    return found, prev_lt, prev_hash.hex()
+
+
 async def account_transactions(
     rpc: PacedRpc, address: str, since: int, max_pages: int = MAX_TX_PAGES
 ) -> tuple[list[AccountTx], bool]:
     """The account's transactions from the newest back to chain time ``since``.
 
-    Returns (transactions, complete); complete is False when the page bound
-    ran out first, so an absence there proves nothing.
+    Returns (transactions, complete). Complete is True only on explicit
+    proof that the read covers everything back to ``since``: a transaction
+    older than it, the account's first transaction (no predecessor), or an
+    empty first page, which the server answers only for an account with no
+    transaction at all. Each transaction must be the predecessor the one
+    before it names, so a page that skips one, or ends before the boundary,
+    is an error (ValueError), as is a non-object entry or a missing field.
+    Complete is False when the page bound ran out first, so an absence there
+    proves nothing.
     """
     out: list[AccountTx] = []
     params: dict[str, Any] = {"address": address, "limit": TX_PAGE}
+    expect: tuple[int, str] | None = None  # (lt, hash) of the next transaction to read
     for _ in range(max_pages):
         page = await rpc.call("getTransactions", params)
         if not isinstance(page, list):
             raise ValueError("getTransactions did not answer a list")
-        items = [x for x in page if isinstance(x, dict)]
-        if out and items and account_tx(items[0]).tx.hash == out[-1].tx.hash:
-            items = items[1:]  # a node may repeat the transaction a page starts from
-        if not items:
-            return out, True
-        for item in items:
-            found = account_tx(item)
-            out.append(found)
-            if found.utime < since:
+        entries = [_entry(x) for x in page]
+        if out and entries and entries[0][0].tx.hash == out[-1].tx.hash:
+            entries = entries[1:]  # a node may repeat the transaction a page starts from
+        if not entries:
+            if expect is None:
                 return out, True
-        prev_lt, prev_hash = _prev_of(items[-1])
-        if prev_lt == 0:
-            return out, True
+            raise ValueError(
+                f"the transaction history stops at lt {expect[0]}, before the account's"
+                f" first transaction and chain time {since}"
+            )
+        for found, prev_lt, prev_hash in entries:
+            if expect is not None and (found.tx.lt, found.tx.hash) != expect:
+                raise ValueError(
+                    f"the transaction history skips lt {expect[0]}: the next one read is"
+                    f" lt {found.tx.lt}"
+                )
+            out.append(found)
+            if found.utime < since or prev_lt == 0:
+                return out, True
+            expect = (prev_lt, prev_hash)
+        assert expect is not None
         params = {
             "address": address,
             "limit": TX_PAGE,
-            "lt": str(prev_lt),
-            "hash": base64.b64encode(prev_hash).decode(),
+            "lt": str(expect[0]),
+            "hash": base64.b64encode(bytes.fromhex(expect[1])).decode(),
         }
     return out, False
 
@@ -634,13 +666,10 @@ async def deliveries(
         )
         if hit is not None:
             inbound = hit.tx.in_msg
-            ok = (
-                inbound is not None
-                and not inbound.bounced
-                and not hit.tx.aborted
-                and hit.compute_success
-            )
+            ok = inbound is not None and not inbound.bounced and hit.tx.phase_failure is None
             row |= {"delivery": "delivered" if ok else "failed", "recipient_tx": hit.tx.hash}
+            if hit.tx.phase_failure is not None:
+                row["receipt_failure"] = hit.tx.phase_failure
         else:
             row |= {"delivery": "not_seen" if complete else "undetermined"}
         out.append(row)

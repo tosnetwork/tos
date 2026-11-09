@@ -18,7 +18,12 @@ and that message to the recipient transaction whose inbound message has the
 emitted message's hash. Each transfer then ends in exactly one outcome:
 
 - ``completed``: the recipient transaction is in a block at or below the
-  finalized masterchain seqno;
+  finalized masterchain seqno, and the server shows it executed the message:
+  not aborted, with a compute phase that succeeded or was skipped for want
+  of state (``t2collect.phase_failure``);
+- ``delivered_failed``: the recipient transaction is bound and final, but it
+  aborted or its compute phase failed, with the reason recorded. Counted on
+  its own, never as completed;
 - ``refused``: the submission was refused, with the reason recorded (the rate
   gate's ``-32005`` or HTTP 429, an external rejection, a seqno conflict, or a
   local refusal when no wallet or send budget was free);
@@ -42,11 +47,12 @@ from shard import t2check
 from shard.t2check import McRecord, Tx
 
 COMPLETED = "completed"
+DELIVERED_FAILED = "delivered_failed"
 REFUSED = "refused"
 SKIPPED = "skipped_or_failed"
 UNKNOWN = "unknown"
 PENDING = "pending"
-OUTCOMES = (COMPLETED, REFUSED, SKIPPED, UNKNOWN, PENDING)
+OUTCOMES = (COMPLETED, DELIVERED_FAILED, REFUSED, SKIPPED, UNKNOWN, PENDING)
 
 # What the sender knows about one external's submission.
 BUILT = "built"
@@ -88,6 +94,8 @@ class External:
     recipient_tx: list[str | None] = field(default_factory=list)
     recipient_mc: list[int | None] = field(default_factory=list)
     recipient_utime: list[int | None] = field(default_factory=list)
+    # Why each bound recipient transaction did not execute its message (None when it did).
+    receipt_failure: list[str | None] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         n = len(self.destinations)
@@ -104,6 +112,7 @@ class External:
         self.recipient_tx = [None] * n
         self.recipient_mc = [None] * n
         self.recipient_utime = [None] * n
+        self.receipt_failure = [None] * n
 
     @property
     def size(self) -> int:
@@ -139,6 +148,9 @@ class External:
             return PENDING, "recipient transaction not seen"
         if finalized is None or mc > finalized:
             return PENDING, "recipient transaction above the finalized masterchain seqno"
+        receipt = self.receipt_failure[action]
+        if receipt is not None:
+            return DELIVERED_FAILED, receipt
         return COMPLETED, None
 
 
@@ -289,6 +301,7 @@ class Ledger:
             self._anomaly("a delivery does not match its action", msg=message.hash, tx=tx.hash)
             return
         ext.recipient_tx[i], ext.recipient_mc[i], ext.recipient_utime[i] = tx.hash, mc, utime
+        ext.receipt_failure[i] = tx.phase_failure
         if self.on_delivery is not None:
             self.on_delivery(ext, i)
 
@@ -319,6 +332,7 @@ class Ledger:
                         "recipient_tx": ext.recipient_tx[i],
                         "recipient_mc": ext.recipient_mc[i],
                         "recipient_utime": ext.recipient_utime[i],
+                        "receipt_failure": ext.receipt_failure[i],
                     }
                 )
             yield {
@@ -380,6 +394,8 @@ def _resolved_at(ext: External, action: int, finalized: int | None) -> float:
         return float(ext.recipient_utime[action] or 0)
     if state == SKIPPED:
         return float(ext.tx_utime or 0)
+    if state == DELIVERED_FAILED:
+        return float(ext.recipient_utime[action] or 0)
     return math.inf
 
 
@@ -396,10 +412,11 @@ def step_metrics(
     became of them. Completed counts transfers whose finalized recipient
     transaction is in a block dated inside the interval, so completions in
     the drain after the window do not count. The backlog at a time is the
-    number of transfers sent before it and not yet completed or skipped by
-    it; unknown and pending transfers never leave it. Latency runs from the
-    send to the recipient block's time; a transfer sent in the interval that
-    never completed counts as unbounded.
+    number of transfers sent before it and not yet completed, skipped or
+    failed at the recipient by it; unknown and pending transfers never leave
+    it. Latency runs from the send to the recipient block's time; a transfer
+    sent in the interval that never completed counts as unbounded, and a
+    skipped or failed one takes no latency sample.
     """
     if type(start) is not int or type(end) is not int or end <= start:
         raise ValueError("a measurement interval needs integer start < end")
@@ -428,7 +445,7 @@ def step_metrics(
                 backlog_start += 1
             if ext.sent_at < end and done >= end:
                 backlog_end += 1
-            if in_interval and state != SKIPPED:
+            if in_interval and state not in (SKIPPED, DELIVERED_FAILED):
                 latencies.append(done - ext.sent_at if state == COMPLETED else math.inf)
     p50, p95 = percentile(latencies, 0.50), percentile(latencies, 0.95)
     throughput_ok = offered > 0 and abs(completed - offered) <= rule.tolerance * offered
@@ -461,15 +478,23 @@ def step_layout(mcs: Iterable[McRecord], mc_from: int, mc_to: int) -> dict[str, 
     """Whether the basechain layout stayed the same across masterchain blocks [mc_from, mc_to].
 
     A layout change, a missing masterchain block or an unreadable layout
-    makes the step not count; it is repeated at a stable layout.
+    makes the step not count; it is repeated at a stable layout. Every seqno
+    of the interval, both endpoints included, must have been read: a block
+    missing at either end could hide a change as well as one inside.
     """
+    if type(mc_from) is not int or type(mc_to) is not int or mc_from > mc_to:
+        raise ValueError("a layout interval needs integer mc_from <= mc_to")
     rows = [m for m in mcs if mc_from <= m.seqno <= mc_to]
+    read = {m.seqno for m in rows}
+    missing = [s for s in range(mc_from, mc_to + 1) if s not in read]
     changes, verdict = t2check.layout_changes(rows)
-    stable = verdict.status == t2check.PASS and not changes
+    stable = verdict.status == t2check.PASS and not changes and not missing
     return {
         "mc_from": mc_from,
         "mc_to": mc_to,
         "stable": stable,
+        "missing": missing[:100],
+        "missing_count": len(missing),
         "status": verdict.status,
         "changes": [c.as_dict() for c in changes],
         "gaps": verdict.gaps,

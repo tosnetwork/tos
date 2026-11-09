@@ -134,6 +134,39 @@ def parse_message(value: Any) -> Msg:
     return Msg(digest, "internal", source, destination, value["bounced"], carried)
 
 
+# The compute phase's skip reasons as the JSON-RPC server renders them (the ComputeSkipReason
+# constructor index): 0 is cskip_no_state, a plain credit to an account without code.
+COMPUTE_SKIP_NO_STATE = 0
+
+
+def phase_failure(value: dict[str, Any]) -> str | None:
+    """Why a rendered transaction did not execute its inbound message; None when it did.
+
+    It executed only when ``aborted`` is shown false and the compute phase is
+    shown either successful or skipped for want of state; anything the
+    server did not render is a failure, never a success.
+    """
+    aborted = value.get("aborted")
+    if aborted is True:
+        return "transaction aborted"
+    if aborted is not False:
+        return "abort flag not shown"
+    compute = value.get("compute")
+    if not isinstance(compute, dict):
+        return "compute phase not shown"
+    skipped = compute.get("skipped")
+    if skipped is False:
+        if compute.get("success") is True:
+            return None
+        return f"compute phase failed (exit code {compute.get('exit_code')})"
+    if skipped is True:
+        reason = compute.get("skip_reason")
+        if type(reason) is int and reason == COMPUTE_SKIP_NO_STATE:
+            return None
+        return f"compute phase skipped (reason {reason})"
+    return "compute phase not shown"
+
+
 def parse_transaction(value: Any, block: BlockKey) -> Tx:
     if not isinstance(value, dict):
         raise ValueError("a transaction is not an object")
@@ -158,6 +191,7 @@ def parse_transaction(value: Any, block: BlockKey) -> Tx:
         action_success=None if action is None else action.get("success") is True,
         skipped_actions=skipped if type(skipped) is int and skipped >= 0 else 0,
         fee=int(fee) if isinstance(fee, str) and fee.isdigit() else None,
+        phase_failure=phase_failure(value),
     )
 
 

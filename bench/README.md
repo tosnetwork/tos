@@ -142,6 +142,24 @@ deterministic, context-bound and fails whole batches on bad input, and that it
 derives the same public key as `crypto/pq/tools` for the same seed (build
 that tool with `cmake -S crypto/pq/tools -B build/pq-key-tool`).
 
+## T4 transfer ramp (remote)
+
+`bench/run_t4_ramp.py` runs a stepped transfer ramp against existing JSON-RPC
+endpoints (see `bench/t4/ramp.py` and `--help`). It funds load wallets from
+the bench wallet, journals every signed external before sending it, and binds
+every transfer to its recipient transaction. `run_t4_ramp.py reconcile` reads
+a run's journal back against the chain and sends nothing.
+
+Funds are not swept back. Whatever the load wallets hold at the end stays in
+them. `results.json` reports each load wallet's final balance under
+`left_in_load_wallets`, and `wallet_balance` counts it in the run's cost. The
+cost bound already counts all of the funding as spent. Moving the leftovers
+back needs a separate tool that journals and reconciles its own sends.
+
+Load-wallet keys come from the bench seed, the bench wallet's address and the
+wallet index. Two bench configurations that share a seed but differ in wallet
+id, AUTH tag or global id never share a load wallet.
+
 ## Not yet covered
 
 * Genesis-generated large state (millions of accounts, state above RAM). Load

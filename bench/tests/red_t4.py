@@ -49,6 +49,9 @@ R_LOCK = TR + "RemoteRun.test_a_second_invocation_on_a_locked_wallet_is_refused"
 R_BUMP = TR + "RemoteRun.test_a_concurrent_nonce_bump_does_not_settle_the_request"
 R_HANG = TR + "RemoteRun.test_a_hung_signer_before_any_send_is_killed_and_refused"
 R_HANG2 = TR + "RemoteRun.test_a_hung_signer_after_a_send_is_killed_and_stops"
+T2 = "bench/shard/t2collect.py"
+RECON = "ReconcileHistory"
+STEP = "StepVerdicts"
 
 # (name, file, old, new, test)
 MUTANTS: list[tuple[str, str, str, str, str]] = [
@@ -244,8 +247,8 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     (
         "fee bound: recipients not counted",
         R,
-        "        return self.transfer_total + sweeps + self.receipts + self.recipients + storage\n",
-        "        return self.transfer_total + sweeps + self.receipts + storage\n",
+        "        return self.transfer_total + self.receipts + self.recipients + storage\n",
+        "        return self.transfer_total + self.receipts + storage\n",
         "FeeBound.test_the_whole_ramp_bound_sums_every_external_of_every_step_and_repeat",
     ),
     (
@@ -461,6 +464,123 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
         "        elif self.follower is not None and self.follower.failed is not None:\n",
         "        elif False:\n",
         "RemoteRun.test_shard_reads_that_never_complete_stop_the_ramp_inconclusive",
+    ),
+    # ── load wallets follow the whole bench identity ──
+    (
+        "identity: load seeds ignore the bench wallet's address",
+        R,
+        'LOAD_TAG + bench_seed.reveal() + identity + index.to_bytes(4, "big")',
+        'LOAD_TAG + bench_seed.reveal() + index.to_bytes(4, "big")',
+        "Signing.test_two_bench_wallets_with_one_seed_never_share_a_load_wallet",
+    ),
+    # ── a failed receipt is never a completion ──
+    (
+        "receipt: a failed recipient transaction completes",
+        L,
+        "        ext.receipt_failure[i] = tx.phase_failure\n",
+        "        ext.receipt_failure[i] = None\n",
+        f"{LO}.test_a_failed_recipient_transaction_is_delivered_failed_never_completed",
+    ),
+    (
+        "receipt: the delivered_failed outcome ignored",
+        L,
+        "        if receipt is not None:\n            return DELIVERED_FAILED, receipt\n",
+        "",
+        f"{LO}.test_a_failed_recipient_transaction_is_delivered_failed_never_completed",
+    ),
+    (
+        "receipt: an aborted transaction executed (end to end)",
+        T2,
+        '    if aborted is True:\n        return "transaction aborted"\n',
+        "    if aborted is True:\n        return None\n",
+        E2E,
+    ),
+    (
+        "receipt: an aborted transaction executed",
+        T2,
+        '    if aborted is True:\n        return "transaction aborted"\n',
+        "    if aborted is True:\n        return None\n",
+        f"{LO}.test_the_servers_rendering_decides_whether_a_receipt_executed",
+    ),
+    (
+        "receipt: an unshown abort flag counts as false",
+        T2,
+        "    if aborted is not False:\n",
+        "    if False:\n",
+        f"{LO}.test_the_servers_rendering_decides_whether_a_receipt_executed",
+    ),
+    (
+        "receipt: a failed compute phase executed",
+        T2,
+        '        if compute.get("success") is True:\n            return None\n',
+        "        return None\n",
+        f"{LO}.test_the_servers_rendering_decides_whether_a_receipt_executed",
+    ),
+    (
+        "receipt: any compute skip executed",
+        T2,
+        "        if type(reason) is int and reason == COMPUTE_SKIP_NO_STATE:\n",
+        "        if True:\n",
+        f"{LO}.test_the_servers_rendering_decides_whether_a_receipt_executed",
+    ),
+    # ── reconcile: only a provably complete history proves not_executed ──
+    (
+        "history: a non-object entry is skipped",
+        J,
+        "        entries = [_entry(x) for x in page]\n",
+        "        entries = [_entry(x) for x in page if isinstance(x, dict)]\n",
+        f"{RECON}.test_a_non_object_entry_is_undetermined",
+    ),
+    (
+        "history: an empty continuation page proves completeness",
+        J,
+        "            if expect is None:\n                return out, True\n",
+        "            if True:\n                return out, True\n",
+        f"{RECON}.test_a_truncated_history_is_undetermined",
+    ),
+    (
+        "history: a skipped predecessor goes unnoticed",
+        J,
+        "            if expect is not None and (found.tx.lt, found.tx.hash) != expect:\n",
+        "            if False:\n",
+        f"{RECON}.test_a_page_that_skips_a_transaction_is_undetermined",
+    ),
+    # ── a step's layout needs every block it spans ──
+    (
+        "layout: missing endpoints ignored",
+        L,
+        "    stable = verdict.status == t2check.PASS and not changes and not missing\n",
+        "    stable = verdict.status == t2check.PASS and not changes\n",
+        f"{STEP}.test_a_layout_needs_both_endpoints_and_every_block_between",
+    ),
+    (
+        "layout: an unreached step end counts",
+        R,
+        '        layout["stable"] = layout["stable"] and reached\n',
+        "",
+        f"{STEP}.test_a_step_the_follower_never_reached_the_end_of_does_not_count",
+    ),
+    # ── stop conditions before every batch and every send ──
+    (
+        "stop: not checked before a batch is built",
+        R,
+        "            self.check_stop()\n            if self.stop_reason is not None:\n                break\n",
+        "",
+        f"{STEP}.test_a_stop_file_present_before_a_batch_means_nothing_is_built_signed_or_sent",
+    ),
+    (
+        "stop: not checked after signing",
+        R,
+        "        self.check_stop()\n        if self.stop_reason is not None:\n            for ext, *_ in ready:\n",
+        "        if False:\n            for ext, *_ in ready:\n",
+        f"{STEP}.test_a_stop_file_that_appears_while_signing_holds_back_every_send",
+    ),
+    (
+        "stop: a stop file at the start is not a refusal",
+        R,
+        "    if a.stop_file is not None and a.stop_file.exists():\n",
+        "    if False:\n",
+        "RemoteRun.test_a_stop_file_present_at_the_start_sends_nothing",
     ),
 ]
 

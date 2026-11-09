@@ -42,6 +42,7 @@ from t4 import ramp  # noqa: E402
 from t4.ledger import (  # noqa: E402
     ACCEPTED,
     COMPLETED,
+    DELIVERED_FAILED,
     OUTCOMES,
     PENDING,
     REFUSED,
@@ -50,6 +51,7 @@ from t4.ledger import (  # noqa: E402
     External,
     Ledger,
     StepRule,
+    step_layout,
     step_metrics,
 )
 from tests import test_remote as tr  # noqa: E402
@@ -57,6 +59,7 @@ from tests import test_remote as tr  # noqa: E402
 NANO = remote.NANO
 SENDER = "0:" + "aa" * 32
 PEERS = ["0:" + f"{b:02x}" * 32 for b in (0xB1, 0xB2, 0xB3)]
+BENCH = Address("0:" + "cc" * 32)  # a bench wallet address for deriving load seeds
 
 
 def h(*parts: object) -> str:
@@ -95,16 +98,21 @@ def wallet_tx(ext: External, emit: list[int], skipped: int = 0, success: bool = 
         out_msgs=tuple(out_msg(ext, i) for i in emit),
         action_success=success,
         skipped_actions=skipped,
+        phase_failure=None,
     )
 
 
-def delivery(message: Msg, account: str | None = None, lt: int = 2) -> Tx:
+def delivery(
+    message: Msg, account: str | None = None, lt: int = 2, failure: str | None = None
+) -> Tx:
     return Tx(
         hash=h("rx", message.hash, lt),
         account=account or message.destination or "",
         lt=lt,
         block=(0, 0, 2),
         in_msg=message,
+        aborted=failure == "transaction aborted",
+        phase_failure=failure,
     )
 
 
@@ -196,6 +204,75 @@ class LedgerOutcomes(unittest.TestCase):
         self.assertTrue(any("does not match" in a["reason"] for a in lg.anomalies))
         lg.observe([(delivery(real), 12, 1002)])
         self.assertEqual(ext.outcome(0, 99)[0], COMPLETED)
+
+    def test_a_failed_recipient_transaction_is_delivered_failed_never_completed(self):
+        lg = ledger()
+        ext = ext_of(lg)
+        lg.accept(ext)
+        lg.observe([(wallet_tx(ext, [0, 1, 2]), 10, 1000)])
+        lg.observe(
+            [
+                (delivery(out_msg(ext, 0)), 11, 1001),
+                (delivery(out_msg(ext, 1), failure="transaction aborted"), 11, 1001),
+                (
+                    delivery(out_msg(ext, 2), failure="compute phase failed (exit code 33)"),
+                    11,
+                    1001,
+                ),
+            ]
+        )
+        self.assertEqual(
+            [ext.outcome(i, 11) for i in range(3)],
+            [
+                (COMPLETED, None),
+                (DELIVERED_FAILED, "transaction aborted"),
+                (DELIVERED_FAILED, "compute phase failed (exit code 33)"),
+            ],
+        )
+        # Judged against finality like a completion, and counted on its own.
+        self.assertEqual(ext.outcome(1, 10)[0], PENDING)
+        self.assertEqual(
+            lg.counts(11), {**dict.fromkeys(OUTCOMES, 0), COMPLETED: 1, DELIVERED_FAILED: 2}
+        )
+        self.assertTrue(ext.settled())
+        [row] = list(lg.rows(11))
+        self.assertEqual(
+            [a["receipt_failure"] for a in row["actions"]],
+            [None, "transaction aborted", "compute phase failed (exit code 33)"],
+        )
+        metrics = step_metrics([ext], 100, 2000, 11, StepRule())
+        self.assertEqual((metrics["offered"], metrics["completed_in_window"]), (3, 1))
+        self.assertEqual(metrics["latency_samples"], 1)
+
+    def test_the_servers_rendering_decides_whether_a_receipt_executed(self):
+        ok = {"skipped": False, "success": True, "exit_code": 0, "account_activated": False}
+        cases: list[tuple[dict[str, Any], str | None]] = [
+            ({"aborted": False, "compute": ok}, None),
+            ({"aborted": False, "compute": {"skipped": True, "skip_reason": 0}}, None),
+            ({"aborted": True, "compute": ok}, "transaction aborted"),
+            ({"aborted": None, "compute": ok}, "abort flag not shown"),
+            ({"compute": ok}, "abort flag not shown"),
+            (
+                {"aborted": False, "compute": {**ok, "success": False, "exit_code": 33}},
+                "compute phase failed (exit code 33)",
+            ),
+            (
+                {"aborted": False, "compute": {"skipped": True, "skip_reason": 2}},
+                "compute phase skipped (reason 2)",
+            ),
+            ({"aborted": False, "compute": None}, "compute phase not shown"),
+            ({"aborted": False}, "compute phase not shown"),
+        ]
+        for rendered, failure in cases:
+            value = {
+                "account": "ab" * 32,
+                "lt": "5",
+                "hash": base64.b64encode(bytes(32)).decode(),
+                "in_msg": None,
+                **rendered,
+            }
+            tx = t2collect.parse_transaction(value, (0, 0, 1))
+            self.assertEqual(tx.phase_failure, failure, rendered)
 
     def test_a_second_delivery_is_a_duplicate(self):
         lg = ledger()
@@ -414,7 +491,7 @@ def test_bench() -> remote.BenchWallet:
     return remote.BenchWallet(w, cast(Any, None), cast(Any, None))
 
 
-def derived_fees(p: ramp.Plan, return_to: Address | None = None) -> ramp.RampFees:
+def derived_fees(p: ramp.Plan) -> ramp.RampFees:
     """The whole ramp's fee bound for ``p`` under the hand-built ConfigParams 18, 21 and 25."""
     loads = test_loads(p.wallets)
     bench = test_bench()
@@ -431,7 +508,6 @@ def derived_fees(p: ramp.Plan, return_to: Address | None = None) -> ramp.RampFee
         [p.wallet_funding] * p.wallets,
         loads,
         [None] * p.wallets,
-        return_to or bench.address,
     )
 
 
@@ -513,7 +589,6 @@ class FeeBound(unittest.TestCase):
         self.assertEqual(
             fees.load_total,
             fees.transfer_total
-            + 6 * fees.sweep.total
             + fees.receipts
             + fees.recipients
             + sum(x.fee for x in fees.load_storage),
@@ -534,11 +609,6 @@ class FeeBound(unittest.TestCase):
         self.assertIn("cost bound", ramp.refusal(with_fees, covered - 1, 1 << 30) or "")
         # The funding alone fits, so only the derived fee bound makes it refuse.
         self.assertIsNone(ramp.refusal(ramp.work_bound(p), covered - 1, 1 << 30))
-
-    def test_a_sweep_off_the_basechain_is_refused(self):
-        p = plan(wallets=3, steps=1, step_seconds=2, warmup=1)
-        with self.assertRaises(ValueError):
-            derived_fees(p, Address((-1, bytes(32))))
 
     def test_the_horizon_covers_the_plan_and_fits_a_deadline(self):
         args = argparse.Namespace(
@@ -909,6 +979,77 @@ class JournalReader(unittest.TestCase):
                 jr.Journal(path)
 
 
+# ─── reconcile: what the sender's history proves ─────────────────────
+
+
+class PagedHistory:
+    """getTransactions over a test History, each answer passed through ``tamper``."""
+
+    def __init__(self, history: Any, tamper: Any = None):
+        self.history = history
+        self.tamper = tamper or (lambda params, items: items)
+
+    async def __call__(self, url: str, body: bytes, timeout: float) -> tuple[int, bytes]:
+        request = json.loads(body)
+        assert request["method"] == "getTransactions", request["method"]
+        items = self.tamper(request["params"], self.history.answer(request["params"], 10**9))
+        return 200, json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": items}).encode()
+
+
+class ReconcileHistory(unittest.TestCase):
+    """An attempt is not_executed only when the read provably reaches back far enough."""
+
+    def verdict(self, tamper: Any = None, transactions: int = 3, limit: int = 100) -> jr.Verdict:
+        history = tr.History()
+        for n in range(transactions):
+            external = {"hash": base64.b64encode(bytes.fromhex(h("other", n))).decode()}
+            tx = tr.tx_json(SENDER, 10 + n, {**external, "kind": "external"}, [])
+            history.add(SENDER, tx, 1 + n, 1000 + 10 * n)
+        attempt = {"sender": SENDER, "external": h("never"), "deadline": 1100, "signed_at": 900}
+
+        async def now() -> int:
+            return 2000
+
+        rpc = PacedRpc("http://fake", 1.0, transport=PagedHistory(history, tamper))
+        with mock.patch.object(jr, "TX_PAGE", limit):
+            return asyncio.run(jr.find_attempt(rpc, attempt, now, 5.0))
+
+    def test_a_complete_history_proves_the_attempt_was_not_executed(self):
+        self.assertEqual(self.verdict().state, "not_executed")
+        self.assertEqual(self.verdict(limit=1).state, "not_executed")  # paged one by one
+        # An account with no transaction at all: the server answers an empty first page.
+        self.assertEqual(self.verdict(transactions=0).state, "not_executed")
+
+    def test_a_non_object_entry_is_undetermined(self):
+        for page in ([None], [None, "x"]):
+            with self.subTest(page):
+                v = self.verdict(lambda p, items, page=page: page)
+                self.assertEqual(v.state, "undetermined", v.reason)
+        v = self.verdict(lambda p, items: [None, *items])
+        self.assertEqual(v.state, "undetermined", v.reason)
+
+    def test_an_entry_missing_a_field_is_undetermined(self):
+        for key in ("utime", "data", "transaction_id", "account"):
+            with self.subTest(key):
+
+                def drop(p: Any, items: list[Any], key: str = key) -> list[Any]:
+                    return [{k: v for k, v in x.items() if k != key} for x in items]
+
+                v = self.verdict(drop)
+                self.assertEqual(v.state, "undetermined", v.reason)
+
+    def test_a_truncated_history_is_undetermined(self):
+        # The newest transaction names a predecessor, but the next page is empty.
+        v = self.verdict(lambda p, items: items[:1] if "lt" not in p else [])
+        self.assertEqual(v.state, "undetermined", v.reason)
+        self.assertIn("stops at lt", v.reason or "")
+
+    def test_a_page_that_skips_a_transaction_is_undetermined(self):
+        v = self.verdict(lambda p, items: [items[0], *items[2:]])
+        self.assertEqual(v.state, "undetermined", v.reason)
+        self.assertIn("skips lt", v.reason or "")
+
+
 # ─── the follower: incomplete reads ──────────────────────────────────
 
 
@@ -980,6 +1121,117 @@ class IncompleteReads(unittest.TestCase):
                 r.check_stop()
                 self.assertIn("incomplete chain reads", r.stop_reason or "")
                 self.assertEqual(ramp.exit_status(r.stop_reason, 0, 0), ramp.STOPPED)
+
+
+# ─── a step's layout verdict and its stop conditions ─────────────────
+
+
+def mc(seqno: int) -> McRecord:
+    """A masterchain block whose basechain is one shard."""
+    top = t2collect.parse_block_id(tr.block_id(0, seqno))
+    return McRecord(seqno, 1000 + seqno, f"{seqno:064x}", (top,))
+
+
+class StopFileSigner(FakeSigner):
+    """Creates the stop file while it signs, as an operator stopping mid-batch would."""
+
+    def __init__(self, stop_file: Path) -> None:
+        super().__init__()
+        self.stop_file = stop_file
+
+    def sign(self, jobs: list[tuple[remote.Secret, bytes]]) -> list[bytes]:
+        self.stop_file.touch()
+        return super().sign(jobs)
+
+
+class StepVerdicts(unittest.TestCase):
+    def test_a_layout_needs_both_endpoints_and_every_block_between(self):
+        blocks = [mc(s) for s in range(5, 10)]
+        self.assertTrue(step_layout(blocks, 5, 9)["stable"])
+        for lo, hi, missing in ((4, 9, [4]), (5, 10, [10]), (3, 11, [3, 4, 10, 11])):
+            with self.subTest((lo, hi)):
+                layout = step_layout(blocks, lo, hi)
+                self.assertFalse(layout["stable"])
+                self.assertEqual(layout["missing"], missing)
+        self.assertFalse(step_layout([b for b in blocks if b.seqno != 7], 5, 9)["stable"])
+        self.assertFalse(step_layout([], 5, 5)["stable"])
+        with self.assertRaises(ValueError):
+            step_layout(blocks, 9, 5)
+
+    def step(
+        self, transport: Any, reached: bool = True, signer: Any = None, stop_file: Any = None
+    ) -> tuple[ramp.Ramp, dict[str, Any]]:
+        """One one-second step of one 3-transfer external, over masterchain blocks 1..3."""
+        r = make_ramp(transport, wallets=3)
+        r.plan = plan(wallets=3, batch=3, start_rate=3.0, steps=1, step_seconds=1, warmup=0)
+        r.a.drain = r.a.finality_wait = r.a.poll = 0.0
+        r.a.stop_file = stop_file
+        if signer is not None:
+            r.signer = signer
+        assert r.follower is not None
+        r.follower.mcs = [mc(1), mc(2), mc(3)]
+        heads = iter([1, 3])
+
+        async def config() -> dict[str, Any]:
+            return {}
+
+        async def head() -> int:
+            return next(heads)
+
+        async def reach(seqno: int, timeout: float) -> bool:
+            return reached
+
+        async def finalized(*args: Any) -> int:
+            return 10**9
+
+        r.config = config  # pyright: ignore[reportAttributeAccessIssue]
+        r.head = head  # pyright: ignore[reportAttributeAccessIssue]
+        r.follower.reach = reach  # pyright: ignore[reportAttributeAccessIssue]
+
+        async def scenario() -> dict[str, Any]:
+            record = await r.step(0, 0, 3.0)
+            while r.tasks:
+                await asyncio.gather(*list(r.tasks))
+            return record
+
+        with mock.patch.object(ramp.t2collect, "wait_finalized", finalized):
+            return r, asyncio.run(scenario())
+
+    def test_a_step_the_follower_never_reached_the_end_of_does_not_count(self):
+        _, record = self.step(Transport([]))
+        self.assertTrue(record["counts"], record["layout"])
+        self.assertTrue(record["layout"]["reached"])
+        _, unreached = self.step(Transport([]), reached=False)
+        self.assertFalse(unreached["layout"]["reached"])
+        self.assertFalse(unreached["layout"]["stable"])
+        self.assertFalse(unreached["counts"])
+        self.assertFalse(unreached["passed"])
+
+    def test_a_stop_file_present_before_a_batch_means_nothing_is_built_signed_or_sent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stop = Path(tmp) / "stop"
+            stop.touch()
+            transport = Transport([])
+            r, record = self.step(transport, stop_file=stop)
+        self.assertEqual(transport.sends, [])
+        self.assertEqual(cast(FakeSigner, r.signer).calls, 0)
+        self.assertEqual(r.ledger.externals, [])
+        self.assertIn("stop file", record["stopped"] or "")
+
+    def test_a_stop_file_that_appears_while_signing_holds_back_every_send(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stop = Path(tmp) / "stop"
+            transport = Transport([])
+            r, record = self.step(transport, signer=StopFileSigner(stop), stop_file=stop)
+        self.assertEqual(transport.sends, [])
+        self.assertEqual(cast(FakeSigner, r.signer).calls, 1)
+        [ext] = r.ledger.externals
+        self.assertEqual(ext.submission, "refused")
+        self.assertTrue((ext.reason or "").startswith("local: stopped before sending"), ext.reason)
+        self.assertIsNone(r.wallets[ext.wallet].busy)
+        # Never journaled, since it was never sent.
+        self.assertEqual(jr.read_journal(r.journal.path).attempts, {})
+        self.assertIn("stop file", record["stopped"] or "")
 
 
 # ─── exit statuses ───────────────────────────────────────────────────
@@ -1097,6 +1349,7 @@ class FakeChain:
         skipped: int = 0,
         fee: int = 0,
         at: int | None = None,
+        aborted: bool = False,
     ):
         self.lt += 1
         tx = {
@@ -1106,9 +1359,14 @@ class FakeChain:
             "fee": str(fee),
             "in_msg": in_msg,
             "out_msgs": out,
-            "aborted": False,
+            # An aborted transaction here ran its computation and failed its action phase.
+            "aborted": aborted,
             "compute": {"skipped": False, "success": True, "account_activated": False},
-            "action": {"success": True, "skipped_actions": skipped, "messages_created": len(out)},
+            "action": {
+                "success": not aborted,
+                "skipped_actions": skipped,
+                "messages_created": len(out),
+            },
         }
         if at is not None:
             self.history.add(account, tx, at, self.utime(at))
@@ -1121,6 +1379,7 @@ class FakeChain:
         actions: list[tuple[str, int, bool, int]],
         skip: set[int],
         fee: int,
+        failed_receipts: frozenset[int] = frozenset(),
     ):
         at = self.head() + 1
         out = []
@@ -1136,7 +1395,8 @@ class FakeChain:
                 "bounced": False,
             }
             out.append(m)
-            self.txs.setdefault(at + 1, []).append(self.tx(dest, m, [], at=at + 1))
+            receipt = self.tx(dest, m, [], at=at + 1, aborted=i in failed_receipts)
+            self.txs.setdefault(at + 1, []).append(receipt)
         external = {"hash": b64(digest), "kind": "external"}
         self.txs.setdefault(at, []).append(self.tx(account, external, out, len(skip), fee, at=at))
         self.executed.add(digest.hex())
@@ -1185,7 +1445,8 @@ class FakeChain:
         skip = {i for (s, i) in self.scenario.get("skip", set()) if s == k}
         fee = self.scenario.get("overcharge", {}).get(k, LOAD_FEE)
         self.charged.append(fee)
-        self.execute(digest, account, actions, skip, fee)
+        failed = frozenset(i for (s, i) in self.scenario.get("aborted_receipt", set()) if s == k)
+        self.execute(digest, account, actions, skip, fee, failed)
         if k == self.hang_load:
             self.hang_now = True
         if k == self.break_reads_at:
@@ -1404,6 +1665,7 @@ class RemoteRun(unittest.TestCase):
             "rate_limited": {9},
             "conflict": {11},
             "skip": {(6, 2)},
+            "aborted_receipt": {(8, 1)},
         }
         chain = FakeChain(self.bench_address(), scenario)
         server, url = chain.serve()
@@ -1427,9 +1689,7 @@ class RemoteRun(unittest.TestCase):
         received = {parse_external(b)[0].hex() for b in chain.bocs}
         self.assertEqual(received, journaled)
         roles = Counter(a["role"] for a in journal.attempts.values())
-        self.assertEqual(
-            roles, {"funding": 1, "transfer": sum(1 for r in rows if r["external"]), "sweep": 6}
-        )
+        self.assertEqual(roles, {"funding": 1, "transfer": sum(1 for r in rows if r["external"])})
         for key, attempt in journal.attempts.items():
             self.assertIsNotNone(journal.sent(key), key)
             self.assertTrue(journal.settled(key), (key, journal.events.get(key)))
@@ -1457,8 +1717,23 @@ class RemoteRun(unittest.TestCase):
             self.assertEqual({a["outcome"] for a in r["actions"]}, {REFUSED})
         skipped = [a for r in rows for a in r["actions"] if a["outcome"] == SKIPPED]
         self.assertEqual(len(skipped), 1)
+        # The recipient transaction of one transfer aborted: delivered, failed, never completed.
+        [failed] = [a for r in rows for a in r["actions"] if a["outcome"] == DELIVERED_FAILED]
+        self.assertEqual(failed["receipt_failure"], "transaction aborted")
+        self.assertIsNotNone(failed["recipient_tx"])
+        self.assertEqual(record["outcomes"][DELIVERED_FAILED], 1)
+        delivered = [
+            e for events in journal.events.values() for e in events if e["type"] == "delivered"
+        ]
+        self.assertEqual(
+            [e["receipt_failure"] for e in delivered if e["receipt_failure"]],
+            ["transaction aborted"],
+        )
         others = [
-            a for r in by_submission["accepted"] for a in r["actions"] if a["outcome"] != SKIPPED
+            a
+            for r in by_submission["accepted"]
+            for a in r["actions"]
+            if a["outcome"] not in (SKIPPED, DELIVERED_FAILED)
         ]
         self.assertEqual({a["outcome"] for a in others}, {COMPLETED})
         for a in others:
@@ -1475,7 +1750,7 @@ class RemoteRun(unittest.TestCase):
         for paid, bound in zip(prep["funding_fees"], prep["funding_fee_bounds"], strict=True):
             self.assertGreaterEqual(bound, paid)
         executed = [r for r in rows if r["tx"] is not None]
-        self.assertEqual(len(executed) + record["sweep"]["accepted"], len(chain.charged))
+        self.assertEqual(len(executed), len(chain.charged))
         self.assertEqual({r["tx_fee"] for r in executed}, {LOAD_FEE})
         for r in executed:
             self.assertGreaterEqual(r["fee_bound"], r["tx_fee"], r)
@@ -1494,13 +1769,27 @@ class RemoteRun(unittest.TestCase):
         self.assertTrue(all(r["deadline"] <= record["fee_horizon"] for r in executed))
         # Never resent: every boc the node received is distinct, one per submitted external.
         self.assertEqual(len(chain.bocs), len(set(chain.bocs)))
-        load_bocs = len(chain.bocs) - 1 - 6  # one funding external, six sweeps
+        load_bocs = len(chain.bocs) - 1  # one funding external, and no sweep
         self.assertEqual(load_bocs, sum(1 for r in rows if r["external"]))
-        self.assertEqual(record["sweep"]["accepted"], 6)
+        self.assertNotIn("sweep", record)
+        # Nothing is swept back: each load wallet's final balance is reported, and counted.
+        left = record["left_in_load_wallets"]
+        self.assertEqual(
+            [(x["address"], x["balance"]) for x in left["wallets"]],
+            [(a, 10 * NANO) for a in record["load_wallets"]],
+        )
+        self.assertEqual((left["total"], left["complete"]), (60 * NANO, True))
+        balance = record["wallet_balance"]
+        self.assertEqual(balance["left_in_load_wallets"], 60 * NANO)
+        self.assertEqual(
+            balance["consumed"],
+            balance["spent"] - (60 * NANO - balance["load_wallets_before"]),
+        )
         self.assertTrue(set(chain.methods) <= METHODS, set(chain.methods) - METHODS)
         # No key, and no load-wallet seed derived from it, appears anywhere.
+        bench = Address(self.bench_address())
         secrets = [tr.TEST_SEED] + [
-            ramp.load_seed(remote.Secret(tr.TEST_SEED), i).reveal() for i in range(6)
+            ramp.load_seed(remote.Secret(tr.TEST_SEED), bench, i).reveal() for i in range(6)
         ]
         texts = [result.stdout, result.stderr] + [
             b.decode(errors="replace") for b in written.values()
@@ -1654,6 +1943,24 @@ class RemoteRun(unittest.TestCase):
         self.assertIn("needed reconciling", again.stderr)
         self.assertEqual(bocs_after, bocs)
 
+    def test_a_stop_file_present_at_the_start_sends_nothing(self):
+        chain = FakeChain(self.bench_address(), {})
+        server, url = chain.serve()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                (d / "stop").touch()
+                result = self.run_ramp(d, url, ["--stop-file", str(d / "stop")])
+                out_exists = (d / "out").exists()
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(result.returncode, remote.REFUSED, result.stderr[-2000:])
+        self.assertIn("stop file", result.stderr)
+        self.assertFalse(out_exists)
+        self.assertNotIn("sendBoc", chain.methods)
+        self.assertEqual(chain.bocs, [])
+
     def test_a_second_invocation_on_a_locked_wallet_is_refused(self):
         chain = FakeChain(self.bench_address(), {})
         server, url = chain.serve()
@@ -1703,7 +2010,7 @@ class Signing(unittest.TestCase):
             )
             script.chmod(0o700)
             signer = ramp.BatchSigner(script, 1, timeout=1.0)
-            seed = ramp.load_seed(remote.Secret(tr.TEST_SEED), 0)
+            seed = ramp.load_seed(remote.Secret(tr.TEST_SEED), BENCH, 0)
             started = time.monotonic()
             with self.assertRaises(remote.SignerTimeout) as caught:
                 signer.sign([(seed, b"m" * 32)])
@@ -1714,12 +2021,34 @@ class Signing(unittest.TestCase):
 
     def test_load_seeds_are_distinct_and_hidden(self):
         bench = remote.Secret(tr.TEST_SEED)
-        seeds = [ramp.load_seed(bench, i) for i in range(64)]
+        seeds = [ramp.load_seed(bench, BENCH, i) for i in range(64)]
         self.assertEqual(len({s.reveal() for s in seeds}), 64)
         self.assertNotIn(tr.TEST_SEED, {s.reveal() for s in seeds})
         for s in seeds[:3]:
             for form in tr.secret_forms(s.reveal()):
                 self.assertNotIn(form, repr(s))
+
+    def test_two_bench_wallets_with_one_seed_never_share_a_load_wallet(self):
+        seed = remote.Secret(tr.TEST_SEED)
+
+        def loads(wallet_id: int) -> tuple[str, set[str]]:
+            key = remote.WalletKey(seed, tr.TEST_RESCUE, wallet_id)
+            public = tr.fake_public_key(tr.TEST_SEED)
+            bench = remote.bench_wallet(tr.WALLET_CODE, tr.GLOBAL_ID, tr.AUTH, key, public)
+            out: set[str] = set()
+            for i in range(8):
+                derived = ramp.load_seed(key.seed, bench.address, i).reveal()
+                pk = (hashlib.sha256(derived).digest() * 41)[:1312]
+                w = ramp.load_wallet(tr.WALLET_CODE, tr.GLOBAL_ID, tr.AUTH, i, pk, tr.TEST_RESCUE)
+                out.add(remote.raw(w.address))
+            return remote.raw(bench.address), out
+
+        first_bench, first = loads(0)
+        second_bench, second = loads(1)
+        self.assertNotEqual(first_bench, second_bench)
+        self.assertEqual((len(first), len(second)), (8, 8))
+        self.assertEqual(first & second, set())
+        self.assertEqual(loads(0), (first_bench, first))  # deterministic for one identity
 
     def test_the_batch_signer_gets_seeds_on_stdin_only(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1734,7 +2063,7 @@ class Signing(unittest.TestCase):
             )
             script.chmod(0o700)
             signer = ramp.BatchSigner(script, 2)
-            seeds = [ramp.load_seed(remote.Secret(tr.TEST_SEED), i) for i in range(3)]
+            seeds = [ramp.load_seed(remote.Secret(tr.TEST_SEED), BENCH, i) for i in range(3)]
             self.assertEqual(len(signer.public_keys(seeds)), 3)
             self.assertEqual(len(signer.sign([(s, b"m" * 32) for s in seeds])), 3)
             logged = argv_log.read_text()
@@ -1749,23 +2078,10 @@ class Signing(unittest.TestCase):
             )
             script.chmod(0o700)
             signer = ramp.BatchSigner(script, 1)
-            seed = ramp.load_seed(remote.Secret(tr.TEST_SEED), 0)
+            seed = ramp.load_seed(remote.Secret(tr.TEST_SEED), BENCH, 0)
             with self.assertRaises(RuntimeError) as caught:
                 signer.sign([(seed, b"m")])
             self.assertNotIn(seed.reveal().hex(), str(caught.exception))
-
-
-class SweepFormat(unittest.TestCase):
-    def test_sweep_request_carries_whole_balance_mode(self):
-        w = ramp.load_wallet(tr.WALLET_CODE, 3, tr.AUTH, 0, bytes(1312), bytes(32))
-        request = w.request(
-            0, [transfer_message(w.address, Address(PEERS[0]), 0)], 10, mode=ramp.SWEEP_MODE
-        )
-        actions = request.refs[0].begin_parse()
-        actions.skip_bits(32)
-        head = actions.load_ref().begin_parse()
-        head.skip_bits(32)
-        self.assertEqual(head.load_uint(8), 130)
 
 
 if __name__ == "__main__":
