@@ -71,8 +71,10 @@ MAX_HOPS = 1_000_000
 MAX_ACCOUNTS = 65_536
 # A self-pay request is valid for at most an hour after the chain's now().
 REQUEST_LIFETIME = 600
+# Refused before anything was sent.
 REFUSED = 3
-# The run stopped without an answer, for example because chain time stopped advancing.
+# The run stopped without an answer after sending, for example because chain time stopped
+# advancing or a real fee exceeded its derived bound.
 INCONCLUSIVE = 4
 # The T2 checker found a broken layout, continuity or conservation.
 T2_FAILED = 1
@@ -1151,14 +1153,15 @@ async def run_bounded(a: argparse.Namespace, caps: Caps, scratch: Path) -> int:
     # cannot cost more than its own bound plus all the storage the run may owe.
     deploy_bound = fees.externals[0].total + fees.storage.fee
     if deploy_fee > deploy_bound:
+        # Already sent, so not a refusal: the run stops, like any other stop after a send.
         return stop(
-            "REFUSED",
+            "STOPPED",
             f"the deployment's wallet fee {deploy_fee} exceeds its derived bound {deploy_bound}",
-            REFUSED,
+            INCONCLUSIVE,
         )
     missing = await remote.wait_active(addresses, a.deploy_wait)
     if missing:
-        return stop("REFUSED", f"{len(missing)} hop accounts never became active", REFUSED)
+        return stop("STOPPED", f"{len(missing)} hop accounts never became active", INCONCLUSIVE)
     before = await remote.balances(addresses)
 
     opening = await t2collect.wait_empty_queue(remote.rpc, a.drain_wait, a.poll)

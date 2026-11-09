@@ -793,9 +793,10 @@ class RemoteRun(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
-        self.assertEqual(result.returncode, remote.REFUSED, result.stderr[-2000:])
+        # The deployment was sent, so this is a stop after a send, not a refusal.
+        self.assertEqual(result.returncode, remote.INCONCLUSIVE, result.stderr[-2000:])
         self.assertEqual(len(node.sends), 1)
-        self.assertEqual(record["outcome"], "REFUSED")
+        self.assertEqual(record["outcome"], "STOPPED")
         self.assertIn("derived bound", record["stopped"])
         self.assertEqual(record["deployment_wallet_fee"], 10 * NANO)
 
