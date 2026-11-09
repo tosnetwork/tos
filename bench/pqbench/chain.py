@@ -25,9 +25,9 @@ BASECHAIN_SHARD = -(2**63)
 # stay under both so the bench measures the chain, not its own refusals.
 CONNECTION_QPS = 48
 CONNECTION_INFLIGHT = 24
-# A node admits at most 30 external messages per 10 s from one client identity
-# (ext-message-pool PeerAdmission); each liteserver connection is one identity.
-SOURCE_SEND_RATE = 2.5
+# The pool has no per-source admission limit; the connection's own query budget
+# (CONNECTION_QPS) is the bound. Stay well under it so sends never queue there.
+SOURCE_SEND_RATE = 10.0
 # A liteserver admits 64 connections per source IP (ExtServerConnectionLimits);
 # leave room for each node's read, deployment and scanner connections.
 SENDERS_PER_NODE = 56
