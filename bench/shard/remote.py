@@ -255,6 +255,24 @@ class GasPrices:
         """The fee at gas_limit, the most gas a non-special account can buy."""
         return self.fee(self.gas_limit)
 
+    def bought_for(self, nanotos: int) -> int:
+        """ComputePhaseConfig::gas_bought_for: the gas ``nanotos`` buys, at most gas_limit."""
+        if nanotos < self.flat_gas_price:
+            return 0
+        if nanotos >= self.max_fee():  # max_gas_threshold
+            return self.gas_limit
+        bought = ((nanotos - self.flat_gas_price) << 16) // self.gas_price + self.flat_gas_limit
+        return min(bought, self.gas_limit)
+
+    def internal_fee(self, value: int) -> int:
+        """The most computation an inbound internal message carrying ``value`` can cost.
+
+        compute_gas_limits starts an ordinary internal message at the gas its
+        value buys; only accept_message raises the limit, and a receiver that
+        never accepts (the self-pay wallet's recv_internal) keeps it there.
+        """
+        return self.fee(self.bought_for(value))
+
 
 def parse_gas_prices(cell: Cell) -> GasPrices:
     """GasLimitsPrices: gas_prices#dd, gas_prices_ext#de, or either behind gas_flat_pfx#d1."""
@@ -487,6 +505,26 @@ def storage_fee_bound(
     return StorageFee(cells, bits, since, until, due, _ceil_shr16(rate * (until - since)) + due)
 
 
+def account_storage(
+    config: FeeConfig,
+    state_init: Cell,
+    stat: tuple[int, int, int, int] | None,
+    now: int,
+    until: int,
+) -> StorageFee:
+    """A wallet's storage bound up to ``until``: the larger of what the node reports and its
+    StateInit plus a whole account root, since its last payment (``now`` if never)."""
+    cells, bits = tree_size([state_init])
+    cells, bits = cells + 1, bits + ACCOUNT_ROOT_BITS
+    since, due = now, 0
+    if stat is not None:
+        cells, bits = max(cells, stat[0]), max(bits, stat[1])
+        since, due = (stat[2] if stat[2] > 0 else now), stat[3]
+    if since > until:
+        raise ValueError("a wallet's last storage payment lies past the fee horizon")
+    return storage_fee_bound(config, cells, bits, since, until, due)
+
+
 @dataclass(frozen=True)
 class WalletFeeBound:
     externals: list[ExternalFee]
@@ -711,7 +749,21 @@ def _count(value: object, name: str) -> int:
         return int(value)
     if type(value) is int and value >= 0:
         return value
-    raise ValueError(f"the bench wallet's storage statistic {name} is malformed")
+    raise ValueError(f"the storage statistic {name} is malformed")
+
+
+def storage_stat(account: dict[str, Any]) -> tuple[int, int, int, int] | None:
+    """(cells, bits, last_paid, due payment) from an account state answer, None when absent."""
+    stat = account.get("storage_stat")
+    if not isinstance(stat, dict):
+        return None
+    due = stat.get("due_payment")
+    return (
+        _count(stat.get("used_cells"), "used_cells"),
+        _count(stat.get("used_bits"), "used_bits"),
+        _count(stat.get("last_paid"), "last_paid"),
+        0 if due is None else _count(due, "due_payment"),
+    )
 
 
 class HorizonPassed(Exception):
@@ -756,16 +808,10 @@ class BenchWallet:
 
     async def storage(self) -> tuple[int, int, int, int]:
         """(cells, bits, last_paid, due payment) of the wallet's storage as the node reports it."""
-        stat = (await self.remote.account(self.address)).get("storage_stat")
-        if not isinstance(stat, dict):
+        stat = storage_stat(await self.remote.account(self.address))
+        if stat is None:
             raise ValueError("the node reports no storage statistics for the bench wallet")
-        due = stat.get("due_payment")
-        return (
-            _count(stat.get("used_cells"), "used_cells"),
-            _count(stat.get("used_bits"), "used_bits"),
-            _count(stat.get("last_paid"), "last_paid"),
-            0 if due is None else _count(due, "due_payment"),
-        )
+        return stat
 
     def external(self, request: Cell, signature: bytes, deploy: bool) -> MessageAny:
         """The external of a signed request; a deploying external carries the StateInit."""
@@ -956,18 +1002,8 @@ async def fee_plan(
             config, "start", bench.unsigned_external(start_actions, False), start_actions
         ),
     ]
-    cells, bits, last_paid, due = await bench.storage()
-    state_cells, state_bits = tree_size([bench.wallet.state_init.serialize()])
-    since = last_paid if last_paid > 0 else now
-    if since > horizon:
-        raise ValueError("the bench wallet's last storage payment lies past the fee horizon")
-    storage = storage_fee_bound(
-        config,
-        max(cells, state_cells + 1),
-        max(bits, state_bits + ACCOUNT_ROOT_BITS),
-        since,
-        horizon,
-        due,
+    storage = account_storage(
+        config, bench.wallet.state_init.serialize(), await bench.storage(), now, horizon
     )
     return config, wallet_fee_bound(externals, storage)
 

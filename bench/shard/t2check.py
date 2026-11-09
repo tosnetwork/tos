@@ -517,6 +517,7 @@ class Tx:
     activated: bool = False
     action_success: bool | None = None
     skipped_actions: int = 0
+    fee: int | None = None  # total_fees in nanotos, when reported
 
 
 @dataclass(frozen=True)

@@ -145,6 +145,7 @@ def parse_transaction(value: Any, block: BlockKey) -> Tx:
     action: dict[str, Any] | None = raw_action if isinstance(raw_action, dict) else None
     in_msg = value.get("in_msg")
     skipped = action.get("skipped_actions", 0) if action else 0
+    fee = value.get("fee")
     return Tx(
         hash=_hash_hex(value.get("hash"), "transaction hash"),
         account=f"{block[0]}:{account.lower()}",
@@ -156,6 +157,7 @@ def parse_transaction(value: Any, block: BlockKey) -> Tx:
         activated=compute.get("account_activated") is True,
         action_success=None if action is None else action.get("success") is True,
         skipped_actions=skipped if type(skipped) is int and skipped >= 0 else 0,
+        fee=int(fee) if isinstance(fee, str) and fee.isdigit() else None,
     )
 
 
