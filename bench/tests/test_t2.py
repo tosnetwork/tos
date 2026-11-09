@@ -668,6 +668,8 @@ class Diagnostics(unittest.TestCase):
         t, m = hop_run()
         for txs in t.txs.values():
             txs[:] = [x for x in txs if x.in_msg not in (m["d"], m["bounce"])]
+        # An import from outside the run is not a delivery of a run-owned message.
+        t.tx(7, RUN[1], msg(77, f"0:{0xEE:064x}", RUN[1]))
         blocks = {k: BlockTxs(tuple(v), True) for k, v in t.txs.items()}
         got = t2check.run_owned_balance(t.continuity, blocks, RUN, [FUNDER])
         self.assertEqual(got, {"emitted": 5, "imported": 4, "emitted_minus_imported": 1})
