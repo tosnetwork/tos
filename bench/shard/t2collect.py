@@ -31,6 +31,7 @@ import asyncio
 import base64
 import json
 import sys
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -242,9 +243,14 @@ async def read_transactions(rpc: PacedRpc, ref: BlockRef) -> BlockTxs:
         got = parse_block_id(answer.get("id"))
         if got != ref:
             raise ValueError(f"transactions of {ref.label()} answered for {got.label()}")
-        page = [parse_transaction(t, ref.key) for t in answer.get("transactions", [])]
+        listed, more = answer.get("transactions"), answer.get("incomplete")
+        if not isinstance(listed, list) or not isinstance(more, bool):
+            # A page without its transaction list or pagination flag is missing evidence,
+            # not an empty block: the block stays incomplete, so the window cannot PASS.
+            return BlockTxs(tuple(txs), False)
+        page = [parse_transaction(t, ref.key) for t in listed]
         txs.extend(page)
-        if answer.get("incomplete") is not True:
+        if not more:
             return BlockTxs(tuple(txs), True)
         if not page:
             break
@@ -255,6 +261,25 @@ async def read_transactions(rpc: PacedRpc, ref: BlockRef) -> BlockTxs:
             "after_account": last.account.split(":", 1)[1],
         }
     return BlockTxs(tuple(txs), False)
+
+
+async def wait_until_past(
+    now: Callable[[], Awaitable[int]], target: int, limit: float, poll: float = 2.0
+) -> int | None:
+    """Wait until chain time ``now()`` passes ``target``; None after ``limit`` monotonic seconds.
+
+    A chain whose block production stopped keeps answering with the same time, so the
+    wait is bounded on the local clock rather than on chain time.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + limit
+    while True:
+        current = await now()
+        if current >= target:
+            return current
+        if loop.time() >= deadline:
+            return None
+        await asyncio.sleep(poll)
 
 
 async def read_all_transactions(
