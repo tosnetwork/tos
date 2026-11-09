@@ -1,0 +1,202 @@
+;; Shard-scaling bench account.
+;;
+;; A run deploys N copies of this contract that differ only in their id, so
+;; every copy's address follows from (id, salt, code). Load is a set of
+;; message chains: each copy that receives a hop forwards it to another copy,
+;; optionally forks it in two, and keeps its own balance unchanged. Copies
+;; spread over every basechain shard by address, so the same load exercises
+;; one shard or many depending on the split of the network.
+;;
+;; Data, constant after deployment:
+;;   id:uint32 salt:uint64 code:^Cell
+;; Bodies:
+;;   deploy#64706c79 lo:uint32 hi:uint32
+;;   start#73746172  chains:uint8 hop_params
+;;   hop#686f7031    from:uint32 hop_params
+;;   hop_params = remaining:uint32 forks:uint8 local:uint16 depth:uint8
+;;                deadline:uint32 accounts:uint32 flags:uint8
+;;                payload:(Maybe ^Cell)
+;;
+;; flags select how much work a hop carries besides the forwarding itself:
+;;   bit 0  every hop carries the target's StateInit;
+;;   bit 1  every hop checks that its sender is the copy named by from.
+;; payload is forwarded unchanged with every hop and only adds message size.
+;; With flags 0 and no payload a hop is as light as this contract allows.
+;;
+;; The contract holds no value worth protecting: a hop spends only what its
+;; message brought, so the sender check exists only as optional work.
+
+const op::deploy = 0x64706c79;
+const op::start = 0x73746172;
+const op::hop = 0x686f7031;
+
+const err::bad_range = 101;
+const err::bad_params = 102;
+const err::bad_sender = 103;
+
+const flag::with_init = 1;
+const flag::verify_sender = 2;
+const flag::all = 3;
+
+;; local is a probability scaled to 2^16: the chance that a hop must stay in
+;; its sender's shard. A same-shard target is searched for this many times
+;; before the hop falls back to the sender itself.
+const local_base = 65536;
+const local_tries = 4;
+
+;; Send modes: pay forwarding fees separately and ignore errors, or carry the
+;; whole remaining balance and ignore errors.
+const mode::share = 3;
+const mode::rest = 130;
+
+global int self_id;
+global int salt;
+global cell own_code;
+
+() load_data() impure inline {
+  slice ds = get_data().begin_parse();
+  self_id = ds~load_uint(32);
+  salt = ds~load_uint(64);
+  own_code = ds~load_ref();
+}
+
+cell state_init(int id) inline {
+  cell data = begin_cell().store_uint(id, 32).store_uint(salt, 64).store_ref(own_code).end_cell();
+  return begin_cell().store_uint(0, 2).store_dict(own_code).store_dict(data).store_uint(0, 1).end_cell();
+}
+
+;; Internal message to a copy on the basechain: no bounce, an optional
+;; StateInit and the body, both by reference.
+() send_to(int id, int with_init?, cell body, int amount, int mode) impure inline {
+  cell init = state_init(id);
+  builder msg = begin_cell()
+    .store_uint(0x10, 6)
+    .store_uint(4, 3).store_int(0, 8).store_uint(cell_hash(init), 256)
+    .store_coins(amount);
+  if (with_init?) {
+    msg = msg.store_uint(7, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1).store_ref(init);
+  } else {
+    msg = msg.store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1);
+  }
+  send_raw_message(msg.store_ref(body).end_cell(), mode);
+}
+
+int prefix(int hash, int depth) inline {
+  return hash >> (256 - depth);
+}
+
+;; The next copy for a hop. With probability local/2^16 it is a copy in this
+;; shard (the first of a few random tries that lands here, else this copy);
+;; otherwise a uniformly random copy anywhere.
+int next_hop(int local, int depth, int accounts) impure inline {
+  int next = random() % accounts;
+  if ((depth > 0) & ((random() % local_base) < local)) {
+    (_, int my_hash) = parse_std_addr(my_address());
+    int mine = prefix(my_hash, depth);
+    int tries = local_tries;
+    int found? = false;
+    do {
+      found? = prefix(cell_hash(state_init(next)), depth) == mine;
+      ifnot (found?) {
+        next = random() % accounts;
+      }
+      tries -= 1;
+    } until (found? | (tries == 0));
+    ifnot (found?) {
+      next = self_id;
+    }
+  }
+  return next;
+}
+
+cell hop_body(int remaining, int forks, int local, int depth, int deadline, int accounts,
+              int flags, cell payload) inline {
+  return begin_cell()
+    .store_uint(op::hop, 32).store_uint(self_id, 32)
+    .store_uint(remaining, 32).store_uint(forks, 8).store_uint(local, 16)
+    .store_uint(depth, 8).store_uint(deadline, 32).store_uint(accounts, 32)
+    .store_uint(flags, 8).store_maybe_ref(payload)
+    .end_cell();
+}
+
+;; Deploy copies lo+1 .. hi-1. This copy is lo; each message hands one upper
+;; half of the remaining range to the copy at its start, with value in
+;; proportion to the range it covers.
+() deploy(int lo, int hi, int msg_value) impure {
+  throw_unless(err::bad_range, (lo == self_id) & (lo < hi));
+  int size = hi - lo;
+  while (hi - lo > 1) {
+    int mid = (lo + hi) / 2;
+    cell body = begin_cell().store_uint(op::deploy, 32).store_uint(mid, 32).store_uint(hi, 32).end_cell();
+    send_to(mid, true, body, muldiv(msg_value, hi - mid, size), mode::share);
+    hi = mid;
+  }
+}
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice body) impure {
+  if (body.slice_bits() < 32) {
+    return ();  ;; plain top-up
+  }
+  slice cs = in_msg_full.begin_parse();
+  if (cs~load_uint(4) & 1) {
+    return ();  ;; bounced
+  }
+  slice sender = cs~load_msg_addr();
+  load_data();
+  randomize_lt();
+  int op = body~load_uint(32);
+  if (op == op::deploy) {
+    deploy(body~load_uint(32), body~load_uint(32), msg_value);
+    return ();
+  }
+  int chains = 1;
+  int from = -1;
+  if (op == op::start) {
+    chains = body~load_uint(8);
+  } else {
+    if (op != op::hop) {
+      return ();
+    }
+    from = body~load_uint(32);
+  }
+  int remaining = body~load_uint(32);
+  int forks = body~load_uint(8);
+  int local = body~load_uint(16);
+  int depth = body~load_uint(8);
+  int deadline = body~load_uint(32);
+  int accounts = body~load_uint(32);
+  int flags = body~load_uint(8);
+  cell payload = body~load_maybe_ref();
+  throw_unless(err::bad_params, (chains > 0) & (accounts > 0) & (depth <= 60) & (local <= local_base)
+                                & ((flags & ~ flag::all) == 0));
+  if ((from >= 0) & (flags & flag::verify_sender)) {
+    (int sender_wc, int sender_hash) = parse_std_addr(sender);
+    throw_unless(err::bad_sender, (sender_wc == 0) & (sender_hash == cell_hash(state_init(from))));
+  }
+  if ((remaining == 0) | (now() > deadline)) {
+    return ();  ;; the chain ends; its value stays here
+  }
+  int with_init? = (flags & flag::with_init) != 0;
+  ;; Keep this copy's balance as it was: everything sent below comes out of
+  ;; the incoming value, net of this transaction's fees.
+  raw_reserve(my_balance - msg_value, 2);
+  if (op == op::start) {
+    ;; Every chain starts at a uniformly random copy.
+    cell first = hop_body(remaining, forks, local, depth, deadline, accounts, flags, payload);
+    int share = msg_value / chains;
+    repeat (chains - 1) {
+      send_to(random() % accounts, with_init?, first, share, mode::share);
+    }
+    send_to(random() % accounts, with_init?, first, 0, mode::rest);
+    return ();
+  }
+  remaining -= 1;
+  if (forks > 0) {
+    cell child = hop_body(remaining, forks - 1, local, depth, deadline, accounts, flags, payload);
+    send_to(next_hop(local, depth, accounts), with_init?, child, msg_value / 2, mode::share);
+    send_to(next_hop(local, depth, accounts), with_init?, child, 0, mode::rest);
+  } else {
+    cell next = hop_body(remaining, 0, local, depth, deadline, accounts, flags, payload);
+    send_to(next_hop(local, depth, accounts), with_init?, next, 0, mode::rest);
+  }
+}

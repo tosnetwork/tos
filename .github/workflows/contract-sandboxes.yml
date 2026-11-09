@@ -23,6 +23,8 @@ on:
       - "emulator/**"
       - "CMakeLists.txt"
       - "tosctl/src/node-control/contracts/**"
+      # The shard bench contract's sandbox suite compiles it from here.
+      - "bench/shard/hop.fc"
       # Proven pool snapshots run the shared proof verifier on recorded material.
       - "lite-client/proof-verify/**"
       - "lite-client/lite-client-common.*"
@@ -94,6 +96,8 @@ on:
       - "emulator/**"
       - "CMakeLists.txt"
       - "tosctl/src/node-control/contracts/**"
+      # The shard bench contract's sandbox suite compiles it from here.
+      - "bench/shard/hop.fc"
       # Proven pool snapshots run the shared proof verifier on recorded material.
       - "lite-client/proof-verify/**"
       - "lite-client/lite-client-common.*"
