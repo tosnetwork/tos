@@ -428,6 +428,8 @@ class FakeNode:
         self.tx_reads: list[tuple[int, int]] = []
         # The start message sits in the outbound queue until this masterchain block.
         self.in_flight_until = 0
+        # With never_drain, every queue reading reports a message in flight.
+        self.never_drain = False
         self.mc = 100
         self.wallet, self.wallet_balance = wallet, wallet_balance
         self.account_funding = account_funding
@@ -458,7 +460,7 @@ class FakeNode:
             # As the node does: each reading is taken at the newest masterchain block, whose
             # own queue comes first, then each shard top it references.
             self.mc += 1
-            size = 1 if self.mc < self.in_flight_until else 0
+            size = 1 if self.never_drain or self.mc < self.in_flight_until else 0
             return {
                 "shards": [
                     {"id": block_id(-1, self.mc), "size": 0},
@@ -810,8 +812,42 @@ class RemoteRun(unittest.TestCase):
         self.assertEqual(len(node.sends), 2)
         self.assertNotIn("counts", record)
 
+    def run_counted(self, node: "FakeNode", extra: list[str] | None = None):
+        server, url = node.serve()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                d = Path(tmp)
+                result = self.run_remote(d, url, extra, timeout=120)
+                record = json.loads((d / "out/results.json").read_text())
+        finally:
+            server.shutdown()
+            server.server_close()
+        return result, record
+
+    def test_a_consumed_nonce_without_a_start_message_is_inconclusive(self):
+        # The wallet's nonce advances, but no start message enters the network.
+        node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, hop0="")
+        result, record = self.run_counted(node)
+        self.assertEqual(result.returncode, remote.INCONCLUSIVE, result.stderr[-2000:])
+        self.assertEqual(record["t2_status"], "INCONCLUSIVE")
+        self.assertEqual(record["start_delivered"], 0)
+        self.assertIn("start message", record["load_note"])
+
+    def test_an_undrained_closing_queue_exits_inconclusive(self):
+        node = FakeNode(self.wallet_address(), 1000 * NANO, NANO, self.hop0())
+        node.never_drain = True
+        result, record = self.run_counted(node, ["--drain-wait", "1"])
+        self.assertEqual(record["t2_status"], "INCONCLUSIVE")
+        self.assertEqual(result.returncode, remote.INCONCLUSIVE, result.stderr[-2000:])
+
 
 class LocalAndWaits(unittest.TestCase):
+    def test_exit_status_follows_the_t2_verdict(self):
+        self.assertEqual(remote.exit_status("PASS"), 0)
+        self.assertEqual(remote.exit_status("FAIL"), remote.T2_FAILED)
+        self.assertEqual(remote.exit_status("INCONCLUSIVE"), remote.INCONCLUSIVE)
+        self.assertNotIn(remote.T2_FAILED, (0, remote.REFUSED, remote.INCONCLUSIVE))
+
     def test_only_local_zero_runs_remotely(self):
         self.assertIsNone(remote.local_refusal(0.0))
         for value in (0.25, 1.0):

@@ -74,6 +74,15 @@ REQUEST_LIFETIME = 600
 REFUSED = 3
 # The run stopped without an answer, for example because chain time stopped advancing.
 INCONCLUSIVE = 4
+# The T2 checker found a broken layout, continuity or conservation.
+T2_FAILED = 1
+
+
+def exit_status(t2_status: str) -> int:
+    """The process status of a counted run: 0 only for a T2 PASS."""
+    return {"PASS": 0, "FAIL": T2_FAILED}.get(t2_status, INCONCLUSIVE)
+
+
 log = logging.getLogger("shard-bench-remote")
 
 
@@ -1145,14 +1154,24 @@ async def run_bounded(a: argparse.Namespace, caps: Caps, scratch: Path) -> int:
         a.out / "t2",
         finality=rpcs,
     )
+    # Send mode 3 lets the wallet skip a failing send, so a consumed nonce does not
+    # prove the burst started: the start message itself must have been delivered.
+    t2_status = result["status"]
+    start_delivered = result["conservation"]["stats"]["delivered"]["entry"]
+    load_note = None
+    if start_delivered < 1 and t2_status == "PASS":
+        t2_status = "INCONCLUSIVE"
+        load_note = "the start message was not emitted and delivered inside the window"
     after = await remote.balances(addresses)
     wallet_after, _ = await bench.state()
     attached = deploy_value + caps.load_funding
     record |= {
         "outcome": "COUNTED",
+        "start_delivered": start_delivered,
+        "load_note": load_note,
         "boundaries": {"opening": asdict(opening), "closing": asdict(closing)},
         "counts": window_counts(result),
-        "t2_status": result["status"],
+        "t2_status": t2_status,
         "finalized_mc": result["finalized_mc"],
         "stranded": {
             "hop_accounts_total": sum(after.values()),
@@ -1170,10 +1189,8 @@ async def run_bounded(a: argparse.Namespace, caps: Caps, scratch: Path) -> int:
         "rpc": [r.stats() for r in rpcs],
     }
     out_record.write_text(json.dumps(record, indent=2) + "\n")
-    log.info(
-        "T2 %s; stranded %d nanotos", result["status"], record["stranded"]["hop_accounts_total"]
-    )
-    return 0
+    log.info("T2 %s; stranded %d nanotos", t2_status, record["stranded"]["hop_accounts_total"])
+    return exit_status(t2_status)
 
 
 def source_commit() -> str:
