@@ -36,6 +36,8 @@ from shard.t2check import (  # noqa: E402
 ROOT_SHARD = -(1 << 63)
 LEFT, RIGHT = t2check.shard_children(ROOT_SHARD)
 LL, LR = t2check.shard_children(LEFT)
+# The synthetic chains use masterchain seqnos 100..104; all are finalized.
+FINAL = 104
 
 
 def h(*parts: object) -> str:
@@ -269,7 +271,7 @@ class Layout(unittest.TestCase):
 class Continuity(unittest.TestCase):
     def test_split_and_merge_window_passes(self):
         c = split_then_merge()
-        result = t2check.check_continuity(c.mcs, c.blocks, all_refs(c))
+        result = t2check.check_continuity(c.mcs, c.blocks, all_refs(c), finalized_mc=FINAL)
         self.assertEqual(result.verdict.status, PASS, result.verdict.failures)
         # Root 10 is the opening top; every later block is in the window.
         self.assertEqual(len(result.reached), len(c.blocks) - 1)
@@ -283,7 +285,7 @@ class Continuity(unittest.TestCase):
         c.blocks[merged.ref.key] = BlockRecord(
             merged.ref, merged.prev[:1], after_merge=True, gen_utime=merged.gen_utime
         )
-        result = t2check.check_continuity(c.mcs, c.blocks, all_refs(c))
+        result = t2check.check_continuity(c.mcs, c.blocks, all_refs(c), finalized_mc=FINAL)
         self.assertEqual(result.verdict.status, FAIL)
         reasons = {f["reason"] for f in result.verdict.failures}
         self.assertIn("a merge block lists 1 predecessors, not 2", reasons)
@@ -296,14 +298,16 @@ class Continuity(unittest.TestCase):
         # the merge block's second predecessor, and the last unsplit block
         # only through the split blocks' parent link.
         c = split_then_merge()
-        result = t2check.check_continuity(c.mcs, c.blocks, all_refs(c))
+        result = t2check.check_continuity(c.mcs, c.blocks, all_refs(c), finalized_mc=FINAL)
         self.assertIn(ref(RIGHT, 13).key, result.reached)
         self.assertIn(ref(ROOT_SHARD, 11).key, result.reached)
         self.assertEqual(result.verdict.stats["observed_unreached"], 0)
 
     def test_truncated_walk_is_inconclusive_not_failed(self):
         c = split_then_merge()
-        result = t2check.check_continuity(c.mcs, c.blocks, all_refs(c), max_blocks=3)
+        result = t2check.check_continuity(
+            c.mcs, c.blocks, all_refs(c), max_blocks=3, finalized_mc=FINAL
+        )
         self.assertEqual(result.verdict.status, INCONCLUSIVE)
         self.assertEqual(result.verdict.failures, [])
         self.assertTrue(result.verdict.stats["truncated"])
@@ -318,31 +322,35 @@ class Continuity(unittest.TestCase):
     def test_unread_block_is_a_gap(self):
         c = split_then_merge()
         del c.blocks[ref(LEFT, 13).key]
-        result = t2check.check_continuity(c.mcs, c.blocks, all_refs(c))
+        result = t2check.check_continuity(c.mcs, c.blocks, all_refs(c), finalized_mc=FINAL)
         self.assertEqual(result.verdict.status, INCONCLUSIVE)
         self.assertEqual(result.verdict.failures, [])
 
     def test_observed_blocks_after_the_closing_tops_are_outside_the_window(self):
         c = split_then_merge()
         later = BlockRef(0, ROOT_SHARD, 30, h("later"))
-        result = t2check.check_continuity(c.mcs, c.blocks, all_refs(c) + [later])
+        result = t2check.check_continuity(
+            c.mcs, c.blocks, all_refs(c) + [later], finalized_mc=FINAL
+        )
         self.assertEqual(result.verdict.status, PASS, result.verdict.failures)
 
     def test_fork_and_wrong_links_fail(self):
         c = split_then_merge()
         observed = all_refs(c) + [BlockRef(0, LEFT, 13, h("fork"))]
-        result = t2check.check_continuity(c.mcs, c.blocks, observed)
+        result = t2check.check_continuity(c.mcs, c.blocks, observed, finalized_mc=FINAL)
         self.assertEqual(result.verdict.status, FAIL)
         c = split_then_merge()
         bad = ref(LEFT, 13)
         c.blocks[bad.key] = BlockRecord(bad, (ref(LEFT, 11),), gen_utime=1)
-        self.assertEqual(t2check.check_continuity(c.mcs, c.blocks).verdict.status, FAIL)
+        self.assertEqual(
+            t2check.check_continuity(c.mcs, c.blocks, finalized_mc=FINAL).verdict.status, FAIL
+        )
 
     def test_split_block_must_name_its_parent_shard(self):
         c = split_then_merge()
         left = c.blocks[ref(LEFT, 12).key]
         c.blocks[left.ref.key] = BlockRecord(left.ref, left.prev, gen_utime=1)  # not after_split
-        result = t2check.check_continuity(c.mcs, c.blocks)
+        result = t2check.check_continuity(c.mcs, c.blocks, finalized_mc=FINAL)
         self.assertEqual(result.verdict.status, FAIL)
 
     def test_collector_walk_reads_both_parents_and_crosses_the_split(self):
@@ -350,7 +358,7 @@ class Continuity(unittest.TestCase):
         rpc = rpcmod.PacedRpc("http://n", 1.0, transport=RecordedNode(c))
         blocks = asyncio.run(t2collect.walk_blocks(rpc, c.mcs))
         self.assertEqual(set(blocks), set(c.blocks) - {ref(ROOT_SHARD, 10).key})
-        result = t2check.check_continuity(c.mcs, blocks, all_refs(c))
+        result = t2check.check_continuity(c.mcs, blocks, all_refs(c), finalized_mc=FINAL)
         self.assertEqual(result.verdict.status, PASS)
 
 
@@ -369,7 +377,9 @@ class Traffic:
 
     def __init__(self, chain: Chain):
         self.chain = chain
-        self.continuity = t2check.check_continuity(chain.mcs, chain.blocks, all_refs(chain))
+        self.continuity = t2check.check_continuity(
+            chain.mcs, chain.blocks, all_refs(chain), finalized_mc=FINAL
+        )
         self.keys = sorted(self.continuity.reached, key=lambda k: (k[2], k[1] & t2check.U64))
         self.txs: dict[tuple[int, int, int], list[Tx]] = {k: [] for k in self.keys}
         self.n = 0
@@ -495,6 +505,7 @@ class Conservation(unittest.TestCase):
             QueueBoundary(100, True),
             QueueBoundary(104, True),
             all_refs(t.chain),
+            finalized_mc=FINAL,
         )
         self.assertEqual(out["status"], PASS)
         self.assertEqual([c["kind"] for c in out["layout_changes"]], ["split", "merge"])
@@ -520,18 +531,28 @@ def id_json(r: BlockRef) -> dict[str, Any]:
 
 
 class RecordedNode:
-    """Answers getBlockHeader and getShards from a synthetic chain in the server's JSON shapes."""
+    """Answers a synthetic chain's reads in the server's JSON shapes.
 
-    def __init__(self, chain: Chain):
+    ``finalized`` is the seqno getConsensusBlock reports; blocks carry no
+    transactions.
+    """
+
+    def __init__(self, chain: Chain, finalized: int = FINAL):
         self.chain = chain
+        self.finalized = finalized
         self.mc_reads: list[int] = []
 
     async def __call__(self, url: str, body: bytes, timeout: float) -> tuple[int, bytes]:
         request = json.loads(body)
         p = request["params"]
-        if request["method"] == "getShards":
+        if request["method"] == "getConsensusBlock":
+            result: Any = {"@type": "ext.blocks.consensusBlock", "consensus_block": self.finalized}
+        elif request["method"] == "getBlockTransactionsExt":
+            b = self.chain.blocks[(0, int(p["shard"]), p["seqno"])]
+            result = {"id": id_json(b.ref), "incomplete": False, "transactions": []}
+        elif request["method"] == "getShards":
             m = next(x for x in self.chain.mcs if x.seqno == p["seqno"])
-            result: Any = {"@type": "blocks.shards", "shards": [id_json(t) for t in m.tops]}
+            result = {"@type": "blocks.shards", "shards": [id_json(t) for t in m.tops]}
         elif p["workchain"] == -1:
             m = next(x for x in self.chain.mcs if x.seqno == p["seqno"])
             self.mc_reads.append(m.seqno)
@@ -549,6 +570,107 @@ class RecordedNode:
                 "prev_blocks": [id_json(x) for x in b.prev],
             }
         return 200, json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}).encode()
+
+
+class Finality(unittest.TestCase):
+    def test_finalized_window_passes(self):
+        c = split_then_merge()
+        for finalized in (FINAL, FINAL + 50):
+            result = t2check.check_continuity(c.mcs, c.blocks, all_refs(c), finalized_mc=finalized)
+            self.assertEqual(result.verdict.status, PASS, result.verdict.gaps)
+
+    def test_closing_above_finality_is_not_pass(self):
+        c = split_then_merge()
+        result = t2check.check_continuity(c.mcs, c.blocks, all_refs(c), finalized_mc=FINAL - 1)
+        self.assertEqual(result.verdict.status, INCONCLUSIVE)
+        self.assertEqual(result.verdict.failures, [])
+        self.assertEqual(result.verdict.gaps[0]["mc_seqnos"], [FINAL])
+        t, _ = hop_run()
+        blocks = {k: BlockTxs(tuple(v), True) for k, v in t.txs.items()}
+        out = t2check.evaluate(
+            t.chain.mcs,
+            t.chain.blocks,
+            blocks,
+            RUN,
+            [FUNDER],
+            QueueBoundary(100, True),
+            QueueBoundary(104, True),
+            all_refs(t.chain),
+            finalized_mc=FINAL - 1,
+        )
+        self.assertEqual(out["status"], INCONCLUSIVE)
+        self.assertEqual(out["conservation"]["status"], INCONCLUSIVE)
+
+    def test_unknown_finality_is_not_pass(self):
+        c = split_then_merge()
+        result = t2check.check_continuity(c.mcs, c.blocks, all_refs(c), finalized_mc=None)
+        self.assertEqual(result.verdict.status, INCONCLUSIVE)
+
+    def test_read_finalized_takes_the_lowest_node_and_fails_closed(self):
+        c = split_then_merge()
+        nodes = [RecordedNode(c, 120), RecordedNode(c, 110), RecordedNode(c, 130)]
+        rpcs = [rpcmod.PacedRpc("http://n", 1.0, transport=n) for n in nodes]
+        self.assertEqual(asyncio.run(t2collect.read_finalized(rpcs)), 110)
+
+        async def broken(url: str, body: bytes, timeout: float) -> tuple[int, bytes]:
+            return 500, b"{}"
+
+        rpcs.append(rpcmod.PacedRpc("http://n", 1.0, transport=broken))
+        self.assertIsNone(asyncio.run(t2collect.read_finalized(rpcs)))
+        self.assertIsNone(asyncio.run(t2collect.read_finalized([])))
+
+    def test_wait_finalized_is_bounded(self):
+        c = split_then_merge()
+        node = RecordedNode(c, 100)
+        rpc = rpcmod.PacedRpc("http://n", 1.0, transport=node)
+        got = asyncio.run(t2collect.wait_finalized([rpc], 104, timeout=0.05, poll=0.01))
+        self.assertEqual(got, 100)
+
+        async def advancing():
+            async def bump():
+                await asyncio.sleep(0.02)
+                node.finalized = 104
+
+            task = asyncio.create_task(bump())
+            got = await t2collect.wait_finalized([rpc], 104, timeout=5, poll=0.005)
+            await task
+            return got
+
+        self.assertEqual(asyncio.run(advancing()), 104)
+
+    def test_check_window_records_finality(self):
+        import tempfile
+
+        c = split_then_merge()
+        for finalized, status in ((FINAL, PASS), (FINAL - 1, INCONCLUSIVE)):
+            rpc = rpcmod.PacedRpc("http://n", 1.0, transport=RecordedNode(c, finalized))
+            with tempfile.TemporaryDirectory() as d:
+                result = asyncio.run(
+                    t2collect.check_window(
+                        rpc,
+                        QueueBoundary(100, True),
+                        QueueBoundary(FINAL, True),
+                        set(RUN),
+                        {FUNDER},
+                        Path(d),
+                        all_refs(c),
+                        finality_wait=0,
+                    )
+                )
+                records = json.loads((Path(d) / "t2-records.json").read_text())
+            self.assertEqual(result["status"], status)
+            self.assertEqual(records["finalized_mc"], finalized)
+            self.assertEqual(records["diagnostics"]["run_owned_balance"]["emitted"], 0)
+
+
+class Diagnostics(unittest.TestCase):
+    def test_run_owned_balance_counts_outstanding_messages(self):
+        t, m = hop_run()
+        for txs in t.txs.values():
+            txs[:] = [x for x in txs if x.in_msg not in (m["d"], m["bounce"])]
+        blocks = {k: BlockTxs(tuple(v), True) for k, v in t.txs.items()}
+        got = t2check.run_owned_balance(t.continuity, blocks, RUN, [FUNDER])
+        self.assertEqual(got, {"emitted": 5, "imported": 4, "emitted_minus_imported": 1})
 
 
 class Parsing(unittest.TestCase):

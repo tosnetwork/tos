@@ -103,9 +103,17 @@ after the deadline.
   exactly once by a transaction on its destination. Deployments and
   bounces are counted in their own classes, skipped actions on their own.
 
+- **Finality:** the closing masterchain block, and so every shard top the
+  walk starts from, must be at or below the finalized masterchain seqno
+  (`getConsensusBlock`, the lowest over every node). The collector waits a
+  bounded time for it and records it in `t2-records.json`.
+
+`t2-records.json` also carries the run-owned emitted-minus-imported count
+as a diagnostic; the verdict does not use it.
+
 The verdict is PASS, FAIL with the offending blocks or messages, or
-INCONCLUSIVE when a block was not read, the walk was cut short or the
-queue had not drained; a message is reported as dropped only from a
+INCONCLUSIVE when a block was not read, the walk was cut short, the
+window is above finality or the queue had not drained; a message is reported as dropped only from a
 complete walk with an empty closing queue. Records and verdict go to
 `t2/` under `--out`. Against an existing endpoint:
 

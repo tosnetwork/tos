@@ -588,12 +588,18 @@ async def main(a: argparse.Namespace) -> int:
                     {raw(main_wallet.address)},
                     a.out / "t2",
                     observed,
+                    finality=[rpc]
+                    + [
+                        PacedRpc(f"http://127.0.0.1:{port}/jsonRPC", a.rpc_share)
+                        for port in rpc_ports[1:]
+                    ],
                 )
                 t2 = {
                     k: verdict[k]["stats"] | {"status": verdict[k]["status"]}
                     for k in ("layout", "continuity", "conservation")
                 } | {
                     "status": verdict["status"],
+                    "finalized_mc": verdict["finalized_mc"],
                     "layout_changes": verdict["layout_changes"],
                     "rpc": verdict["rpc"],
                 }

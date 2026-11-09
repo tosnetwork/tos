@@ -283,11 +283,33 @@ class Continuity:
     reached: dict[BlockKey, BlockRef]
 
 
+def finality_gaps(rows: list[McRecord], finalized_mc: int | None) -> list[dict[str, Any]]:
+    """Masterchain blocks of the window that are not known to be finalized.
+
+    ``finalized_mc`` is the highest masterchain seqno the node reports as
+    finalized; every block the walk starts from must be at or below it.
+    """
+    if finalized_mc is None:
+        return [{"reason": "the finalized masterchain seqno was not read"}]
+    above = [m.seqno for m in rows if m.seqno > finalized_mc]
+    if not above:
+        return []
+    return [
+        {
+            "reason": "masterchain blocks above the finalized seqno",
+            "finalized_mc": finalized_mc,
+            "mc_seqnos": above,
+        }
+    ]
+
+
 def check_continuity(
     mcs: Iterable[McRecord],
     blocks: Mapping[BlockKey, BlockRecord],
     observed: Iterable[BlockRef] = (),
     max_blocks: int | None = None,
+    *,
+    finalized_mc: int | None,
 ) -> Continuity:
     """Every window block is reached by ``prev`` links from finalized masterchain shard tops.
 
@@ -298,11 +320,13 @@ def check_continuity(
     ends at the frontier. ``observed`` are block ids seen by an independent
     reader; one inside the window (after the opening tops and at or before
     the closing tops) that the walk does not reach is a FAIL.
-    ``max_blocks`` caps the walk; a walk cut short is INCONCLUSIVE.
+    ``max_blocks`` caps the walk; a walk cut short is INCONCLUSIVE. So is a
+    window whose masterchain blocks are not all at or below ``finalized_mc``:
+    shard tops of an unfinalized block are not evidence.
     """
     rows = sorted(mcs, key=lambda m: m.seqno)
     failures: list[dict[str, Any]] = []
-    gaps: list[dict[str, Any]] = []
+    gaps: list[dict[str, Any]] = finality_gaps(rows, finalized_mc)
     if len(rows) < 2:
         verdict = Verdict(
             INCONCLUSIVE, gaps=[{"reason": "the window needs two masterchain blocks"}]
@@ -414,6 +438,7 @@ def check_continuity(
             "split_blocks": splits,
             "truncated": truncated,
             "observed_unreached": len(unreached),
+            "finalized_mc": finalized_mc,
         },
     )
     return Continuity(verdict, reached)
@@ -652,10 +677,12 @@ def evaluate(
     closing: QueueBoundary = QueueBoundary(None, None),
     observed: Iterable[BlockRef] = (),
     max_blocks: int | None = None,
+    *,
+    finalized_mc: int | None,
 ) -> dict[str, Any]:
     """The layout record and the continuity and conservation verdicts of one window."""
     changes, layout = layout_changes(mcs)
-    continuity = check_continuity(mcs, blocks, observed, max_blocks)
+    continuity = check_continuity(mcs, blocks, observed, max_blocks, finalized_mc=finalized_mc)
     conservation = check_conservation(
         continuity, txs, run_accounts, entry_sources, opening, closing
     )
@@ -667,4 +694,36 @@ def evaluate(
         "layout": layout.as_dict(),
         "continuity": continuity.verdict.as_dict(),
         "conservation": conservation.as_dict(),
+    }
+
+
+def run_owned_balance(
+    continuity: Continuity,
+    txs: Mapping[BlockKey, BlockTxs],
+    run_accounts: Iterable[str],
+    entry_sources: Iterable[str] = (),
+) -> dict[str, int]:
+    """Run-owned messages emitted in the window against those imported in it.
+
+    A diagnostic for the records only; the verdict comes from
+    ``check_conservation``, which requires the whole queue to be empty.
+    """
+    run, entries = set(run_accounts), set(entry_sources)
+    emitted: set[str] = set()
+    imported: set[str] = set()
+    for key in continuity.reached:
+        block = txs.get(key)
+        for tx in block.txs if block is not None else ():
+            if tx.in_msg is not None and tx.in_msg.kind == "internal":
+                imported.add(tx.in_msg.hash)
+            for msg in tx.out_msgs:
+                if msg.kind == "internal" and (
+                    tx.account in run or (tx.account in entries and msg.destination in run)
+                ):
+                    emitted.add(msg.hash)
+    delivered = len(emitted & imported)
+    return {
+        "emitted": len(emitted),
+        "imported": delivered,
+        "emitted_minus_imported": len(emitted) - delivered,
     }

@@ -14,6 +14,11 @@ each node's per-source budget and retries rate-gate refusals:
   transaction list, with inbound and outbound message summaries.
 - ``queue_boundary`` binds an outbound-queue reading to the masterchain
   block whose shard tops it was taken at.
+- ``read_finalized`` reads the finalized masterchain seqno
+  (``getConsensusBlock``: the masterchain state the node serves reads
+  from, which never runs ahead of the blocks it has applied as finalized),
+  taking the lowest over every node asked. The window is checked only up
+  to it.
 
 Records are written next to the verdict, so the check can be rerun offline:
 
@@ -290,6 +295,36 @@ async def wait_empty_queue(rpc: PacedRpc, timeout: float, poll: float = 2.0) -> 
         await asyncio.sleep(poll)
 
 
+async def read_finalized(rpcs: list[PacedRpc]) -> int | None:
+    """The lowest finalized masterchain seqno the nodes report; None when any read fails."""
+    if not rpcs:
+        return None
+    seqnos: list[int] = []
+    for rpc in rpcs:
+        try:
+            answer = await rpc.call("getConsensusBlock")
+        except Exception:
+            return None
+        value = answer.get("consensus_block") if isinstance(answer, dict) else None
+        if type(value) is not int or value < 0:
+            return None
+        seqnos.append(value)
+    return min(seqnos)
+
+
+async def wait_finalized(
+    rpcs: list[PacedRpc], target: int, timeout: float, poll: float = 2.0
+) -> int | None:
+    """The finalized seqno once it reaches ``target``, or the last reading when time runs out."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        finalized = await read_finalized(rpcs)
+        if (finalized is not None and finalized >= target) or loop.time() >= deadline:
+            return finalized
+        await asyncio.sleep(poll)
+
+
 async def collect(
     rpc: PacedRpc, lo: int, hi: int, max_blocks: int = 200_000
 ) -> tuple[list[McRecord], dict[BlockKey, BlockRecord], dict[BlockKey, BlockTxs]]:
@@ -303,8 +338,12 @@ def records_json(
     mcs: list[McRecord],
     blocks: dict[BlockKey, BlockRecord],
     txs: dict[BlockKey, BlockTxs],
+    finalized_mc: int | None = None,
+    diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
+        "finalized_mc": finalized_mc,
+        "diagnostics": diagnostics or {},
         "masterchain": [asdict(m) for m in mcs],
         "blocks": [asdict(b) for b in blocks.values()],
         "transactions": [
@@ -323,10 +362,18 @@ async def check_window(
     out: Path,
     observed: list[BlockRef] | None = None,
     max_blocks: int = 200_000,
+    finality: list[PacedRpc] | None = None,
+    finality_wait: float = 120.0,
 ) -> dict[str, Any]:
-    """Collect one window, write its records and verdict under ``out``, return the verdict."""
+    """Collect one window, write its records and verdict under ``out``, return the verdict.
+
+    The closing block must be finalized on every node in ``finality``
+    (default: the reading node). The collector waits up to ``finality_wait``
+    seconds for that; a window still above finality is INCONCLUSIVE.
+    """
     if opening.mc_seqno is None or closing.mc_seqno is None:
         raise ValueError("both boundaries need a masterchain seqno")
+    finalized = await wait_finalized(finality or [rpc], closing.mc_seqno, finality_wait)
     mcs, blocks, txs = await collect(rpc, opening.mc_seqno, closing.mc_seqno, max_blocks)
     result = t2check.evaluate(
         mcs,
@@ -338,11 +385,21 @@ async def check_window(
         closing,
         observed or (),
         max_blocks,
+        finalized_mc=finalized,
     )
+    reached = t2check.check_continuity(
+        mcs, blocks, observed or (), max_blocks, finalized_mc=finalized
+    )
+    diagnostics = {
+        "run_owned_balance": t2check.run_owned_balance(reached, txs, run_accounts, entry_sources),
+        "note": "diagnostic only; the verdict requires the whole queue to be empty",
+    }
+    result["finalized_mc"] = finalized
     result["boundaries"] = {"opening": asdict(opening), "closing": asdict(closing)}
     result["rpc"] = rpc.stats()
     out.mkdir(parents=True, exist_ok=True)
-    (out / "t2-records.json").write_text(json.dumps(records_json(mcs, blocks, txs)) + "\n")
+    records = records_json(mcs, blocks, txs, finalized, diagnostics)
+    (out / "t2-records.json").write_text(json.dumps(records) + "\n")
     (out / "t2-verdict.json").write_text(json.dumps(result, indent=2) + "\n")
     return result
 
@@ -368,6 +425,15 @@ def _parse_args() -> argparse.Namespace:
     c.add_argument("--run-accounts", type=Path, required=True, help="JSON list of run addresses")
     c.add_argument("--entry-source", action="append", default=[], help="funding address")
     c.add_argument("--max-blocks", type=int, default=200_000)
+    c.add_argument(
+        "--finality-rpc",
+        action="append",
+        default=[],
+        help="more JSON-RPC URLs whose finalized seqno bounds the window (lowest wins)",
+    )
+    c.add_argument(
+        "--finality-wait", type=float, default=120.0, help="seconds to wait for finality"
+    )
     c.add_argument("--out", type=Path, required=True)
     return p.parse_args()
 
@@ -390,6 +456,8 @@ async def _main(a: argparse.Namespace) -> int:
         entries,
         a.out,
         max_blocks=a.max_blocks,
+        finality=[rpc] + [PacedRpc(url, a.share) for url in a.finality_rpc],
+        finality_wait=a.finality_wait,
     )
     print(result["status"])
     return {"PASS": 0, "FAIL": 1}.get(result["status"], 2)
