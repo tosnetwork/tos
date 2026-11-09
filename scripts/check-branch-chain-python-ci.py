@@ -41,6 +41,7 @@ REQUIRED_NATIVE_TARGETS = {
     "test-signing-ledger",
     "test-decision-log-restart",
     "test-candidate-window-durability",
+    "test-candidate-payload-budget",
     "test-counted-finalizations",
     "test-unfinalized-count-resolver",
     "test-state-resolver-teardown",
