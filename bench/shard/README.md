@@ -127,6 +127,37 @@ uv run python bench/shard/t2collect.py check --rpc http://127.0.0.1:PORT/jsonRPC
 The pure checks are tested in `bench/tests/test_t2.py`
 (`uv run python bench/tests/test_t2.py`).
 
+## Remote mode: one bounded burst over JSON-RPC
+
+`run_shard_bench.py --remote` attaches to existing JSON-RPC endpoints
+(`--rpc URL`, repeatable) instead of booting a net. It imports no
+liteserver or local-net module, and every read and send goes through
+[`rpc.py`](rpc.py) inside `--rpc-share` of each node's per-source budget.
+
+Before anything is read or sent it checks the burst caps (`--chains`
+1..255, `--forks` 0..12, `--hops` 1..1,000,000, `--accounts`
+2..65,536, positive funding) and prints an upper bound on the run's
+messages, transactions and cost. It refuses to go on when the bound
+exceeds `--max-messages` or `--max-cost`. The bound holds because
+`hop.fc` enforces it: every hop decrements `remaining` and the chain
+ends at 0, forks only while `forks` is positive, decrementing it, and
+hop messages never bounce; the start message carries `--hops` and
+`--forks`. A chain with `remaining = r` and `forks = f` executes
+`2^(r+1) - 1` transactions when `f >= r`, otherwise
+`2^f - 1 + 2^f (r - f + 1)`. Cost is the value the bench wallet
+attaches plus `--wallet-fee-cap` per external; the deployment's actual
+wallet fee is checked against that cap before the burst starts.
+
+The bench wallet is a self-pay Quantum wallet. `--key-file` is a JSON
+file, mode 0600, with `mldsa44_seed` and `rescue_public_key` (hex);
+the seed goes to `--signer` over stdin only and is never logged or
+recorded. The owner funds the wallet's address; its first request
+deploys it.
+
+The run counts by an RPC chain walk (`t2collect.check_window`) between
+empty-queue boundaries, and `results.json` records the value left in
+the hop accounts as stranded: nothing can withdraw it.
+
 ## Reading the numbers
 
 Every validator on one host validates every shard: the shard committee is
