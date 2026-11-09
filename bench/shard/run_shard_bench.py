@@ -33,6 +33,7 @@ import json
 import logging
 import os
 import platform
+import socket
 import subprocess
 import sys
 import time
@@ -48,7 +49,9 @@ from pytosiq_core import Address, WalletMessage  # noqa: E402
 from tostester.install import Install  # noqa: E402
 from tostester.network import FullNode, Network, StartOptions  # noqa: E402
 
-from shard import hopbench  # noqa: E402
+from shard import hopbench, t2collect  # noqa: E402
+from shard.rpc import PacedRpc  # noqa: E402
+from shard.t2check import BlockRef  # noqa: E402
 from toslib import ToslibClient  # noqa: E402
 
 NANO = 1_000_000_000
@@ -104,6 +107,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--node-verbosity", type=int, default=1)
     p.add_argument("--seed", default="tos-shard-bench", help="public run seed")
     p.add_argument("--thermal-log", type=Path, default=None, help="thermal guard log to record")
+    p.add_argument(
+        "--t2-check",
+        action="store_true",
+        help="open JSON-RPC on every node and check layout, continuity and conservation",
+    )
+    p.add_argument(
+        "--rpc-share", type=float, default=0.5, help="share of the per-IP JSON-RPC budget"
+    )
+    p.add_argument(
+        "--drain-wait", type=int, default=600, help="seconds to wait for the queue to drain"
+    )
     a = p.parse_args()
     if not 0 <= a.split <= 4:
         p.error("--split must be in [0, 4]")
@@ -121,6 +135,8 @@ def parse_args() -> argparse.Namespace:
         p.error("--block-limit-mul applies only to --block-limits dev")
     if not 0 <= a.payload <= hopbench.MAX_PAYLOAD:
         p.error(f"--payload must be in [0, {hopbench.MAX_PAYLOAD}]")
+    if not 0 < a.rpc_share <= 1:
+        p.error("--rpc-share must be in (0, 1]")
     a.local_scaled = hopbench.local_scaled(a.local)
     a.flags = (hopbench.FLAG_WITH_INIT if a.with_init else 0) | (
         hopbench.FLAG_VERIFY_SENDER if a.verify_sender else 0
@@ -321,6 +337,16 @@ def package_temperatures() -> list[float] | None:
     return temps or None
 
 
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def raw(address: Address) -> str:
+    return f"{address.wc}:{address.hash_part.hex()}"
+
+
 def source_commit() -> str:
     return subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True, text=True
@@ -404,6 +430,7 @@ async def main(a: argparse.Namespace) -> int:
         global_id = network.config.global_id
         dht = network.create_dht_node()
         nodes: list[FullNode] = []
+        rpc_ports: list[int] = []
         for index in range(a.validators):
             node = network.create_full_node()
             node.make_initial_pq_validator(
@@ -412,10 +439,12 @@ async def main(a: argparse.Namespace) -> int:
             )
             node.announce_to(dht)
             nodes.append(node)
+            rpc_ports.append(free_port() if a.t2_check else 0)
         async with asyncio.TaskGroup() as group:
             group.create_task(dht.run())
-            for node in nodes:
-                group.create_task(node.run(StartOptions(verbosity=a.node_verbosity)))
+            for node, port in zip(nodes, rpc_ports):
+                args = ("--json-rpc-address", f"127.0.0.1:{port}") if a.t2_check else ()
+                group.create_task(node.run(StartOptions(verbosity=a.node_verbosity, args=args)))
         await network.wait_mc_block(seqno=1)
         boot = time.time()
         log.info("net up: %d validators, global id %d", a.validators, global_id)
@@ -474,6 +503,11 @@ async def main(a: argparse.Namespace) -> int:
             deploy_seconds = time.time() - t
             log.info("deployed %d hop accounts in %.1fs", a.accounts, deploy_seconds)
 
+            rpc = PacedRpc(f"http://127.0.0.1:{rpc_ports[0]}/jsonRPC", a.rpc_share)
+            opening = None
+            if a.t2_check:
+                opening = await t2collect.wait_empty_queue(rpc, 120)
+                log.info("T2 opening boundary: %s", opening)
             await scanner.start_position()
             scan_task = asyncio.create_task(scanner.run())
             start = await chain_now(pool)
@@ -537,6 +571,39 @@ async def main(a: argparse.Namespace) -> int:
                 a.out / "blocks.csv", [b for b in scanner.blocks if lo <= b.gen_utime < hi]
             )
             tail = hopbench.tail_ratio(scanner.blocks, lo, hi)
+            t2 = None
+            if opening is not None:
+                while await chain_now(pool) < deadline + 5:
+                    await asyncio.sleep(2)
+                closing = await t2collect.wait_empty_queue(rpc, a.drain_wait)
+                log.info("T2 closing boundary: %s", closing)
+                observed = [
+                    BlockRef(0, b.shard, b.seqno, b.root_hash.hex()) for b in scanner.blocks
+                ]
+                verdict = await t2collect.check_window(
+                    rpc,
+                    opening,
+                    closing,
+                    {raw(x) for x in addresses},
+                    {raw(main_wallet.address)},
+                    a.out / "t2",
+                    observed,
+                    finality=[rpc]
+                    + [
+                        PacedRpc(f"http://127.0.0.1:{port}/jsonRPC", a.rpc_share)
+                        for port in rpc_ports[1:]
+                    ],
+                )
+                t2 = {
+                    k: verdict[k]["stats"] | {"status": verdict[k]["status"]}
+                    for k in ("layout", "continuity", "conservation")
+                } | {
+                    "status": verdict["status"],
+                    "finalized_mc": verdict["finalized_mc"],
+                    "layout_changes": verdict["layout_changes"],
+                    "rpc": verdict["rpc"],
+                }
+                log.info("T2 verdict: %s", json.dumps(t2))
             report = {
                 "scope": "LOCAL_ENGINEERING_EVIDENCE_ONLY: one host, every validator runs every shard",
                 "workload": (
@@ -578,6 +645,7 @@ async def main(a: argparse.Namespace) -> int:
                 "thermal_log": str(a.thermal_log) if a.thermal_log else None,
                 "chain_config": chain_config,
                 "result": summary,
+                "t2": t2,
             }
             (a.out / "results.json").write_text(json.dumps(report, indent=2) + "\n")
             log.info(

@@ -79,6 +79,54 @@ nodes sharing the host, carries every shard.
 Outputs under `--out`: `results.json` (parameters, chain config snapshot,
 per-shard summary) and `blocks.csv` (one row per window block).
 
+## T2 evidence: layout, continuity, conservation
+
+`--t2-check` opens JSON-RPC on every node and, after the hop chains pass
+their deadline and the outbound queue drains, checks the run window with
+[`t2check.py`](t2check.py) over records read by
+[`t2collect.py`](t2collect.py). Every read goes through
+[`rpc.py`](rpc.py), which stays inside `--rpc-share` of the node's
+per-source budget (600 requests per 10 s) and retries HTTP 429 and
+`-32005`. The window opens at the first masterchain block with an empty
+queue after deployment and closes at the first one with an empty queue
+after the deadline.
+
+- **Layout:** every masterchain block in the window is read, and each
+  change of the basechain shard set is recorded with the masterchain
+  seqno and time, as a split, a merge or both.
+- **Continuity:** shard block headers are walked from the shard tops of
+  every masterchain block in the window back to the opening tops,
+  through both predecessors of a merge and across a split. Every block
+  the scanner saw inside the window must be reached.
+- **Conservation:** every internal message that a hop account emits in
+  the window, and the funding wallet's start message, is imported
+  exactly once by a transaction on its destination. Deployments and
+  bounces are counted in their own classes, skipped actions on their own.
+
+- **Finality:** the closing masterchain block, and so every shard top the
+  walk starts from, must be at or below the finalized masterchain seqno
+  (`getConsensusBlock`, the lowest over every node). The collector waits a
+  bounded time for it and records it in `t2-records.json`.
+
+`t2-records.json` also carries the run-owned emitted-minus-imported count
+as a diagnostic; the verdict does not use it.
+
+The verdict is PASS, FAIL with the offending blocks or messages, or
+INCONCLUSIVE when a block was not read, the walk was cut short, the
+window is above finality or the queue had not drained; a message is reported as dropped only from a
+complete walk with an empty closing queue. Records and verdict go to
+`t2/` under `--out`. Against an existing endpoint:
+
+```
+uv run python bench/shard/t2collect.py boundary --rpc http://127.0.0.1:PORT/jsonRPC
+uv run python bench/shard/t2collect.py check --rpc http://127.0.0.1:PORT/jsonRPC \
+    --from-mc A --to-mc B --opening-empty --closing-empty \
+    --run-accounts accounts.json --entry-source ADDR --out DIR
+```
+
+The pure checks are tested in `bench/tests/test_t2.py`
+(`uv run python bench/tests/test_t2.py`).
+
 ## Reading the numbers
 
 Every validator on one host validates every shard: the shard committee is
