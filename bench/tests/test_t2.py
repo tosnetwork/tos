@@ -381,7 +381,8 @@ class Traffic:
             chain.mcs, chain.blocks, all_refs(chain), finalized_mc=FINAL
         )
         self.keys = sorted(self.continuity.reached, key=lambda k: (k[2], k[1] & t2check.U64))
-        self.txs: dict[tuple[int, int, int], list[Tx]] = {k: [] for k in self.keys}
+        self.mc_keys = t2check.masterchain_window_keys(chain.mcs, 100)
+        self.txs: dict[tuple[int, int, int], list[Tx]] = {k: [] for k in self.keys + self.mc_keys}
         self.n = 0
 
     def tx(self, block: int, account: str, in_msg: Msg | None, *out: Msg, **kw: Any) -> Tx:
@@ -390,15 +391,29 @@ class Traffic:
         self.txs[t.block].append(t)
         return t
 
-    def check(self, opening: bool | None = True, closing: bool | None = True):
+    def mc_tx(self, block: int, account: str, in_msg: Msg | None, *out: Msg) -> Tx:
+        """A transaction in the ``block``-th masterchain block after the opening one."""
+        self.n += 1
+        t = Tx(h("tx", self.n), account, self.n, self.mc_keys[block], in_msg, tuple(out))
+        self.txs[t.block].append(t)
+        return t
+
+    def check(
+        self,
+        opening: bool | None = True,
+        closing: bool | None = True,
+        entries: tuple[str, ...] = (FUNDER,),
+        masterchain: bool = True,
+    ):
         blocks = {k: BlockTxs(tuple(v), True) for k, v in self.txs.items()}
         return t2check.check_conservation(
             self.continuity,
             blocks,
             RUN,
-            [FUNDER],
+            entries,
             QueueBoundary(100, opening),
             QueueBoundary(104, closing),
+            self.mc_keys if masterchain else (),
         )
 
 
@@ -493,6 +508,37 @@ class Conservation(unittest.TestCase):
         )
         self.assertEqual(v.status, INCONCLUSIVE)
 
+    def test_a_masterchain_entry_source_starts_the_run(self):
+        # The funding wallet may live on the masterchain: its emission is in an MC block.
+        mc_funder = f"-1:{0xF1:064x}"
+        t = Traffic(split_then_merge())
+        start = msg(10, mc_funder, RUN[0])
+        hop = msg(11, RUN[0], RUN[1])
+        t.mc_tx(0, mc_funder, Msg(h("ext2"), "external"), start)
+        t.tx(1, RUN[0], start, hop)
+        t.tx(2, RUN[1], hop)
+        result = t.check(entries=(mc_funder,))
+        self.assertEqual(result.status, PASS, result.as_dict())
+        self.assertEqual(result.stats["delivered"]["entry"], 1)
+        # Without the masterchain blocks the start looks imported from nowhere.
+        blind = t.check(entries=(mc_funder,), masterchain=False)
+        self.assertEqual(blind.status, FAIL)
+        self.assertEqual(blind.stats["carried_in"], 1)
+
+    def test_unread_masterchain_transactions_are_inconclusive(self):
+        t, _ = hop_run()
+        blocks = {k: BlockTxs(tuple(v), True) for k, v in t.txs.items() if k not in t.mc_keys[:1]}
+        result = t2check.check_conservation(
+            t.continuity,
+            blocks,
+            RUN,
+            [FUNDER],
+            QueueBoundary(100, True),
+            QueueBoundary(104, True),
+            t.mc_keys,
+        )
+        self.assertEqual(result.status, INCONCLUSIVE)
+
     def test_evaluate_combines_verdicts(self):
         t, _ = hop_run()
         blocks = {k: BlockTxs(tuple(v), True) for k, v in t.txs.items()}
@@ -541,6 +587,7 @@ class RecordedNode:
         self.chain = chain
         self.finalized = finalized
         self.mc_reads: list[int] = []
+        self.mc_tx_reads: list[int] = []
 
     async def __call__(self, url: str, body: bytes, timeout: float) -> tuple[int, bytes]:
         request = json.loads(body)
@@ -548,8 +595,13 @@ class RecordedNode:
         if request["method"] == "getConsensusBlock":
             result: Any = {"@type": "ext.blocks.consensusBlock", "consensus_block": self.finalized}
         elif request["method"] == "getBlockTransactionsExt":
-            b = self.chain.blocks[(0, int(p["shard"]), p["seqno"])]
-            result = {"id": id_json(b.ref), "incomplete": False, "transactions": []}
+            if p["workchain"] == -1:
+                m = next(x for x in self.chain.mcs if x.seqno == p["seqno"])
+                self.mc_tx_reads.append(m.seqno)
+                block_id = BlockRef(-1, ROOT_SHARD, m.seqno, m.root_hash)
+            else:
+                block_id = self.chain.blocks[(0, int(p["shard"]), p["seqno"])].ref
+            result = {"id": id_json(block_id), "incomplete": False, "transactions": []}
         elif request["method"] == "getShards":
             m = next(x for x in self.chain.mcs if x.seqno == p["seqno"])
             result = {"@type": "blocks.shards", "shards": [id_json(t) for t in m.tops]}
@@ -643,7 +695,8 @@ class Finality(unittest.TestCase):
 
         c = split_then_merge()
         for finalized, status in ((FINAL, PASS), (FINAL - 1, INCONCLUSIVE)):
-            rpc = rpcmod.PacedRpc("http://n", 1.0, transport=RecordedNode(c, finalized))
+            node = RecordedNode(c, finalized)
+            rpc = rpcmod.PacedRpc("http://n", 1.0, transport=node)
             with tempfile.TemporaryDirectory() as d:
                 result = asyncio.run(
                     t2collect.check_window(
@@ -661,6 +714,10 @@ class Finality(unittest.TestCase):
             self.assertEqual(result["status"], status)
             self.assertEqual(records["finalized_mc"], finalized)
             self.assertEqual(records["diagnostics"]["run_owned_balance"]["emitted"], 0)
+            # Every masterchain block after the opening one has its transactions read.
+            self.assertEqual(
+                sorted(node.mc_tx_reads), [m.seqno for m in c.mcs if 100 < m.seqno <= FINAL]
+            )
 
 
 class Diagnostics(unittest.TestCase):

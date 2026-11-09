@@ -21,6 +21,19 @@ U64 = (1 << 64) - 1
 PASS, FAIL, INCONCLUSIVE = "PASS", "FAIL", "INCONCLUSIVE"
 
 BlockKey = tuple[int, int, int]  # (workchain, signed shard id, seqno)
+MASTERCHAIN_SHARD = -(1 << 63)
+
+
+def masterchain_window_keys(mcs: Iterable["McRecord"], opening_mc: int | None) -> list[BlockKey]:
+    """The masterchain blocks after the opening one, whose transactions belong to the window.
+
+    An entry source such as the funding wallet can live on the masterchain, so a
+    run's first messages are emitted there. The opening block itself is outside
+    the window: its queue was empty, so nothing it emitted is still in flight.
+    """
+    if opening_mc is None:
+        return []
+    return [(-1, MASTERCHAIN_SHARD, m.seqno) for m in mcs if m.seqno > opening_mc]
 
 
 def _unsigned(shard: int) -> int:
@@ -493,6 +506,7 @@ def check_conservation(
     entry_sources: Iterable[str] = (),
     opening: QueueBoundary = QueueBoundary(None, None),
     closing: QueueBoundary = QueueBoundary(None, None),
+    masterchain_keys: Iterable[BlockKey] = (),
 ) -> Verdict:
     """Every run-owned internal message emitted in the window is imported exactly once.
 
@@ -519,7 +533,7 @@ def check_conservation(
     if opening.empty is not True:
         gaps.append({"reason": "the opening queue is not known to be empty"})
     window: list[Tx] = []
-    for key in sorted(continuity.reached):
+    for key in [*sorted(continuity.reached), *sorted(masterchain_keys)]:
         block = txs.get(key)
         if block is None:
             gaps.append({"reason": "transactions not read", "block": key})
@@ -684,7 +698,13 @@ def evaluate(
     changes, layout = layout_changes(mcs)
     continuity = check_continuity(mcs, blocks, observed, max_blocks, finalized_mc=finalized_mc)
     conservation = check_conservation(
-        continuity, txs, run_accounts, entry_sources, opening, closing
+        continuity,
+        txs,
+        run_accounts,
+        entry_sources,
+        opening,
+        closing,
+        masterchain_window_keys(mcs, opening.mc_seqno),
     )
     statuses = [layout.status, continuity.verdict.status, conservation.status]
     overall = FAIL if FAIL in statuses else INCONCLUSIVE if INCONCLUSIVE in statuses else PASS
@@ -702,6 +722,7 @@ def run_owned_balance(
     txs: Mapping[BlockKey, BlockTxs],
     run_accounts: Iterable[str],
     entry_sources: Iterable[str] = (),
+    masterchain_keys: Iterable[BlockKey] = (),
 ) -> dict[str, int]:
     """Run-owned messages emitted in the window against those imported in it.
 
@@ -711,7 +732,7 @@ def run_owned_balance(
     run, entries = set(run_accounts), set(entry_sources)
     emitted: set[str] = set()
     imported: set[str] = set()
-    for key in continuity.reached:
+    for key in [*continuity.reached, *masterchain_keys]:
         block = txs.get(key)
         for tx in block.txs if block is not None else ():
             if tx.in_msg is not None and tx.in_msg.kind == "internal":

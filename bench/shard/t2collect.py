@@ -330,7 +330,12 @@ async def collect(
 ) -> tuple[list[McRecord], dict[BlockKey, BlockRecord], dict[BlockKey, BlockTxs]]:
     mcs = await read_masterchain(rpc, lo, hi)
     blocks = await walk_blocks(rpc, mcs, max_blocks)
-    txs = await read_all_transactions(rpc, [b.ref for b in blocks.values()])
+    # The masterchain blocks after the opening one are read too: an entry source on the
+    # masterchain emits a run's first messages there.
+    masterchain = [
+        BlockRef(-1, MASTERCHAIN_SHARD, m.seqno, m.root_hash) for m in mcs if m.seqno > lo
+    ]
+    txs = await read_all_transactions(rpc, [*(b.ref for b in blocks.values()), *masterchain])
     return mcs, blocks, txs
 
 
@@ -391,7 +396,13 @@ async def check_window(
         mcs, blocks, observed or (), max_blocks, finalized_mc=finalized
     )
     diagnostics = {
-        "run_owned_balance": t2check.run_owned_balance(reached, txs, run_accounts, entry_sources),
+        "run_owned_balance": t2check.run_owned_balance(
+            reached,
+            txs,
+            run_accounts,
+            entry_sources,
+            t2check.masterchain_window_keys(mcs, opening.mc_seqno),
+        ),
         "note": "diagnostic only; the verdict requires the whole queue to be empty",
     }
     result["finalized_mc"] = finalized
