@@ -586,7 +586,9 @@ async def main(a: argparse.Namespace) -> int:
             past: int | None = None
             if opening is not None:
                 # Bounded: a stalled chain keeps answering with the same time.
-                limit = max(0, deadline + 5 - await chain_now(pool)) + a.drain_wait + 60
+                # The window ends 5 s after the hop deadline; allow that much chain time
+                # plus the drain wait, measured on the local clock from now.
+                limit = a.warmup + a.duration + 35 + a.drain_wait + 60
                 past = await t2collect.wait_until_past(lambda: chain_now(pool), deadline + 5, limit)
             if opening is not None and past is None:
                 t2 = {

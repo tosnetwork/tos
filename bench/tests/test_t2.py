@@ -11,6 +11,7 @@ import asyncio
 import base64
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -914,6 +915,20 @@ class LocalExitAndWait(unittest.TestCase):
             return next(clock)
 
         self.assertIsNone(asyncio.run(t2collect.wait_until_past(frozen, 1001, 0.05, 0.01)))
+
+        async def slow() -> int:
+            await asyncio.sleep(0.5)
+            return 2000
+
+        async def stuck() -> int:
+            await asyncio.Event().wait()
+            return 0
+
+        # A read that outlives the limit, or never returns, still ends at the limit.
+        for read in (slow, stuck):
+            started = time.monotonic()
+            self.assertIsNone(asyncio.run(t2collect.wait_until_past(read, 1001, 0.05, 0.01)))
+            self.assertLess(time.monotonic() - started, 0.4)
         self.assertGreaterEqual(
             asyncio.run(t2collect.wait_until_past(ticking, 1030, 5, 0.0)) or 0, 1030
         )
@@ -988,9 +1003,33 @@ class Parsing(unittest.TestCase):
         self.assertEqual(seen[1]["after_lt"], "2")
         self.assertEqual(seen[1]["after_account"], f"{2:064x}")
 
+    def test_a_transaction_without_its_summary_fields_leaves_the_block_incomplete(self):
+        block = ref(LEFT, 9)
+        for broken in (
+            {k: v for k, v in tx_json(1).items() if k != "out_msgs"},
+            {k: v for k, v in tx_json(1).items() if k != "in_msg"},
+            {k: v for k, v in tx_json(1).items() if k != "lt"},
+            tx_json(1) | {"aborted": None},
+        ):
+            page = {"id": id_json(block), "incomplete": False, "transactions": [broken]}
+
+            async def node(url: str, body: bytes, timeout: float, page=page) -> tuple[int, bytes]:
+                return 200, json.dumps({"id": 1, "result": page}).encode()
+
+            rpc = rpcmod.PacedRpc("http://n", 1.0, transport=node)
+            got = asyncio.run(t2collect.read_transactions(rpc, block))
+            self.assertFalse(got.complete, broken)
+
 
 def tx_json(n: int) -> dict[str, Any]:
-    return {"account": f"{n:064x}", "lt": str(n), "hash": b64(h("t", n)), "in_msg": None}
+    # The fields the server always renders for a transaction summary.
+    return {
+        "account": f"{n:064x}",
+        "lt": str(n),
+        "hash": b64(h("t", n)),
+        "in_msg": None,
+        "out_msgs": [],
+    }
 
 
 if __name__ == "__main__":
