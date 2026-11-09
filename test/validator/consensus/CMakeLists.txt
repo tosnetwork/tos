@@ -361,7 +361,7 @@ target_link_libraries(test-candidate-payload-budget PRIVATE
     tdactor
     tdutils
 )
-foreach(mode bound rehydrate pinned-resolve pinned-reply reenforce oversized persist-cancelled persist-failed
+foreach(mode bound rehydrate pinned-resolve pinned-reply pinned-rehydrate reenforce oversized persist-cancelled persist-failed
              external-ref revoke-missing revoke-corrupt revoke-mismatch stale-read shared-budget concurrent
              session-exit session-overlap cold-same-id cold-many)
     add_test(NAME candidate-payload-budget-${mode} COMMAND test-candidate-payload-budget ${mode})

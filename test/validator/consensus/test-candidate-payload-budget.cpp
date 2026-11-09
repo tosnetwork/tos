@@ -16,6 +16,7 @@
 //   pinned-resolve     a resolve suspended in its database read while the slot is finalized
 //                      and the allowance is taken: the result is complete, then let go
 //   pinned-reply       a peer request holding a cached payload keeps it through pressure
+//   pinned-rehydrate   a request that ends first does not let go of a payload another uses
 //   reenforce          rehydrations and late stores without new finalizations stay bounded
 //   oversized          a payload larger than the whole allowance is never cached
 //   persist-cancelled  a store that is cancelled keeps the payload, reported non-durable
@@ -357,6 +358,7 @@ enum class Mode {
   Rehydrate,
   PinnedResolve,
   PinnedReply,
+  PinnedRehydrate,
   Reenforce,
   Oversized,
   PersistCancelled,
@@ -734,6 +736,8 @@ class Driver : public td::actor::Actor {
         co_return co_await run_pinned_resolve();
       case Mode::PinnedReply:
         co_return co_await run_pinned_reply();
+      case Mode::PinnedRehydrate:
+        co_return co_await run_pinned_rehydrate();
       case Mode::Reenforce:
         co_return co_await run_reenforce();
       case Mode::Oversized:
@@ -864,6 +868,40 @@ class Driver : public td::actor::Actor {
     require(!entry.id_payload_resident, "the rehydrated payload stayed resident after its last pin");
     require(network.total_requests() == 0, "the resolve asked the network");
     finish(0, "BUDGET_PINNED_RESOLVE_OK");
+  }
+
+  // Two peer requests for one dropped candidate: the first rehydrates it and then waits in its
+  // certificate read; the second is answered from the rehydrated payload and ends first. Its
+  // end must not let go of the payload the first one is still serving, although the allowance
+  // has no room for it.
+  td::actor::Task<> run_pinned_rehydrate() {
+    auto chain = make_chain(nodes_[0], 2);
+    co_await limit_in_charges(chain, 1);
+    const auto& t = chain[0];
+    co_await store_and_finalize(0, chain, /*notarized=*/false);
+    auto entry = co_await cache(0, t->id);
+    require(!entry.id_payload_resident, "slot 0 was resident before the test");
+
+    nodes_[0].storage->hold_notar_reads = true;
+    auto first = std::make_shared<Outcome>();
+    peer_request_into(0, t, first, /*want_notar=*/true).start().detach();
+    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads.load() == 1; })) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the first request never reached its certificate read");
+    }
+    co_await must_serve(0, t);
+    auto during = co_await cache(0, t->id);
+    nodes_[0].storage->hold_notar_reads = false;
+    if (!co_await wait_until([&] { return first->done; })) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the first request never returned");
+    }
+    emit(PSTRING() << "BUDGET_PINNED_REHYDRATE during resident=" << during.id_payload_resident
+                   << " first ok=" << first->ok << " matched=" << first->matched << " error=" << first->error);
+    require(during.id_payload_resident, "the rehydrated payload was let go while a request still used it");
+    require(first->ok && first->matched, "the first request lost the candidate it was serving");
+    co_await check_bound("pinned-rehydrate");
+    entry = co_await cache(0, t->id);
+    require(!entry.id_payload_resident, "the rehydrated payload stayed resident after its last pin");
+    finish(0, "BUDGET_PINNED_REHYDRATE_OK");
   }
 
   // A peer request holds a cached payload while its certificate read is held; a newer payload
@@ -1395,6 +1433,7 @@ const ModeSpec MODES[] = {
     {"rehydrate", Mode::Rehydrate, 3},
     {"pinned-resolve", Mode::PinnedResolve, 1},
     {"pinned-reply", Mode::PinnedReply, 1},
+    {"pinned-rehydrate", Mode::PinnedRehydrate, 1},
     {"reenforce", Mode::Reenforce, 2},
     {"oversized", Mode::Oversized, 0},
     {"persist-cancelled", Mode::PersistCancelled, 2},
