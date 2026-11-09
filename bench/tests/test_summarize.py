@@ -200,5 +200,48 @@ class CollationStatsTests(unittest.TestCase):
         self.assertEqual(s["bytes"]["max"], 1_400_000)
 
 
+class NodeMetricsTests(unittest.TestCase):
+    def test_parse_keeps_only_the_ingress_series(self):
+        page = "\n".join(
+            [
+                "# HELP x",
+                'tos_ext_message_admission_total{outcome="ok"} 7',
+                "tos_overlay_broadcast_received_total 3",
+                "process_resident_memory_bytes 1e9",
+                "tos_mempool_size NaN-not-a-number",
+            ]
+        )
+        self.assertEqual(
+            bench.parse_metrics(page),
+            {
+                'tos_ext_message_admission_total{outcome="ok"}': 7.0,
+                "tos_overlay_broadcast_received_total": 3.0,
+            },
+        )
+
+    def test_delta_reports_only_changed_series(self):
+        before = {"node-1": {"a": 1.0, "b": 5.0}}
+        after = {"node-1": {"a": 4.0, "b": 5.0, "c": 2.0}}
+        self.assertEqual(bench.metrics_delta(before, after), {"node-1": {"a": 3.0, "c": 2.0}})
+
+    def test_a_failed_scrape_is_reported_not_turned_into_counters(self):
+        before = {"node-1": None, "node-2": {"a": 1.0}, "node-3": None}
+        after = {"node-1": {"a": 9.0}, "node-2": None, "node-3": None}
+        self.assertEqual(
+            bench.metrics_delta(before, after),
+            {
+                "node-1": {"scrape_failed": ["before"]},
+                "node-2": {"scrape_failed": ["after"]},
+                "node-3": {"scrape_failed": ["before", "after"]},
+            },
+        )
+
+    def test_a_node_missing_at_one_end_is_a_failure(self):
+        self.assertEqual(
+            bench.metrics_delta({}, {"node-1": {"a": 2.0}}),
+            {"node-1": {"scrape_failed": ["before"]}},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

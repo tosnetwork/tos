@@ -32,6 +32,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -496,14 +497,7 @@ class Bench:
         result["sink_value_gained_nanotos"] = gained
         result["sender_connections"] = senders
         if METRIC_PORTS:
-            result["node_metrics_delta"] = {
-                node: {
-                    k: v - metrics_before.get(node, {}).get(k, 0.0)
-                    for k, v in after.items()
-                    if v != metrics_before.get(node, {}).get(k, 0.0)
-                }
-                for node, after in metrics_after.items()
-            }
+            result["node_metrics_delta"] = metrics_delta(metrics_before, metrics_after)
         result["block_limits_evidence"] = self.block_limits_evidence(t0 + a.warmup, t_sent)
         result["gas_sample"] = await chain.gas_sample(self.pool, {LOAD_CLASS: used})
         result["cpu_package_celsius_end"] = package_temperatures()
@@ -832,31 +826,58 @@ def metrics_args(a: argparse.Namespace, node: FullNode) -> list[str]:
     return ["--exporter-address", f"127.0.0.1:{port}"]
 
 
-def scrape_metrics() -> dict[str, dict[str, float]]:
-    """Every node's ext-message and overlay counters, keyed by node name then series."""
-    out: dict[str, dict[str, float]] = {}
+METRIC_WORDS = ("ext_message", "external", "broadcast", "mempool")
+
+
+def parse_metrics(text: str) -> dict[str, float]:
+    """The ext-message, external, broadcast and mempool series of a Prometheus text page."""
+    series: dict[str, float] = {}
+    for line in text.splitlines():
+        if line.startswith("#") or not line.strip():
+            continue
+        key, _, value = line.rpartition(" ")
+        if any(word in key for word in METRIC_WORDS):
+            try:
+                series[key] = float(value)
+            except ValueError:
+                continue
+    return series
+
+
+def scrape_metrics() -> dict[str, dict[str, float] | None]:
+    """Every node's counters keyed by node name; None for a node whose scrape failed."""
+    out: dict[str, dict[str, float] | None] = {}
     for name, port in METRIC_PORTS.items():
         try:
-            text = (
-                urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=10)
-                .read()
-                .decode()
-            )
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=10) as reply:
+                text = reply.read().decode()
         except OSError as error:
-            out[name] = {"scrape_error": 1.0}
+            out[name] = None
             log.warning("metrics scrape of %s failed: %s", name, error)
             continue
-        series: dict[str, float] = {}
-        for line in text.splitlines():
-            if line.startswith("#") or not line.strip():
-                continue
-            key, _, value = line.rpartition(" ")
-            if any(word in key for word in ("ext_message", "external", "broadcast", "mempool")):
-                try:
-                    series[key] = float(value)
-                except ValueError:
-                    continue
-        out[name] = series
+        out[name] = parse_metrics(text)
+    return out
+
+
+def metrics_delta(
+    before: Mapping[str, Mapping[str, float] | None],
+    after: Mapping[str, Mapping[str, float] | None],
+) -> dict[str, dict[str, Any]]:
+    """Per node, the series that changed during the stage.
+
+    A node whose scrape failed at either end gets ``{"scrape_failed": [...]}`` naming the
+    failed end(s) and no deltas: cumulative counters must never be reported as a stage's
+    change, and a failure must not look like a stage in which nothing changed. A series
+    first seen at the end counts from zero, as a Prometheus counter does.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for node in sorted(set(before) | set(after)):
+        start, end = before.get(node), after.get(node)
+        failed = [side for side, value in (("before", start), ("after", end)) if value is None]
+        if start is None or end is None:
+            out[node] = {"scrape_failed": failed}
+            continue
+        out[node] = {k: v - start.get(k, 0.0) for k, v in end.items() if v != start.get(k, 0.0)}
     return out
 
 
