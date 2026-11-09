@@ -40,15 +40,15 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "bench/shard"), str(ROOT / "test/tostester/src")]
+sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src")]
 
-import hopbench  # noqa: E402
 from contract.pq_auth import transfer_message  # noqa: E402
 from pqbench import chain  # noqa: E402
 from pytosiq_core import Address, WalletMessage  # noqa: E402
 from tostester.install import Install  # noqa: E402
 from tostester.network import FullNode, Network, StartOptions  # noqa: E402
 
+from shard import hopbench  # noqa: E402
 from toslib import ToslibClient  # noqa: E402
 
 NANO = 1_000_000_000

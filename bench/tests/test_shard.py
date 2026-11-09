@@ -12,10 +12,10 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / "bench/shard"), str(ROOT / "test/tostester/src")]
+sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src")]
 
-import hopbench  # noqa: E402
 from pytosiq_core import Builder  # noqa: E402
+from shard import hopbench  # noqa: E402
 
 _parser = argparse.ArgumentParser(add_help=False)
 _parser.add_argument("--build")
@@ -81,7 +81,9 @@ class Bodies(unittest.TestCase):
         s = hopbench.start_body(1, 2, 0, 0, 0, 3, 4, flags, payload).begin_parse()
         s.skip_bits(32 + 8 + 32 + 8 + 16 + 8 + 32 + 32)
         self.assertEqual(s.load_uint(8), 3)
-        self.assertEqual(s.load_maybe_ref().hash, payload.hash)
+        carried = s.load_maybe_ref()
+        assert payload is not None and carried is not None
+        self.assertEqual(carried.hash, payload.hash)
 
     def test_payload_cells(self):
         self.assertIsNone(hopbench.payload_cell(0))
@@ -195,9 +197,13 @@ class Summary(unittest.TestCase):
     def test_tail_ratio(self):
         shard = hopbench.to_signed(0x8000000000000000)
         steady = [block(shard, i, i, 10) for i in range(40)]
-        self.assertAlmostEqual(hopbench.tail_ratio(steady, 0, 40), 1.0)
+        steady_ratio = hopbench.tail_ratio(steady, 0, 40)
+        assert steady_ratio is not None
+        self.assertAlmostEqual(steady_ratio, 1.0)
         thinning = [block(shard, i, i, 10 if i < 30 else 0) for i in range(40)]
-        self.assertAlmostEqual(hopbench.tail_ratio(thinning, 0, 40), 0.0)
+        thinning_ratio = hopbench.tail_ratio(thinning, 0, 40)
+        assert thinning_ratio is not None
+        self.assertAlmostEqual(thinning_ratio, 0.0)
         self.assertIsNone(hopbench.tail_ratio(steady, 0, 10))
 
 
@@ -238,12 +244,10 @@ class Collations(unittest.TestCase):
                 ],
             },
         }
-        mc = dict(
-            record,
-            block_id=dict(
-                record["block_id"], workchain=-1, root_hash=base64.b64encode(b"m" * 32).decode()
-            ),
-        )
+        # The same record for a masterchain block, which the reader must skip.
+        mc = json.loads(json.dumps(record))
+        mc["block_id"]["workchain"] = -1
+        mc["block_id"]["root_hash"] = base64.b64encode(b"m" * 32).decode()
         with tempfile.TemporaryDirectory() as d:
             node = Path(d) / "node1"
             node.mkdir()
