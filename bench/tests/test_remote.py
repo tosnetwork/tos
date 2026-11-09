@@ -271,8 +271,16 @@ class FakeNode:
         if method == "getShards":
             return {"shards": [block_id(0, p["seqno"])]}
         if method == "getOutMsgQueueSize":
+            # As the node does: each reading is taken at the newest masterchain block, whose
+            # own queue comes first, then each shard top it references.
+            self.mc += 1
             size = 1 if self.mc < self.in_flight_until else 0
-            return {"shards": [{"id": block_id(0, self.mc), "size": size}]}
+            return {
+                "shards": [
+                    {"id": block_id(-1, self.mc), "size": 0},
+                    {"id": block_id(0, self.mc), "size": size},
+                ]
+            }
         if method == "getConsensusBlock":
             return {"consensus_block": self.mc}
         if method == "getConfigParam":
