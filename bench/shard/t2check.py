@@ -226,6 +226,9 @@ def layout_changes(mcs: Iterable[McRecord]) -> tuple[list[LayoutChange], Verdict
                     "to": cur.seqno - 1,
                 }
             )
+            # Several changes may lie in the unread blocks, so the step between these two
+            # layouts is not one split or merge; each layout is still checked on its own.
+            continue
         old, new = prev.layout(), cur.layout()
         if old == new:
             continue

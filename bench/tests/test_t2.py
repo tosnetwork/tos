@@ -264,6 +264,15 @@ class Layout(unittest.TestCase):
         self.assertIsNone(t2check.partition_error([LL, LR, RIGHT]))
         self.assertIsNotNone(t2check.partition_error([LL, RIGHT]))
 
+    def test_two_generations_across_an_unread_block_are_inconclusive(self):
+        c = Chain()
+        c.mc(ref(ROOT_SHARD, 1))
+        c.mc(ref(LEFT, 2), ref(RIGHT, 2))
+        c.mc(ref(LL, 3), ref(LR, 3), ref(RIGHT, 3))
+        self.assertEqual(t2check.layout_changes(c.mcs)[1].status, PASS)
+        _, verdict = t2check.layout_changes([c.mcs[0], c.mcs[2]])  # the middle block unread
+        self.assertEqual(verdict.status, INCONCLUSIVE)
+
     def test_impossible_layout_change_fails(self):
         c = Chain()
         c.mc(ref(ROOT_SHARD, 1))
