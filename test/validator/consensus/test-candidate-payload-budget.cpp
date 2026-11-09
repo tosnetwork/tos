@@ -1335,12 +1335,19 @@ class Driver : public td::actor::Actor {
     }
     outcomes.push_back(std::make_shared<Outcome>());
     resolve_into(0, a, outcomes.back()).start().detach();
-    if (!co_await wait_cache(0, [&](const Cache& c) { return c.coalesced_reads == before.coalesced_reads + 8; })) {
-      finish(1, "BUDGET_PRECONDITION_FAILED: the readers did not all wait");
+    // Every reader has arrived once it is reading, waiting for a read slot, or waiting for the
+    // read of another reader.
+    const size_t readers = outcomes.size();
+    if (!co_await wait_cache(0, [&](const Cache& c) {
+          return c.coalesced_reads - before.coalesced_reads + c.cold_reads_in_flight + c.cold_read_waiters == readers;
+        })) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the readers did not all arrive");
     }
     auto during = co_await cache(0);
     emit(PSTRING() << "BUDGET_COLD_SAME held=" << nodes_[0].storage->held_reads.load() << " " << describe(during));
-    require(nodes_[0].storage->held_reads.load() == 1, "more than one database read ran");
+    require(nodes_[0].storage->held_reads.load() == 1 && during.cold_reads_in_flight == 1,
+            "more than one database read ran");
+    require(during.coalesced_reads == before.coalesced_reads + readers - 1, "the readers were not coalesced");
     nodes_[0].storage->hold_payload_reads = false;
     if (!co_await wait_until(
             [&] { return std::all_of(outcomes.begin(), outcomes.end(), [](const auto& o) { return o->done; }); })) {
@@ -1377,18 +1384,21 @@ class Driver : public td::actor::Actor {
       outcomes.push_back(std::make_shared<Outcome>());
       peer_request_into(0, chain[i], outcomes.back()).start().detach();
     }
+    // Every request has arrived once it is reading, waiting for a read slot, or refused.
     if (!co_await wait_cache(0, [&](const Cache& c) {
-          return c.cold_reads_in_flight == c.cold_read_concurrency &&
-                 c.cold_read_waiters == c.cold_read_max_remote_waiters && c.cold_reads_refused == requests - admitted;
+          return c.cold_reads_in_flight + c.cold_read_waiters + c.cold_reads_refused == requests;
         })) {
       auto state = co_await cache(0);
-      finish(1, "BUDGET_PRECONDITION_FAILED: the cold reads did not fill the queue: " + describe(state));
+      finish(1, "BUDGET_PRECONDITION_FAILED: the cold reads did not all arrive: " + describe(state));
     }
     auto during = co_await cache(0);
     emit(PSTRING() << "BUDGET_COLD_MANY during held=" << nodes_[0].storage->held_reads.load() << " "
                    << describe(during));
-    require(nodes_[0].storage->held_reads.load() == static_cast<int>(during.cold_read_concurrency),
+    require(during.cold_reads_in_flight == during.cold_read_concurrency &&
+                nodes_[0].storage->held_reads.load() == static_cast<int>(during.cold_read_concurrency),
             "more database reads ran than the limit");
+    require(during.cold_read_waiters == during.cold_read_max_remote_waiters, "the read queue exceeded its limit");
+    require(during.cold_reads_refused == requests - admitted, "the requests beyond the queue were not refused");
     nodes_[0].storage->hold_payload_reads = false;
     if (!co_await wait_until(
             [&] { return std::all_of(outcomes.begin(), outcomes.end(), [](const auto& o) { return o->done; }); })) {

@@ -372,6 +372,24 @@ working set but can increase database reads and writes during catch-up. Keep
 the default on production validators unless a smaller value has passed
 restart, partition, and offline catch-up testing for the target workload.
 
+Inside that window, the candidate payloads of finalized slots are a cache: once
+a payload is durable and nothing uses it, it is kept only within one byte
+allowance shared by every session of the process, oldest slot dropped first,
+and a dropped payload is read back from persistent storage when it is needed.
+The allowance, in bytes, defaults to 512 MiB:
+
+```text
+TOS_SIMPLEX_CANDIDATE_CACHE_BYTES=536870912
+```
+
+Zero caches no finalized payload; a value that is not a non-negative integer is
+logged and the default is used. Payloads that are in use, not yet durable or in
+a slot that is not finalized are kept regardless and reported separately in the
+`MEMORY_DIAGNOSTICS simplex-candidate-payloads` line, with the charged and
+retired bytes, payload database reads and the cold-read queue. The allowance
+bounds this cache only; it does not bound the copies other components hold
+while they apply or verify a block.
+
 `--celldb-direct-io` may be evaluated only with a deliberately large CellDB
 cache and a measured workload; the engine does not use direct I/O for small
 cache settings. Do not enable it blindly.
