@@ -39,6 +39,7 @@
 //   stop-coalesced     ... with readers waiting on another reader's read and on a resolve
 //   stop-bytes-guard   ... while a repair write is held with the read buffer counted
 //   stop-notar-write   ... while a notarization certificate write is held
+//   external-slice     a payload held only through a clone of its data stays charged
 //   cold-same-id       concurrent cold reads of one candidate are one database read
 //   cold-many          concurrent cold reads of many candidates are bounded and never wrong
 
@@ -469,6 +470,7 @@ enum class Mode {
   StopCoalesced,
   StopBytesGuard,
   StopNotarWrite,
+  ExternalSlice,
   ColdSameId,
   ColdMany,
 };
@@ -901,6 +903,8 @@ class Driver : public td::actor::Actor {
         co_return co_await run_stop_bytes_guard();
       case Mode::StopNotarWrite:
         co_return co_await run_stop_notar_write();
+      case Mode::ExternalSlice:
+        co_return co_await run_external_slice();
       case Mode::ColdSameId:
         co_return co_await run_cold_same_id();
       case Mode::ColdMany:
@@ -1751,6 +1755,40 @@ class Driver : public td::actor::Actor {
     finish(0, "BUDGET_STOP_NOTAR_WRITE_OK");
   }
 
+  // A payload dropped while the only thing left holding it is a clone of its block data: the
+  // allowance keeps its charge until the clone is gone.
+  td::actor::Task<> run_external_slice() {
+    auto chain = make_chain(nodes_[0], 3);
+    co_await limit_in_charges(chain, 2);
+    const auto& a = chain[0];
+    co_await store_and_finalize(0, std::vector<CandidateRef>(chain.begin(), chain.begin() + 2));
+    auto entry = co_await cache(0, a->id);
+    require(entry.id_payload_cached, "A was not cached");
+    td::BufferSlice clone;
+    {
+      auto cached = co_await resolve(0, a);
+      clone = std::get<BlockCandidate>(cached->block).data.clone();
+    }
+    // Only the clone remains outside the resolver: the resolved reference was dropped above.
+    co_await store(0, chain[2]);
+    co_await finalize(0, chain[2]);
+    auto dropped = co_await cache(0, a->id);
+    emit(PSTRING() << "BUDGET_EXTERNAL_SLICE after drop " << describe(dropped));
+    require(!dropped.id_payload_resident, "A was not dropped");
+    require(dropped.node_retired_payloads == 1 && dropped.node_retired_bytes == charge(a),
+            "a payload held only through a clone of its data is not charged as retired");
+    co_await must_serve(0, chain[1]);
+    auto still = co_await check_bound("external-slice-held");
+    require(still.node_retired_payloads == 1, "the retired charge was released while a data clone is alive");
+    require(clone.as_slice() == std::get<BlockCandidate>(a->block).data.as_slice(), "the clone lost its contents");
+    clone = td::BufferSlice();
+    co_await must_serve(0, chain[1]);
+    auto released = co_await check_bound("external-slice-released");
+    require(released.node_retired_payloads == 0 && released.node_retired_bytes == 0,
+            "the retired charge stayed after the last clone was released");
+    finish(0, "BUDGET_EXTERNAL_SLICE_OK");
+  }
+
   // Concurrent cold reads of one dropped candidate, local and remote, are one database read,
   // and the peer requests waiting on it are held to the waiting allowance: the ones beyond it
   // are refused as busy, a local resolve still waits, and every answer is the candidate.
@@ -1972,6 +2010,7 @@ const ModeSpec MODES[] = {
     {"stop-coalesced", Mode::StopCoalesced, 1, 4},
     {"stop-bytes-guard", Mode::StopBytesGuard, 1, 4},
     {"stop-notar-write", Mode::StopNotarWrite, 1, 4},
+    {"external-slice", Mode::ExternalSlice, 2},
     {"cold-same-id", Mode::ColdSameId, 1},
     {"cold-many", Mode::ColdMany, 1},
 };

@@ -374,9 +374,16 @@ restart, partition, and offline catch-up testing for the target workload.
 
 Inside that window, the candidate payloads of finalized slots are a cache: once
 a payload is durable and nothing uses it, it is kept only within one byte
-allowance shared by every session of the process, oldest slot dropped first,
-and a dropped payload is read back from persistent storage when it is needed.
-The allowance, in bytes, defaults to 512 MiB:
+allowance shared by every session of the process, and a dropped payload is read
+back from persistent storage when it is needed. Each session's resolver makes
+room only from its own cache, dropping its oldest eligible payload of an older
+slot first; it never drops another session's. While the shared allowance is
+exhausted, a session admits no further finalized payloads to the cache (payloads
+in use or of slots not yet finalized can still be in memory) until room returns
+through its own eviction or another session's exit. A payload dropped while
+something outside the resolver still holds it stays charged, also after its
+session has ended, until that holder releases it. The allowance, in bytes,
+defaults to 512 MiB:
 
 ```text
 TOS_SIMPLEX_CANDIDATE_CACHE_BYTES=536870912
