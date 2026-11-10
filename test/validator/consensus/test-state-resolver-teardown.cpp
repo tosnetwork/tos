@@ -760,6 +760,9 @@ class Driver : public td::actor::Actor {
       finish(2, "C10_FAILED: ResolveState completed successfully after the stop");
     }
     emit(PSTRING() << "C10_RESOLVE_STATE " << resolved.error().to_string());
+    if (resolved.error().code() != ErrorCode::cancelled) {
+      finish(2, "C10_FAILED: the suspended ResolveState did not end as cancelled after the stop");
+    }
     if (!co_await wait_until([&] { return bus_stopped_->await_ready(); })) {
       emit(PSTRING() << "C10_BUS_STILL_ALIVE bus_refs=" << weak_bus.use_count());
       finish(3, "C10_FAILED: the consensus bus did not stop after the held read was released");

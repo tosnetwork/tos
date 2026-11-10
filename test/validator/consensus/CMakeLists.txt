@@ -396,6 +396,8 @@ target_link_libraries(test-state-resolver-teardown PRIVATE
 add_test(NAME c10-state-resolver-teardown COMMAND test-state-resolver-teardown)
 # The group stops while a state resolution is suspended inside a held candidate read.
 add_test(NAME c10-state-resolver-teardown-cold-read COMMAND test-state-resolver-teardown cold-read)
+# An outer bound, so a harness deadlock fails instead of hanging the job.
+set_tests_properties(c10-state-resolver-teardown c10-state-resolver-teardown-cold-read PROPERTIES TIMEOUT 120)
 
 add_executable(test-validator-manager-resource-policy test-validator-manager-resource-policy.cpp)
 target_link_libraries(test-validator-manager-resource-policy PRIVATE
