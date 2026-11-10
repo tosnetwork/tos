@@ -791,6 +791,11 @@ target_link_libraries(test-ext-message-manager PRIVATE validator full-node tos_b
                       tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
 target_compile_definitions(test-ext-message-manager PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
 
+add_executable(test-candidate-broadcast-guard test/test-td-main.cpp test/test-candidate-broadcast-guard.cpp)
+target_link_libraries(test-candidate-broadcast-guard PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
+target_compile_definitions(test-candidate-broadcast-guard PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
 add_executable(test-ext-message-generated-checker test/test-td-main.cpp test/test-ext-message-generated-checker.cpp)
 target_link_libraries(test-ext-message-generated-checker PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
                       tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
@@ -2170,6 +2175,7 @@ set_tests_properties(ext-admission-release-source PROPERTIES LABELS "source-guar
 tos_test(test-ext-message-pool)
 tos_test(test-ext-message-expiry)
 tos_test(test-ext-message-manager)
+tos_test(test-candidate-broadcast-guard)
 tos_test(test-ext-message-ingress)
 tos_test(test-ext-message-admission-budget)
 tos_test(test-msg-envelope)
