@@ -2484,7 +2484,11 @@ if (NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
   add_test(NAME archive-prune COMMAND test-archive-prune)
   add_test(NAME archive-prune-held-reader-shutdown COMMAND test-archive-prune --held-reader-shutdown)
   add_test(NAME archive-reader-open-failures COMMAND test-archive-prune --reader-open-failures)
-  set_tests_properties(archive-prune archive-prune-held-reader-shutdown archive-reader-open-failures PROPERTIES TIMEOUT 90)
+  add_test(NAME archive-prune-add-block-writer-closed COMMAND test-archive-prune --add-block-writer-closed)
+  add_test(NAME archive-prune-add-block-choose-package-failure
+    COMMAND test-archive-prune --add-block-choose-package-failure)
+  set_tests_properties(archive-prune archive-prune-held-reader-shutdown archive-reader-open-failures
+    archive-prune-add-block-writer-closed archive-prune-add-block-choose-package-failure PROPERTIES TIMEOUT 90)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Counts fsync calls under a path prefix (LD_PRELOAD); test-only, built
     # through all-tests or by name.

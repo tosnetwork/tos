@@ -393,10 +393,16 @@ td::actor::Task<> ArchiveSlice::add_block(BlockHandle handle,
   CHECK(!temp_);
   before_query().ensure();
   begin_async_query_impl();
+  // Every failure below returns from the body, so this guard runs on the slice. An error that
+  // unwinds through an unwrapped await leaves it to whoever destroys the frame, on any thread.
   SCOPE_EXIT {
     end_async_query();
   };
-  auto p = co_await choose_package(handle, true);
+  auto r_package = choose_package(handle, true);
+  if (r_package.is_error()) {
+    co_return r_package.move_as_error();
+  }
+  auto p = r_package.move_as_ok();
   std::vector<std::pair<std::string, td::BufferSlice>> files_to_add;
   std::vector<FileReference> files_to_add_refs;
   for (auto &[file_ref, data] : files) {
@@ -407,7 +413,11 @@ td::actor::Task<> ArchiveSlice::add_block(BlockHandle handle,
       files_to_add_refs.push_back(file_ref);
     }
   }
-  auto [offsets, pack_size] = co_await td::actor::ask(p->writer, &PackageWriter::append_multi, std::move(files_to_add));
+  auto r_append = co_await td::actor::ask(p->writer, &PackageWriter::append_multi, std::move(files_to_add)).wrap();
+  if (r_append.is_error()) {
+    co_return r_append.move_as_error();
+  }
+  auto [offsets, pack_size] = r_append.move_as_ok();
   if (destroyed_) {
     co_return td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected));
   }
@@ -428,8 +438,14 @@ td::actor::Task<> ArchiveSlice::add_block(BlockHandle handle,
   }
   auto [task, promise] = td::actor::StartedTask<>::make_bridge();
   add_handle(handle, std::move(promise));
-  co_await std::move(task);
-  co_await commit_transaction_coro();
+  auto r_added = co_await std::move(task).wrap();
+  if (r_added.is_error()) {
+    co_return r_added.move_as_error();
+  }
+  auto r_committed = co_await commit_transaction_coro().wrap();
+  if (r_committed.is_error()) {
+    co_return r_committed.move_as_error();
+  }
   co_return td::Unit{};
 }
 
