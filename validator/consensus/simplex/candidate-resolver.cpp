@@ -352,6 +352,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
         result.id_payload_resident = it->second.candidate_and_cert.candidate.has_value();
         result.id_payload_cached = it->second.payload_cached;
         result.id_durable = is_durable(it->second);
+        result.id_active_operations = it->second.active_operations;
       }
     }
     co_return result;

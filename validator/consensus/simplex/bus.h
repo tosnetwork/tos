@@ -224,6 +224,8 @@ struct QueryCandidatePayloadCache {
     bool id_payload_resident = false;
     bool id_payload_cached = false;
     bool id_durable = false;
+    // Operations holding the entry; its payload can be cached or dropped only at zero.
+    size_t id_active_operations = 0;
   };
 
   using ReturnType = Result;

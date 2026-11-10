@@ -491,10 +491,11 @@ class Driver : public td::actor::Actor {
   }
 
   template <typename F>
-  td::actor::Task<bool> wait_cache(size_t node, F condition, double timeout = STEP_TIMEOUT) {
+  td::actor::Task<bool> wait_cache(size_t node, F condition, std::optional<CandidateId> id = std::nullopt,
+                                   double timeout = STEP_TIMEOUT) {
     auto deadline = td::Timestamp::in(timeout);
     while (true) {
-      auto state = co_await cache(node);
+      auto state = co_await cache(node, id);
       if (condition(state)) {
         co_return true;
       }
@@ -1155,12 +1156,24 @@ class Driver : public td::actor::Actor {
     }
     require(outcome->ok && outcome->matched, "the resolve did not return A");
     co_await finalize(0, a);
+    // The store resumed the resolve before the held read returned, so the resolve task can
+    // still be in that read, pinning A, when its slot is finalized; A is then cached when the
+    // task's pin is released. Wait for exactly that: the read done and no pin left on A.
+    auto early = co_await cache(0, a->id);
+    emit(PSTRING() << "BUDGET_STALE_READ_EARLY cold_in_flight=" << early.cold_reads_in_flight
+                   << " pins=" << early.id_active_operations << " cached=" << early.id_payload_cached);
+    if (!co_await wait_cache(
+            0, [](const Cache& c) { return c.cold_reads_in_flight == 0 && c.id_active_operations == 0; }, a->id)) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the stale read never completed or its pin was never released");
+    }
     auto state = co_await check_bound("stale-read");
     auto entry = co_await cache(0, a->id);
     emit(PSTRING() << "BUDGET_STALE_READ revocations=" << state.durability_revocations
-                   << " durable=" << entry.id_durable << " cached=" << entry.id_payload_cached);
+                   << " durable=" << entry.id_durable << " cached=" << entry.id_payload_cached
+                   << " pins=" << entry.id_active_operations);
     require(state.durability_revocations == 0, "a stale read revoked a newer store");
-    require(entry.id_durable && entry.id_payload_cached, "A is not cached as durable");
+    require(entry.id_durable && entry.id_payload_cached,
+            "A is not cached as durable after the read completed and its last pin was released");
 
     // A is dropped for B and comes back from the database alone.
     co_await store(0, chain[1]);
