@@ -397,7 +397,7 @@ jobs:
       # and let the bus destruct. The original teardown crashed or stranded
       # a waiter here; the test is built and run in the same fixed tree.
       - name: Check Simplex state-resolver teardown
-        run: ctest --test-dir build --output-on-failure -R '^c10-state-resolver-teardown$'
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^c10-state-resolver-teardown(-cold-read)?$'
 
       # C03's restart-origin failure only appeared when an anchor read first
       # failed and the exact predecessor was then needed. Keep both positive

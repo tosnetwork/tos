@@ -11,7 +11,9 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
+#include <thread>
 
 #include "td/actor/actor.h"
 #include "td/db/RocksDb.h"
@@ -153,6 +155,22 @@ struct ArchivePruneTestAccess {
     td::actor::send_lambda(manager, [manager, promise = std::move(promise)]() mutable {
       manager.get_actor_unsafe().alarm();
       promise.set_value(td::Unit());
+    });
+  }
+
+  // Run on the slice: opens its index and drops its first package, so that
+  // package's writer refuses every append. Returns that writer.
+  static td::actor::ActorId<PackageWriter> close_first_package(ArchiveSlice &self) {
+    self.before_query().ensure();
+    CHECK(!self.packages_.empty());
+    auto &package = *self.packages_.at(0);
+    package.package.reset();
+    return package.writer.get();
+  }
+
+  static void active_queries(td::actor::ActorId<ArchiveSlice> slice, td::Promise<size_t> promise) {
+    td::actor::send_lambda(slice, [slice, promise = std::move(promise)]() mutable {
+      promise.set_value(static_cast<size_t>(slice.get_actor_unsafe().active_queries_));
     });
   }
 };
@@ -1924,8 +1942,144 @@ void reader_open_failures(const std::string &root) {
   std::cout << "PASS: unavailable reader indexes fail without aborting and recover without restart" << std::endl;
 }
 
+// add_block holds an async query on the slice from its start to its end. Its
+// release must run on the slice whatever step fails, since the frame of a
+// failed task is destroyed by whoever consumes it, on any thread.
+namespace add_block_cleanup {
+
+using reader_sync::handle;
+
+const PackageId kSlice{100, false, false};
+
+std::vector<std::pair<FileReference, td::BufferSlice>> block_files(tos::BlockSeqno seqno) {
+  std::vector<std::pair<FileReference, td::BufferSlice>> files;
+  files.emplace_back(reader_sync::ref(seqno), td::BufferSlice(reader_sync::payload(seqno)));
+  return files;
+}
+
+size_t active_queries(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice) {
+  return request<size_t>(
+             scheduler,
+             [&](td::Promise<size_t> promise) { ArchivePruneTestAccess::active_queries(slice, std::move(promise)); })
+      .move_as_ok();
+}
+
+// Holds the calling thread, a slice worker, until the test releases it.
+void park(const std::atomic<bool> &released, const char *message) {
+  const auto deadline = td::Timestamp::in(10.0);
+  while (!released.load(std::memory_order_acquire)) {
+    check(!deadline.is_in_past(), message);
+    std::this_thread::yield();
+  }
+}
+
+bool has_error(const td::Result<td::Unit> &result, const char *message) {
+  return result.is_error() && result.error().message().str() == message;
+}
+
+// The writer refuses the append while the slice is parked. The result must
+// wait for the slice: completing on the writer would release the query there.
+void writer_closed(const std::string &root) {
+  std::filesystem::create_directories(root + kSlice.path());
+  {
+    td::actor::Scheduler scheduler({2});
+    auto slice = reader_sync::open_slice(scheduler, root, kSlice, td::DbOpenMode::db_primary);
+    std::atomic<bool> parked{false};
+    std::atomic<bool> released{false};
+    std::atomic<bool> writer_drained{false};
+    std::atomic<bool> arrived{false};
+    td::Result<td::Unit> result = td::Status::Error("add_block has not completed");
+    auto block = handle(102);
+    auto files = block_files(102);
+    scheduler.run_in_context([&] {
+      td::actor::send_lambda(slice.get(), [&, slice_id = slice.get()]() mutable {
+        auto &self = slice_id.get_actor_unsafe();
+        auto writer = ArchivePruneTestAccess::close_first_package(self);
+        // Runs on the slice up to its append, which is then queued on the writer.
+        auto task = self.add_block(block, std::move(files)).start_immediate();
+        check(!task.await_ready(), "writer-closed: add_block must wait for its append");
+        // Queued behind the append, so its answer means the append was refused.
+        td::actor::send_closure_later(writer, &PackageWriter::set_async_mode, false,
+                                      td::Promise<td::Unit>([&](td::Result<td::Unit>) {
+                                        writer_drained.store(true, std::memory_order_release);
+                                      }));
+        // Called on whichever thread completes the task, not resumed on an actor.
+        td::connect(td::Promise<td::Unit>([&](td::Result<td::Unit> value) {
+                      result = std::move(value);
+                      arrived.store(true, std::memory_order_release);
+                    }),
+                    std::move(task));
+        parked.store(true, std::memory_order_release);
+        park(released, "writer-closed: the slice was never released");
+      });
+    });
+    pump_until(
+        scheduler,
+        [&] { return parked.load(std::memory_order_acquire) && writer_drained.load(std::memory_order_acquire); },
+        "writer-closed: the writer must refuse the append while the slice is parked");
+    check(!arrived.load(std::memory_order_acquire),
+          "writer-closed: add_block must not complete off the slice while the slice is parked");
+    released.store(true, std::memory_order_release);
+    pump_until(
+        scheduler, [&] { return arrived.load(std::memory_order_acquire); },
+        "writer-closed: add_block must complete once the slice runs");
+    check(has_error(result, "Package is closed"), "writer-closed: add_block must return the writer's refusal");
+    check(active_queries(scheduler, slice.get()) == 0, "writer-closed: add_block must release its query");
+    reader_sync::close_slice(scheduler, slice);
+  }
+  reader_sync::release_handles();
+  std::cout << "PASS: add_block refused by its writer releases its query on the slice" << std::endl;
+}
+
+// choose_package refuses the block. The caller keeps the finished task and
+// consumes it off the slice; the query must already be released by then.
+void choose_package_failure(const std::string &root) {
+  std::filesystem::create_directories(root + kSlice.path());
+  {
+    td::actor::Scheduler scheduler({2});
+    auto slice = reader_sync::open_slice(scheduler, root, kSlice, td::DbOpenMode::db_primary);
+    std::optional<td::actor::StartedTask<td::Unit>> held;
+    std::atomic<bool> started{false};
+    // Below the slice's first masterchain seqno, which choose_package refuses.
+    auto block = handle(50);
+    auto files = block_files(50);
+    scheduler.run_in_context([&] {
+      td::actor::send_lambda(slice.get(), [&, slice_id = slice.get()]() mutable {
+        held.emplace(slice_id.get_actor_unsafe().add_block(block, std::move(files)).start_immediate());
+        started.store(true, std::memory_order_release);
+      });
+    });
+    pump_until(
+        scheduler, [&] { return started.load(std::memory_order_acquire); },
+        "choose-package: add_block must have run on the slice");
+    check(held->await_ready(), "choose-package: the refused add_block must have completed");
+    check(active_queries(scheduler, slice.get()) == 0,
+          "choose-package: the refused add_block must release its query on the slice, before its frame is consumed");
+    // Consumed and destroyed here, off the slice.
+    auto result = held->await_resume();
+    held.reset();
+    check(has_error(result, "too small masterchain seqno"), "choose-package: add_block must return the refusal");
+    check(active_queries(scheduler, slice.get()) == 0, "choose-package: no query is left after the frame is gone");
+    reader_sync::close_slice(scheduler, slice);
+  }
+  reader_sync::release_handles();
+  std::cout << "PASS: add_block refused by choose_package releases its query on the slice" << std::endl;
+}
+
+}  // namespace add_block_cleanup
+
 int main(int argc, char **argv) {
   auto root = td::mkdtemp("", "archive-prune-").move_as_ok();
+  if (argc == 2 && std::string(argv[1]) == "--add-block-writer-closed") {
+    add_block_cleanup::writer_closed(root + "/add-block-writer-closed");
+    td::rmrf(root).ensure();
+    return 0;
+  }
+  if (argc == 2 && std::string(argv[1]) == "--add-block-choose-package-failure") {
+    add_block_cleanup::choose_package_failure(root + "/add-block-choose-package-failure");
+    td::rmrf(root).ensure();
+    return 0;
+  }
   if (argc == 2 && std::string(argv[1]) == "--held-reader-shutdown") {
     manager_held_reader(root + "/held-shutdown", true);
     td::rmrf(root).ensure();

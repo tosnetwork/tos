@@ -118,6 +118,26 @@ bool crosscheck_unfinalized_enabled() {
 
 std::array<std::atomic<size_t>, static_cast<size_t>(UnfinalizedTransition::Count)> unfinalized_crosschecks{};
 
+// What the resolver's coroutine guards did, per guard, for the whole process. `skipped` counts
+// guards that found their group stopped and touched nothing; `off_actor` counts cleanup that
+// ran on a thread other than the resolver actor's, which must never happen.
+struct GuardCounters {
+  std::atomic<size_t> teardowns{0};
+  std::array<std::atomic<size_t>, static_cast<size_t>(StateResolverGuard::Count)> skipped{};
+  std::array<std::atomic<size_t>, static_cast<size_t>(StateResolverGuard::Count)> off_actor{};
+};
+
+GuardCounters& guard_counters() {
+  static GuardCounters counters;
+  return counters;
+}
+
+// Called by a guard instead of its cleanup once its group has stopped. It touches no actor
+// state, so it is safe on whatever thread destroys the frame.
+void note_guard_skipped_after_stop(StateResolverGuard kind) {
+  guard_counters().skipped[static_cast<size_t>(kind)].fetch_add(1, std::memory_order_relaxed);
+}
+
 size_t cache_limit_from_env(const char* name, size_t default_value) {
   const char* value = std::getenv(name);
   if (value == nullptr) {
@@ -195,6 +215,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   }
 
   void start_up() override {
+    self_id_ = actor_id(this);
     auto [awaiter, promise] = td::actor::StartedTask<StartEvent>::make_bridge();
     genesis_promise_ = std::move(promise);
     genesis_ = std::move(awaiter);
@@ -214,7 +235,10 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     alarm_timestamp() = td::Timestamp::in(60.0);
   }
 
+  // The stop token is set first: from then on no guard touches actor state (see stop_token_),
+  // including the guards of the coroutines that the cancellations below resume right here.
   void tear_down() override {
+    stop_token_->store(true, std::memory_order_release);
     closing_ = true;
     if (tos::health::enabled.load(std::memory_order_relaxed) &&
         tos::health::consensus_enabled.load(std::memory_order_relaxed))
@@ -249,6 +273,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         p.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
       }
     }
+    guard_counters().teardowns.fetch_add(1, std::memory_order_release);
   }
 
   template <>
@@ -318,6 +343,30 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   // before the suspension says nothing about the world the coroutine wakes up in.
   bool closing_ = false;
 
+  // Guards in this actor follow one rule. While the stop token is clear, a guard runs on this
+  // actor, serialized with tear_down(), because every fallible await it spans returns its error
+  // from the body (an error escaping an await ends the coroutine without resuming it, and the
+  // guard then runs wherever the frame is destroyed, on whichever thread completed the await).
+  // Once the token is set, a frame suspended at the stop may be destroyed on any scheduler
+  // thread after this actor is gone, concurrently with its siblings, so each guard checks its
+  // own copy of the token before it reads or writes any member, and then does nothing. Two
+  // such guards decrementing the same plain counter at once would be a data race, which is
+  // undefined behaviour. The counters left unreconciled belong to a resolver that is stopped
+  // and no longer reads them. The token is not a lock: it only tells a guard that tear_down()
+  // has taken over.
+  std::shared_ptr<std::atomic<bool>> stop_token_ = std::make_shared<std::atomic<bool>>(false);
+  td::actor::ActorId<> self_id_;
+
+  // A guard is about to touch actor state: count it, for the tests, if it is not running on
+  // this actor. Only reached while the stop token is clear, so the actor is still live.
+  void note_if_guard_off_actor(StateResolverGuard kind) const {
+    if (td::actor::detail::get_current_actor_id() == self_id_) {
+      return;
+    }
+    guard_counters().off_actor[static_cast<size_t>(kind)].fetch_add(1, std::memory_order_relaxed);
+    LOG(ERROR) << "Simplex state-resolver: guard " << static_cast<size_t>(kind) << " ran off the resolver actor";
+  }
+
   static td::Status closing_error() {
     return td::Status::Error(ErrorCode::cancelled, "Simplex state-resolver: closing");
   }
@@ -351,8 +400,14 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     tos::health::WorkObservation waiter(tos::health::Work::ResolveState);
     if (!entry.started) {
       entry.started = true;
+      auto stop = stop_token_;
       SCOPE_EXIT {
-        state_inflight_.release();
+        if (!stop->load(std::memory_order_acquire)) {
+          note_if_guard_off_actor(StateResolverGuard::StateAdmission);
+          state_inflight_.release();
+        } else {
+          note_guard_skipped_after_stop(StateResolverGuard::StateAdmission);
+        }
       };
       auto result = co_await resolve_state_inner(id, requesting_candidate).wrap();
       for (auto& p : entry.promises) {
@@ -802,10 +857,23 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       co_return closing_error();
     }
     ++finalizations_started_;
+    auto stop = stop_token_;
     SCOPE_EXIT {
-      ++finalizations_settled_;
+      if (!stop->load(std::memory_order_acquire)) {
+        note_if_guard_off_actor(StateResolverGuard::Settlement);
+        ++finalizations_settled_;
+      } else {
+        note_guard_skipped_after_stop(StateResolverGuard::Settlement);
+      }
     };
-    switch (co_await finalization_of(id)) {
+    // Returned from the body, so the guard above runs on this actor: the finalized-marker read
+    // can fail on the database's thread, and an error left to propagate would end this
+    // coroutine there.
+    auto finalization = co_await finalization_of(id).wrap();
+    if (finalization.is_error()) {
+      co_return finalization.move_as_error();
+    }
+    switch (finalization.move_as_ok()) {
       case Finalization::Finalized:
         co_return td::Unit{};
       case Finalization::StalledPermanently:
@@ -880,7 +948,12 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     crosscheck_legacy_sample();
     {
       SCOPE_EXIT {
-        finalized_inflight_.release();
+        if (!stop->load(std::memory_order_acquire)) {
+          note_if_guard_off_actor(StateResolverGuard::FinalizedAdmission);
+          finalized_inflight_.release();
+        } else {
+          note_guard_skipped_after_stop(StateResolverGuard::FinalizedAdmission);
+        }
       };
       auto result = co_await finalize_blocks_inner(id, final_cert, final_candidate).wrap();
       auto waiters = std::move(state.waiters);
@@ -1065,6 +1138,17 @@ void StateResolver::register_in(td::actor::Runtime& runtime) {
 
 size_t unfinalized_crosschecks_for_test(UnfinalizedTransition kind) {
   return unfinalized_crosschecks[static_cast<size_t>(kind)].load(std::memory_order_relaxed);
+}
+
+StateResolverGuardCountsForTest state_resolver_guard_counts_for_test() {
+  auto& counters = guard_counters();
+  StateResolverGuardCountsForTest result;
+  result.teardowns = counters.teardowns.load(std::memory_order_acquire);
+  for (size_t i = 0; i < result.skipped.size(); ++i) {
+    result.skipped[i] = counters.skipped[i].load(std::memory_order_acquire);
+    result.off_actor[i] = counters.off_actor[i].load(std::memory_order_acquire);
+  }
+  return result;
 }
 
 }  // namespace tos::validator::consensus::simplex

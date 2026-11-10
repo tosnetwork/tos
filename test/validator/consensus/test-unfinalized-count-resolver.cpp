@@ -20,6 +20,11 @@
 //   backlog-sequence  Three chained certificates with the first injected attempts failing and
 //                     the backlog limit at one: prints every FinalizationBacklog event in order,
 //                     so the sequence can be compared with a build before the running count.
+//   marker-read-fails A finalization of X reads X's durable finalized marker; the test holds
+//                     that read and fails it from the driver's own thread, the way a read on a
+//                     database that has been closed fails on the database's thread. The
+//                     finalization must settle, and its settlement guard must run on the
+//                     resolver actor rather than on the thread that failed the read.
 
 #include <atomic>
 #include <cstdio>
@@ -47,8 +52,8 @@
 
 #include "block-auto.h"
 
-// The counter checks exist only in builds with the running count; the backlog-sequence mode
-// also builds against the tree before it, for comparison.
+// The counter checks and the resolver's guard counters exist only in builds with the running
+// count; the backlog-sequence mode also builds against the tree before it, for comparison.
 #if __has_include("consensus/simplex/counted-finalizations.h")
 #define A142_HAS_RUNNING_COUNT 1
 #endif
@@ -100,7 +105,7 @@ void emit(const std::string& line) {
   std::_Exit(code);
 }
 
-enum class Mode { DbHitOverwrite, BacklogSequence };
+enum class Mode { DbHitOverwrite, BacklogSequence, MarkerReadFails };
 Mode mode = Mode::DbHitOverwrite;
 
 using Promise = td::actor::StartedTask<td::Unit>::ExternalPromise;
@@ -198,7 +203,7 @@ class MemoryDb : public consensus::Db {
   }
 
   // The first read of the held key waits for the driver, and then reports the marker as
-  // present; every other read answers from the map at once.
+  // present, or fails if the driver fails it; every other read answers from the map at once.
   td::actor::Task<std::optional<td::BufferSlice>> get_latest(td::BufferSlice key) const override {
     std::optional<td::actor::StartedTask<td::Unit>> wait;
     {
@@ -450,6 +455,9 @@ class Driver : public td::actor::Actor {
     if (mode == Mode::DbHitOverwrite) {
       co_return co_await run_db_hit_overwrite();
     }
+    if (mode == Mode::MarkerReadFails) {
+      co_return co_await run_marker_read_fails();
+    }
     co_return co_await run_backlog_sequence();
   }
 
@@ -532,6 +540,70 @@ class Driver : public td::actor::Actor {
 #endif
   }
 
+  // A finalization whose finalized-marker read fails on a thread other than the resolver's.
+  // Settling is the barrier; the settlement guard must have run on the resolver actor, which
+  // it does only if the read's error is returned from the coroutine body instead of ending the
+  // coroutine on the thread that failed it.
+  td::actor::Task<> run_marker_read_fails() {
+#ifdef A142_HAS_RUNNING_COUNT
+    using simplex::StateResolverGuard;
+    auto X = make_candidate(1, FIRST_PARENT, std::nullopt, 0);
+    {
+      std::scoped_lock lock(observations.mutex);
+      observations.hold_marker_key =
+          create_serialize_tl_object<tos_api::consensus_simplex_db_key_finalizedBlock>(X->id.to_tl()).as_slice().str();
+    }
+    const auto before = simplex::state_resolver_guard_counts_for_test();
+    bus_.publish<simplex::FinalizationObserved>(X->id, make_cert(simplex::FinalizeVote{X->id}));
+    if (!co_await wait_until([] {
+          std::scoped_lock lock(observations.mutex);
+          return observations.held_marker_read.has_value();
+        })) {
+      finish(1, "A142_PRECONDITION_FAILED: the finalization never read X's finalized marker");
+    }
+    auto held = co_await query();
+    emit(PSTRING() << "A142_STEP marker read held started=" << held.finalizations_started
+                   << " settled=" << held.finalizations_settled);
+    if (held.finalizations_started == 0 || held.finalizations_settled != 0) {
+      finish(1, "A142_PRECONDITION_FAILED: the held read does not belong to one unsettled finalization");
+    }
+
+    // Failed here, on the driver's thread: the read's completion runs on this thread.
+    {
+      std::scoped_lock lock(observations.mutex);
+      observations.held_marker_read->set_error(td::Status::Error(ErrorCode::error, "db is closed"));
+      observations.held_marker_read.reset();
+    }
+    // The guard counts itself before it settles, so once settled == started its count is in.
+    std::optional<simplex::QueryFinalizationState::Result> settled;
+    auto deadline = td::Timestamp::in(STEP_TIMEOUT);
+    while (!settled.has_value()) {
+      auto state = co_await query();
+      if (state.finalizations_settled == state.finalizations_started) {
+        settled = state;
+        break;
+      }
+      if (deadline.is_in_past()) {
+        finish(1, PSTRING() << "A142_PRECONDITION_FAILED: the finalization never settled: started="
+                            << state.finalizations_started << " settled=" << state.finalizations_settled);
+      }
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.005));
+    }
+    const auto after = simplex::state_resolver_guard_counts_for_test();
+    const size_t settlement = static_cast<size_t>(StateResolverGuard::Settlement);
+    const size_t off_actor = after.off_actor[settlement] - before.off_actor[settlement];
+    emit(PSTRING() << "A142_RESULT started=" << settled->finalizations_started
+                   << " settled=" << settled->finalizations_settled << " settlement_off_actor=" << off_actor
+                   << " settlement_skipped=" << after.skipped[settlement] - before.skipped[settlement]);
+    if (off_actor != 0) {
+      finish(4, PSTRING() << "A142_FAILED: the settlement guard ran off the resolver actor " << off_actor << " times");
+    }
+    finish(0, "A142_OK marker-read-fails");
+#else
+    finish(2, "A142_UNSUPPORTED: marker-read-fails needs the guard counters");
+#endif
+  }
+
   // Three chained certificates, each finalized at once by the accepter but with the first
   // injected attempts failing (TOS_SIMPLEX_INJECT_TRANSIENT_FINALIZATION_FAILURES), and the
   // backlog limit at one (TOS_SIMPLEX_PENDING_FINALIZATIONS_MAX). Prints the backlog events in
@@ -581,8 +653,10 @@ int main(int argc, char** argv) {
     mode = Mode::DbHitOverwrite;
   } else if (name == "backlog-sequence") {
     mode = Mode::BacklogSequence;
+  } else if (name == "marker-read-fails") {
+    mode = Mode::MarkerReadFails;
   } else {
-    std::fprintf(stderr, "usage: %s db-hit-overwrite|backlog-sequence\n", argv[0]);
+    std::fprintf(stderr, "usage: %s db-hit-overwrite|backlog-sequence|marker-read-fails\n", argv[0]);
     return 2;
   }
   td::actor::Scheduler scheduler({2});

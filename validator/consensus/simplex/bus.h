@@ -475,6 +475,18 @@ struct ResolverStopCountsForTest {
 };
 ResolverStopCountsForTest candidate_resolver_stop_counts_for_test();
 
+// Test-only. What a state resolver's coroutine guards did, for the whole process, by guard:
+// `skipped` counts guards that found their group stopped and touched nothing, `off_actor` counts
+// cleanup that ran on a thread other than the resolver actor's and must stay zero, and
+// `teardowns` counts resolvers whose tear-down has finished.
+enum class StateResolverGuard : size_t { Settlement, StateAdmission, FinalizedAdmission, Count };
+struct StateResolverGuardCountsForTest {
+  size_t teardowns = 0;
+  std::array<size_t, static_cast<size_t>(StateResolverGuard::Count)> skipped{};
+  std::array<size_t, static_cast<size_t>(StateResolverGuard::Count)> off_actor{};
+};
+StateResolverGuardCountsForTest state_resolver_guard_counts_for_test();
+
 struct MetricCollector {
   static void register_in(td::actor::Runtime&);
 };

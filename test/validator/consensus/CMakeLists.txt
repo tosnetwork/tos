@@ -2,13 +2,24 @@ add_executable(test-consensus test-consensus.cpp)
 add_executable(test-health-actions test-health-actions.cpp)
 add_executable(test-health-ledger test-health-ledger.cpp)
 target_include_directories(test-health-ledger PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(test-health-ledger PRIVATE Threads::Threads)
 add_test(NAME c04-health-ledger COMMAND test-health-ledger)
+set_tests_properties(c04-health-ledger PROPERTIES TIMEOUT 30)
+# Off-actor ledger cleanup: one key's holders released on separate threads at once.
+add_test(NAME c04-health-ledger-concurrent COMMAND test-health-ledger concurrent)
+set_tests_properties(c04-health-ledger-concurrent PROPERTIES TIMEOUT 300)
 target_link_libraries(test-health-actions PRIVATE validator tos_validator tos_block adnl overlay dht tl_api
     tl-utils tos_crypto tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 tdactor tdutils)
 foreach(mode success intent-failure no-signer sign-failure signed-failure apply-false duplicate replay-signed replay-intent close-error
              skip finalize journal-suppressed finality-suppressed post-terminal lease replay-intent-sign-failure replay-intent-signed-failure)
   add_test(NAME c04-health-action-${mode} COMMAND test-health-actions ${mode})
   set_tests_properties(c04-health-action-${mode} PROPERTIES TIMEOUT 30)
+endforeach()
+# Production consumers cleaned up after stop: the Pool's stopped duplicate requests, and the
+# block producer's sleeping frame, whose cleanup must precede its session's close.
+foreach(mode pool-stopped-duplicate producer-stop-ordering)
+  add_test(NAME c04-health-action-${mode} COMMAND test-health-actions ${mode})
+  set_tests_properties(c04-health-action-${mode} PROPERTIES TIMEOUT 120)
 endforeach()
 if(USE_QUIC)
   add_executable(test-twostep-wiring ../../test-td-main.cpp test-twostep-wiring.cpp
@@ -317,6 +328,10 @@ add_test(NAME a142-unfinalized-count-backlog-sequence COMMAND test-unfinalized-c
 set_tests_properties(a142-unfinalized-count-backlog-sequence PROPERTIES TIMEOUT 60
     ENVIRONMENT "TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED=1;TOS_SIMPLEX_INJECT_TRANSIENT_FINALIZATION_FAILURES=4;TOS_SIMPLEX_PENDING_FINALIZATIONS_MAX=1"
     PASS_REGULAR_EXPRESSION "A142_BACKLOG_SEQUENCE \\(true,2\\)\\(false,1\\) pending_peak=3 pending_now=0\nA142_OK backlog-sequence")
+# A finalized-marker read that fails on another thread: the finalization settles on the resolver.
+add_test(NAME a142-unfinalized-count-marker-read-fails COMMAND test-unfinalized-count-resolver marker-read-fails)
+set_tests_properties(a142-unfinalized-count-marker-read-fails PROPERTIES TIMEOUT 60
+                     ENVIRONMENT "TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED=1")
 
 # A candidate that arrives after its slot is finalized, inside and outside the window in
 # which the candidate resolver still retains the slot; and the resolver's lifetime pin for a
@@ -364,7 +379,8 @@ target_link_libraries(test-candidate-payload-budget PRIVATE
 foreach(mode bound rehydrate pinned-resolve pinned-reply pinned-rehydrate reenforce oversized persist-cancelled persist-failed
              external-ref revoke-missing revoke-corrupt revoke-mismatch stale-read refill-missing refill-corrupt shared-budget concurrent
              session-exit session-overlap stop-cold-reads stop-slot-waiter stop-coalesced stop-bytes-guard
-             stop-notar-write external-slice cold-same-id cold-many)
+             stop-notar-write external-slice cold-same-id cold-many oversized-keeps-cache
+             unreachable-room-keeps-cache)
     add_test(NAME candidate-payload-budget-${mode} COMMAND test-candidate-payload-budget ${mode})
     set_tests_properties(candidate-payload-budget-${mode} PROPERTIES TIMEOUT 120)
 endforeach()
@@ -390,6 +406,10 @@ target_link_libraries(test-state-resolver-teardown PRIVATE
     tdutils
 )
 add_test(NAME c10-state-resolver-teardown COMMAND test-state-resolver-teardown)
+# The group stops while a state resolution is suspended inside a held candidate read.
+add_test(NAME c10-state-resolver-teardown-cold-read COMMAND test-state-resolver-teardown cold-read)
+# An outer bound, so a harness deadlock fails instead of hanging the job.
+set_tests_properties(c10-state-resolver-teardown c10-state-resolver-teardown-cold-read PROPERTIES TIMEOUT 120)
 
 add_executable(test-validator-manager-resource-policy test-validator-manager-resource-policy.cpp)
 target_link_libraries(test-validator-manager-resource-policy PRIVATE

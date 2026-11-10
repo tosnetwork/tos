@@ -15,6 +15,8 @@ archive-reader-no-package-sync
 archive-reader-no-package-repair
 archive-reader-no-node-writes
 archive-reader-open-failures
+archive-prune-add-block-writer-closed
+archive-prune-add-block-choose-package-failure
 streaming-boc-cell-bounds
 streaming-boc-valid-ondisk
 state-spool-amplification
@@ -30,3 +32,6 @@ decision-log-scale-reconcile-scaling
 decision-log-scale-full-restart
 decision-log-scale-retained
 test-candidate-broadcast-guard
+c04-health-ledger-concurrent
+c04-health-action-pool-stopped-duplicate
+c04-health-action-producer-stop-ordering
