@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <mutex>
 
 #include "core-health.h"
 #include "core-registry.h"
@@ -164,8 +165,46 @@ struct ConsensusStats {
 inline ConsensusStats consensus_stats;
 inline std::atomic<bool> consensus_enabled{false};
 
+// Test instrumentation, empty in production. It is called on the closing thread
+// when a session's observation close begins and when a leased bank is released,
+// before that bank can be leased again. It receives only the static bank
+// address, retains nothing and must not block.
+enum class LedgerLifecycle : std::uint8_t { SessionCloseEntered, BankReleased };
+using LedgerLifecycleHook = void (*)(LedgerLifecycle event, const void *bank) noexcept;
+inline std::atomic<LedgerLifecycleHook> ledger_lifecycle_hook_for_test{nullptr};
+inline void note_ledger_lifecycle(LedgerLifecycle event, const void *bank) noexcept {
+  if (auto hook = ledger_lifecycle_hook_for_test.load(std::memory_order_acquire); hook != nullptr)
+    hook(event, bank);
+}
+
 // Each lease is confined to one existing actor. Entries carry only scalar keys;
 // retired actors release the bank. No eviction can silently forget a logical key.
+//
+// Concurrency and lifetime contract:
+// - Banks are static, process-lifetime storage. Each bank's mutex guards its
+//   rows and retirement floor. The lock is held only around plain field
+//   accesses: never across a statistics update, a diagnostic, a callback or a
+//   suspension, and a thread holds at most one bank lock at a time.
+// - begin(), retire_before(), reserve() and reset() keep their existing
+//   serialization requirement: calls on one ActionLedger object come from its
+//   owning actor or from the owner's destruction, never concurrently. The bank
+//   lock does not make concurrent destruction of the ActionLedger object safe.
+// - An observation's entry operations (mark, decline, release) may run on any
+//   thread, concurrently with each other and with the owner's admission and
+//   retirement, because they touch only the static bank under its lock.
+// - Within a lease, a row is reclaimed only once it is closed, has no holders
+//   and lies below the retirement floor, so no row is reused under a holder.
+// - Every observation must finish before its ledger is reset and its bank is
+//   leased again; nothing here detects a handle that outlives its lease. The
+//   current callers guarantee it by ownership: each observation is a local of
+//   a coroutine frame running on its actor's executor, the executor keeps the
+//   actor object alive until the frame is destroyed, the actor's owning bus
+//   handle keeps the bus alive, and only the bus destructor closes the session
+//   and resets these ledgers. The frame's locals, the observation among them,
+//   are destroyed before its executor releases the actor. Switching such a
+//   frame to another executor, letting an observation escape its frame, or
+//   closing a session explicitly before its bus is destroyed breaks this
+//   precondition and requires revisiting this contract.
 class ActionLedger {
  public:
   struct Key {
@@ -183,44 +222,81 @@ class ActionLedger {
   };
   struct Bank {
     std::atomic<bool> leased{false};
+    std::mutex mutex;  // guards entries and retired_floor
     std::array<Entry, max_rows> entries{};
     std::uint64_t retired_floor = 0;
   };
-  struct Admission {
-    Entry *entry = nullptr;
-    bool fresh = false;
+  // Identifies one row of one bank. Only admission creates a non-empty handle,
+  // so its row is always in range. A default handle refers to nothing.
+  class Handle {
+   public:
+    Handle() = default;
+    explicit operator bool() const noexcept {
+      return bank_ != nullptr;
+    }
+    const Bank *bank() const noexcept {
+      return bank_;
+    }
+    std::size_t row() const noexcept {
+      return row_;
+    }
+
+   private:
+    friend class ActionLedger;
+    Handle(Bank *bank, std::size_t row) noexcept : bank_(bank), row_(row) {
+    }
+    Bank *bank_ = nullptr;
+    std::size_t row_ = 0;
   };
+  struct Admission {
+    Handle handle{};
+    bool fresh = false;
+    // The entry's declined state, read under the same lock as the admission.
+    bool tracking_declined = false;
+  };
+  // How an observation gives up its hold on an entry.
+  enum class Release : std::uint8_t {
+    Owner,      // records the terminal phase, sets terminal and closed, releases one holder
+    Duplicate,  // releases one holder without closing
+    Declined    // sets closed, leaves terminal false, releases one holder
+  };
+  struct Marked {
+    bool first = false, terminal = false;
+  };
+  struct Released {
+    bool first = false, underflow = false;
+    std::uint32_t seen = 0;
+  };
+
   Admission begin(const Key &key, ConsensusStats &stats) noexcept {
-    if (auto *bank = bank_.load(std::memory_order_acquire); bank != nullptr) {
-      if (key.slot < bank->retired_floor) {
+    auto *bank = bank_.load(std::memory_order_acquire);
+    if (bank == nullptr) {
+      stats.incomplete(key.action, IncompleteReason::LedgerCapacity);
+      return {};
+    }
+    Admission admission;
+    auto decision = Decision::Full;
+    {
+      const Guard guard(bank->mutex);
+      decision = admit(*bank, key, admission);
+    }
+    switch (decision) {
+      case Decision::Retired:
         stats.add(stats.retired_requests);
         return {};
-      }
-      Entry *free = nullptr;
-      for (auto &entry : bank->entries) {
-        if (entry.occupied && entry.closed && entry.holders == 0 && entry.key.slot < bank->retired_floor)
-          entry.occupied = false;
-        if (!entry.occupied) {
-          if (free == nullptr)
-            free = &entry;
-          continue;
-        }
-        if (entry.key == key) {
-          stats.add(stats.repeated_requests);
-          if (entry.holders == UINT32_MAX) {
-            stats.incomplete(key.action);
-            return {};
-          }
-          ++entry.holders;
-          return {&entry, false};
-        }
-      }
-      if (free != nullptr) {
-        *free = Entry{key, 0, 1, true, false};
-        return {free, true};
-      }
+      case Decision::Repeated:
+        stats.add(stats.repeated_requests);
+        return admission;
+      case Decision::Saturated:
+        stats.add(stats.repeated_requests);
+        stats.incomplete(key.action);
+        return {};
+      case Decision::Fresh:
+        return admission;
+      case Decision::Full:
+        stats.incomplete(key.action, IncompleteReason::LedgerCapacity);
+        return {};
     }
-    stats.incomplete(key.action, IncompleteReason::LedgerCapacity);
     return {};
   }
   // The caller supplies the actual finalization rejection boundary, never a
@@ -229,10 +305,11 @@ class ActionLedger {
     auto *bank = bank_.load(std::memory_order_acquire);
     if (bank == nullptr)
       return;
+    const Guard guard(bank->mutex);
     if (floor > bank->retired_floor)
       bank->retired_floor = floor;
     for (auto &entry : bank->entries)
-      if (entry.occupied && entry.closed && entry.holders == 0 && entry.key.slot < bank->retired_floor)
+      if (reclaimable(entry, bank->retired_floor))
         entry.occupied = false;
   }
   bool reserve(std::size_t index) noexcept {
@@ -244,16 +321,82 @@ class ActionLedger {
     bool free = false;
     if (!bank.leased.compare_exchange_strong(free, true, std::memory_order_acquire))
       return false;
-    for (auto &entry : bank.entries)
-      entry = {};
-    bank.retired_floor = 0;
+    {
+      const Guard guard(bank.mutex);
+      for (auto &entry : bank.entries)
+        entry = {};
+      bank.retired_floor = 0;
+    }
     bank_.store(&bank, std::memory_order_release);
     return true;
   }
   void reset() noexcept {
     if (auto *bank = bank_.exchange(nullptr, std::memory_order_acq_rel); bank != nullptr) {
+      note_ledger_lifecycle(LedgerLifecycle::BankReleased, bank);
       bank->leased.store(false, std::memory_order_release);
     }
+  }
+
+  // Entry operations. Each takes one bank lock around plain field accesses.
+  // An empty handle is a no-op.
+  static Marked mark(const Handle &handle, std::uint32_t bit) noexcept {
+    Marked result;
+    if (!handle)
+      return result;
+    const Guard guard(handle.bank_->mutex);
+    auto &entry = handle.bank_->entries[handle.row_];
+    result.first = (entry.seen & bit) == 0;
+    entry.seen |= bit;
+    result.terminal = entry.terminal;
+    return result;
+  }
+  static void decline(const Handle &handle) noexcept {
+    if (!handle)
+      return;
+    const Guard guard(handle.bank_->mutex);
+    handle.bank_->entries[handle.row_].tracking_declined = true;
+  }
+  static Released release(const Handle &handle, Release mode, std::uint32_t terminal_bit) noexcept {
+    Released result;
+    if (!handle)
+      return result;
+    const Guard guard(handle.bank_->mutex);
+    auto *entry = &handle.bank_->entries[handle.row_];
+    switch (mode) {
+      case Release::Owner:
+        result.first = (entry->seen & terminal_bit) == 0;
+        entry->seen |= terminal_bit;
+        entry->terminal = true;
+        entry->closed = true;
+        break;
+      case Release::Duplicate:
+        break;
+      case Release::Declined:
+        entry->closed = true;
+        break;
+    }
+    result.seen = entry->seen;
+    if (entry->holders != 0)
+      --entry->holders;
+    else
+      result.underflow = true;
+    return result;
+  }
+  // Read-only inspection under the bank lock, for tests.
+  const Bank *leased_bank() const noexcept {
+    return bank_.load(std::memory_order_acquire);
+  }
+  static bool inspect(const Bank *bank, std::size_t row, Entry &entry) noexcept {
+    if (bank == nullptr || row >= max_rows)
+      return false;
+    for (auto &candidate : banks_) {
+      if (&candidate != bank)
+        continue;
+      const Guard guard(candidate.mutex);
+      entry = candidate.entries[row];
+      return true;
+    }
+    return false;
   }
   ~ActionLedger() {
     reset();
@@ -263,6 +406,40 @@ class ActionLedger {
   ActionLedger &operator=(const ActionLedger &) = delete;
 
  private:
+  using Guard = std::lock_guard<std::mutex>;
+  enum class Decision : std::uint8_t { Retired, Repeated, Saturated, Fresh, Full };
+  static bool reclaimable(const Entry &entry, std::uint64_t floor) noexcept {
+    return entry.occupied && entry.closed && entry.holders == 0 && entry.key.slot < floor;
+  }
+  // Called with the bank lock held. Only the decision is returned; the caller
+  // updates statistics after unlocking.
+  static Decision admit(Bank &bank, const Key &key, Admission &admission) noexcept {
+    if (key.slot < bank.retired_floor)
+      return Decision::Retired;
+    std::size_t free = max_rows;
+    for (std::size_t row = 0; row < max_rows; ++row) {
+      auto &entry = bank.entries[row];
+      if (reclaimable(entry, bank.retired_floor))
+        entry.occupied = false;
+      if (!entry.occupied) {
+        if (free == max_rows)
+          free = row;
+        continue;
+      }
+      if (entry.key == key) {
+        if (entry.holders == UINT32_MAX)
+          return Decision::Saturated;
+        ++entry.holders;
+        admission = {Handle{&bank, row}, false, entry.tracking_declined};
+        return Decision::Repeated;
+      }
+    }
+    if (free == max_rows)
+      return Decision::Full;
+    bank.entries[free] = Entry{key, 0, 1, true, false};
+    admission = {Handle{&bank, free}, true, false};
+    return Decision::Fresh;
+  }
   static std::array<Bank, max_banks> banks_;
   std::atomic<Bank *> bank_{nullptr};
 };
@@ -271,6 +448,17 @@ static_assert(sizeof(ActionLedger::Bank) * ActionLedger::max_banks < 512 * 1024)
 
 // This token lives in the existing coroutine frame. Its destruction reports a
 // cancelled unfinished request, including teardown; it owns no business object.
+//
+// Lifetime: the constructor runs on the owning actor, where the ledger is live.
+// Afterwards the token never touches the actor, the bus or the ActionLedger
+// object. It touches only its own members, the statistics object, the static
+// ledger bank through its handle, the process-lifetime diagnostic producer and
+// the process-lifetime core registry. So observe(), finish() and destruction
+// may run on any thread, after stop, provided the statistics object outlives
+// the token (the global consensus_stats does), calls on one token are not
+// concurrent, and the token ends before its ledger is reset (the ActionLedger
+// contract above). Accounting is never skipped after stop: a request cancelled
+// by teardown still records its outcome and clears its pending row.
 class ActionObservation {
  public:
   ActionObservation(Action action, Origin origin = Origin::Live, ConsensusStats &stats = consensus_stats,
@@ -281,18 +469,21 @@ class ActionObservation {
       , active_(enabled.load(std::memory_order_relaxed) && consensus_enabled.load(std::memory_order_relaxed)) {
     if (active_ && ledger != nullptr && key != nullptr) {
       const auto admission = ledger->begin(*key, stats_);
-      entry_ = admission.entry;
-      active_ = entry_ != nullptr;
+      handle_ = admission.handle;
+      active_ = static_cast<bool>(handle_);
       duplicate_ = active_ && !admission.fresh;
-      if (entry_ != nullptr && entry_->tracking_declined)
+      declined_ = active_ && admission.tracking_declined;
+      if (declined_)
         active_ = false;
     }
     if (active_ && !duplicate_) {
       pending_slot_ = stats_.track_pending(action_, origin_);
       if (pending_slot_ == ConsensusStats::max_pending) {
         active_ = false;
-        if (entry_ != nullptr)
-          entry_->tracking_declined = true;
+        if (handle_) {
+          declined_ = true;
+          ActionLedger::decline(handle_);
+        }
         return;
       }
       observe(Phase::Requested);
@@ -304,38 +495,60 @@ class ActionObservation {
   void observe(Phase phase) noexcept {
     if (active_) {
       const auto bit = std::uint32_t{1} << static_cast<unsigned>(phase);
-      auto &seen = entry_ != nullptr ? entry_->seen : seen_;
-      if ((seen & bit) == 0) {
-        if (duplicate_ && entry_->terminal && phase != Phase::Completed && phase != Phase::IntentCancelled &&
+      // With a ledger row the entry's phase set deduplicates across every
+      // holder of the key; without one only this token's own phases are known.
+      bool first = (seen_ & bit) == 0;
+      bool terminal = false;
+      if (handle_) {
+        const auto marked = ActionLedger::mark(handle_, bit);
+        first = marked.first;
+        terminal = marked.terminal;
+      }
+      seen_ |= bit;
+      if (first) {
+        if (duplicate_ && terminal && phase != Phase::Completed && phase != Phase::IntentCancelled &&
             phase != Phase::SignedCommitCancelled && phase != Phase::ApplyFalse) {
           stats_.add(stats_.post_terminal_progress);
           stats_.incomplete(action_);
         }
         if (!stats_.add(stats_.phase(action_, origin_, phase)))
           stats_.incomplete(action_);
-        seen |= bit;
         diagnostic_phase(static_cast<std::uint8_t>(action_), static_cast<std::uint8_t>(origin_),
                          static_cast<std::uint8_t>(phase));
       }
       enqueued_ |= phase == Phase::BroadcastEnqueued || phase == Phase::CandidatePublished;
     }
   }
+  // Idempotent: the first call releases the entry and invalidates the handle.
   void finish(Phase terminal = Phase::Completed) noexcept {
-    if (!active_ && entry_ != nullptr && entry_->tracking_declined) {
-      entry_->closed = true;
-      release_entry();
+    if (!active_) {
+      // A declined observation still holds its entry until its frame ends.
+      if (declined_ && handle_)
+        release_handle(ActionLedger::Release::Declined, 0);
+      return;
     }
-    if (active_) {
-      if (duplicate_) {
-        release_entry();
-        active_ = false;
-        return;
+    if (duplicate_) {
+      release_handle(ActionLedger::Release::Duplicate, 0);
+      active_ = false;
+      return;
+    }
+    {
+      const auto bit = std::uint32_t{1} << static_cast<unsigned>(terminal);
+      bool first = (seen_ & bit) == 0;
+      if (handle_) {
+        const auto released = release_handle(ActionLedger::Release::Owner, bit);
+        first = released.first;
+        seen_ |= released.seen;
       }
-      observe(terminal);
-      if (entry_ != nullptr) {
-        entry_->terminal = true;
-        entry_->closed = true;
+      seen_ |= bit;
+      if (first) {
+        if (!stats_.add(stats_.phase(action_, origin_, terminal)))
+          stats_.incomplete(action_);
+        diagnostic_phase(static_cast<std::uint8_t>(action_), static_cast<std::uint8_t>(origin_),
+                         static_cast<std::uint8_t>(terminal));
       }
+    }
+    {
       Outcome outcome = Outcome::Unknown;
       FailureReason reason = FailureReason::Cancelled;
       bool failure = true;
@@ -387,8 +600,7 @@ class ActionObservation {
       }
       if (origin_ != Origin::Live) {
         auto replay_outcome = outcome;
-        if (terminal == Phase::Completed && ((entry_ != nullptr ? entry_->seen : seen_) &
-                                             (std::uint32_t{1} << static_cast<unsigned>(Phase::LocalApplied))))
+        if (terminal == Phase::Completed && (seen_ & (std::uint32_t{1} << static_cast<unsigned>(Phase::LocalApplied))))
           replay_outcome = Outcome::Enqueued;
         if (!stats_.add(stats_.replay_terminals[static_cast<std::size_t>(
                 action_)][static_cast<std::size_t>(origin_) - 1][static_cast<std::size_t>(replay_outcome)]))
@@ -405,7 +617,6 @@ class ActionObservation {
         stats_.subtract(stats_.inflight(action_, origin_));
       if (pending_slot_ < ConsensusStats::max_pending)
         stats_.pending_rows[pending_slot_].started_ns.store(0, std::memory_order_release);
-      release_entry();
       active_ = false;
     }
   }
@@ -414,24 +625,28 @@ class ActionObservation {
   }
   ActionObservation(const ActionObservation &) = delete;
   ActionObservation &operator=(const ActionObservation &) = delete;
+  // The ledger row this token holds; empty once released or never admitted.
+  const ActionLedger::Handle &ledger_handle() const noexcept {
+    return handle_;
+  }
 
  private:
-  void release_entry() noexcept {
-    if (entry_ != nullptr) {
-      if (entry_->holders != 0)
-        --entry_->holders;
-      else
-        stats_.incomplete(action_);
-      entry_ = nullptr;
-    }
+  // Releases the hold exactly once and invalidates the handle. Statistics are
+  // updated only after the bank lock is released.
+  ActionLedger::Released release_handle(ActionLedger::Release mode, std::uint32_t terminal_bit) noexcept {
+    const auto released = ActionLedger::release(handle_, mode, terminal_bit);
+    handle_ = {};
+    if (released.underflow)
+      stats_.incomplete(action_);
+    return released;
   }
   ConsensusStats &stats_;
+  ActionLedger::Handle handle_{};
+  std::size_t pending_slot_ = ConsensusStats::max_pending;
+  std::uint32_t seen_ = 0;
   Action action_;
   Origin origin_;
-  ActionLedger::Entry *entry_ = nullptr;
-  bool active_, pending_recorded_ = false, enqueued_ = false, duplicate_ = false;
-  std::uint32_t seen_ = 0;
-  std::size_t pending_slot_ = ConsensusStats::max_pending;
+  bool active_, pending_recorded_ = false, enqueued_ = false, duplicate_ = false, declined_ = false;
 };
 
 // True once at least one validator session has been observed through the
@@ -511,6 +726,8 @@ class SessionObservation {
     if (closed_)
       return;
     closed_ = true;
+    // Identifies the closing session by its proposal bank, null when none was leased.
+    note_ledger_lifecycle(LedgerLifecycle::SessionCloseEntered, proposal_ledger.leased_bank());
     const bool was_active = active_.load(std::memory_order_acquire);
     stop();
     vote_ledger.reset();

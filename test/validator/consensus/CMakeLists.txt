@@ -2,13 +2,24 @@ add_executable(test-consensus test-consensus.cpp)
 add_executable(test-health-actions test-health-actions.cpp)
 add_executable(test-health-ledger test-health-ledger.cpp)
 target_include_directories(test-health-ledger PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(test-health-ledger PRIVATE Threads::Threads)
 add_test(NAME c04-health-ledger COMMAND test-health-ledger)
+set_tests_properties(c04-health-ledger PROPERTIES TIMEOUT 30)
+# Off-actor ledger cleanup: one key's holders released on separate threads at once.
+add_test(NAME c04-health-ledger-concurrent COMMAND test-health-ledger concurrent)
+set_tests_properties(c04-health-ledger-concurrent PROPERTIES TIMEOUT 300)
 target_link_libraries(test-health-actions PRIVATE validator tos_validator tos_block adnl overlay dht tl_api
     tl-utils tos_crypto tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 tdactor tdutils)
 foreach(mode success intent-failure no-signer sign-failure signed-failure apply-false duplicate replay-signed replay-intent close-error
              skip finalize journal-suppressed finality-suppressed post-terminal lease replay-intent-sign-failure replay-intent-signed-failure)
   add_test(NAME c04-health-action-${mode} COMMAND test-health-actions ${mode})
   set_tests_properties(c04-health-action-${mode} PROPERTIES TIMEOUT 30)
+endforeach()
+# Production consumers cleaned up after stop: the Pool's stopped duplicate requests, and the
+# block producer's sleeping frame, whose cleanup must precede its session's close.
+foreach(mode pool-stopped-duplicate producer-stop-ordering)
+  add_test(NAME c04-health-action-${mode} COMMAND test-health-actions ${mode})
+  set_tests_properties(c04-health-action-${mode} PROPERTIES TIMEOUT 120)
 endforeach()
 if(USE_QUIC)
   add_executable(test-twostep-wiring ../../test-td-main.cpp test-twostep-wiring.cpp
