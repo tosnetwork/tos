@@ -610,12 +610,35 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     return state.payload_cached && payload_unused(state);
   }
 
+  // Whether dropping this resolver's droppable cached payloads of slots older than `id` could
+  // make room for `charge` more bytes: the free room of the allowance, read once, plus the
+  // charges of those payloads. The scan stops as soon as the room is enough. This is an
+  // optimistic estimate taken before anything is dropped. Another session can release room
+  // right after the charge is read, and the payload is then not cached although it would
+  // have fit; that is accepted, as everything already cached stays and the payload is still
+  // read from the database. A droppable payload does not always give its room back: one still
+  // held through a reference or a clone of its data elsewhere is retired and stays charged.
+  // So the estimate can be too high, and an eviction can still end without room.
+  bool room_may_be_reachable(const CandidateId& id, td::uint64 charge) const {
+    auto reachable = saturating_sub(payload_budget_.limit(), payload_budget_.charged_bytes());
+    for (auto it = cached_payloads_.begin(); it != cached_payloads_.end() && it->first < id && reachable < charge;
+         ++it) {
+      auto victim_state = state_.find(it->first);
+      if (victim_state != state_.end() && payload_droppable(victim_state->second)) {
+        reachable = saturating_add(reachable, it->second.charge);
+      }
+    }
+    return reachable >= charge;
+  }
+
   // Moves a finalized, durable payload nobody uses into the cache, as a compact copy charged
   // to the node-wide allowance. Room is made by dropping this resolver's own cached payloads
   // of older slots, oldest first; when that is not enough, because the rest of the allowance
   // is held by newer payloads, by other sessions or by retired allocations, the payload is
-  // not cached. Either way the resolver lets go of the original, and a later reader loads the
-  // durable record again.
+  // not cached. Nothing is dropped for a payload larger than the whole allowance, or when the
+  // free room and everything this resolver could drop are not enough by the estimate above.
+  // Either way the resolver lets go of the original, and a later reader loads the durable
+  // record again.
   void admit_payload(const CandidateId& id, CandidateState& state) {
     if (!payload_cacheable(id, state)) {
       return;
@@ -630,7 +653,13 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     }
     // Retired payloads whose last holder is gone give their room back first.
     payload_budget_.sweep();
-    while (!payload_budget_.try_reserve(charge)) {
+    bool reserved = payload_budget_.try_reserve(charge);
+    if (!reserved && !room_may_be_reachable(id, charge)) {
+      state.candidate_and_cert.candidate.reset();
+      ++not_cached_payloads_;
+      return;
+    }
+    while (!reserved) {
       auto victim = cached_payloads_.end();
       for (auto it = cached_payloads_.begin(); it != cached_payloads_.end() && it->first < id; ++it) {
         auto victim_state = state_.find(it->first);
@@ -646,6 +675,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       }
       auto victim_id = victim->first;
       drop_cached_payload(victim_id, state_.find(victim_id)->second);
+      reserved = payload_budget_.try_reserve(charge);
     }
     CachedPayloadAllocations allocations;
     auto compact = make_compact_candidate(original, allocations, payload_budget_);

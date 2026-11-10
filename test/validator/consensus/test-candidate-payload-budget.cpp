@@ -494,6 +494,7 @@ enum class Mode {
   ColdSameId,
   ColdMany,
   OversizedKeepsCache,
+  UnreachableRoomKeepsCache,
 };
 
 struct Node {
@@ -934,6 +935,8 @@ class Driver : public td::actor::Actor {
         co_return co_await run_cold_many();
       case Mode::OversizedKeepsCache:
         co_return co_await run_keeps_cache(false);
+      case Mode::UnreachableRoomKeepsCache:
+        co_return co_await run_keeps_cache(true);
     }
     co_return td::Unit{};
   }
@@ -1163,7 +1166,8 @@ class Driver : public td::actor::Actor {
   // Node 0's older payloads are cached and could be dropped to make room: durable, finalized,
   // unused, inside the retention window, and nothing dropped yet.
   td::actor::Task<Cache> require_droppable(std::vector<CandidateRef> older, std::string where) {
-    auto state = co_await check_bound(where);
+    co_await check_bound(where);
+    auto state = co_await cache(0);
     require(state.cached_payloads == older.size(), where + ": the older payloads are not all cached");
     require(state.dropped_payloads == 0, where + ": a payload was dropped before the test");
     require(state.pinned_bytes == 0 && state.cold_reads_in_flight == 0, where + ": a payload is in use");
@@ -1178,7 +1182,8 @@ class Driver : public td::actor::Actor {
 
   // The older payloads are still cached and nothing was dropped since `before`.
   td::actor::Task<Cache> require_kept(std::vector<CandidateRef> older, Cache before, std::string where) {
-    auto state = co_await check_bound(where);
+    co_await check_bound(where);
+    auto state = co_await cache(0);
     emit(PSTRING() << "BUDGET_KEPT " << where << " " << describe(state));
     require(state.cached_payloads == older.size(), where + ": an older cached payload was dropped");
     require(state.dropped_payloads == before.dropped_payloads, where + ": the drop count changed");
@@ -2145,6 +2150,7 @@ const ModeSpec MODES[] = {
     {"cold-same-id", Mode::ColdSameId, 1},
     {"cold-many", Mode::ColdMany, 1},
     {"oversized-keeps-cache", Mode::OversizedKeepsCache, 2},
+    {"unreachable-room-keeps-cache", Mode::UnreachableRoomKeepsCache, 4},
 };
 
 // Every candidate the modes build has the same shape, so one candidate's charge sets the

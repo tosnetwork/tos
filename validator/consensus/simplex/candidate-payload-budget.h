@@ -93,6 +93,11 @@ class CandidatePayloadBudget {
     return limit_;
   }
 
+  // The bytes charged at this moment. Other resolvers can change it right after it is read.
+  td::uint64 charged_bytes() const {
+    return charged_.load(std::memory_order_acquire);
+  }
+
   // Charges `charge` bytes if they fit under the limit together with everything already
   // charged. A refusal changes nothing.
   bool try_reserve(td::uint64 charge) {
