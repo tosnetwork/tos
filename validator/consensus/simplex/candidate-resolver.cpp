@@ -167,6 +167,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   }
 
   void start_up() override {
+    self_id_ = actor_id(this);
     params_ = owning_bus()->config.noncritical_params;
     load_from_db();
     LOG(INFO) << "Simplex candidate-resolver retention window: " << retention_policy_.retained_slots()
@@ -189,7 +190,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   void tear_down() override {
     // Nothing is cached after this point: an operation that still ends later must not charge
     // the node-wide allowance for an entry nobody will release.
-    stopped_ = true;
+    stopped_.store(true, std::memory_order_release);
     for (auto& [id, s] : state_) {
       for (auto &p : s.resolve_awaiters) {
         p.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
@@ -241,11 +242,20 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       SCOPE_EXIT {
         end_operation(id, state);
       };
+      // Errors are returned from the body, never left to propagate: an error that escapes an
+      // await ends this coroutine without resuming it, and the pin's guard then runs wherever
+      // the caller destroys the frame, on the caller's thread rather than on this actor.
       if (request->want_candidate_) {
-        co_await try_load_candidate_data_from_db(id, state, /*tracked=*/true, /*remote=*/true);
+        auto loaded = co_await try_load_candidate_data_from_db(id, state, /*tracked=*/true, /*remote=*/true).wrap();
+        if (loaded.is_error()) {
+          co_return loaded.move_as_error();
+        }
       }
       if (request->want_notar_) {
-        co_await try_load_notar_cert_from_db_or_bootstrap(id, state);
+        auto notar = co_await try_load_notar_cert_from_db_or_bootstrap(id, state).wrap();
+        if (notar.is_error()) {
+          co_return notar.move_as_error();
+        }
       }
       co_return ProtocolMessage{state.candidate_and_cert.to_tl(*request)};
     }
@@ -256,10 +266,16 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     // durable is still served from the database and bootstrap set.
     CandidateState state;
     if (request->want_candidate_) {
-      co_await try_load_candidate_data_from_db(id, state, /*tracked=*/false, /*remote=*/true);
+      auto loaded = co_await try_load_candidate_data_from_db(id, state, /*tracked=*/false, /*remote=*/true).wrap();
+      if (loaded.is_error()) {
+        co_return loaded.move_as_error();
+      }
     }
     if (request->want_notar_) {
-      co_await try_load_notar_cert_from_db_or_bootstrap(id, state);
+      auto notar = co_await try_load_notar_cert_from_db_or_bootstrap(id, state).wrap();
+      if (notar.is_error()) {
+        co_return notar.move_as_error();
+      }
     }
     co_return ProtocolMessage{state.candidate_and_cert.to_tl(*request)};
   }
@@ -274,7 +290,10 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
 
     if (state.candidate_and_cert.is_complete()) {
       if (!state.candidate_in_db && !state.candidate_stored) {
-        co_await store_candidate(request->id, state);
+        auto stored = co_await store_candidate(request->id, state).wrap();
+        if (stored.is_error()) {
+          co_return stored.move_as_error();
+        }
       }
       schedule_store_notar_cert(request->id, state);
       co_return state.candidate_and_cert.as_resolution_result();
@@ -292,7 +311,11 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       resolve_candidate_task(request->id, state).start().detach();
     }
 
-    co_await std::move(task);
+    // Returned from the body, as in the peer request above, so the pin is released here.
+    auto resolved = co_await std::move(task).wrap();
+    if (resolved.is_error()) {
+      co_return resolved.move_as_error();
+    }
     co_return state.candidate_and_cert.as_resolution_result();
   }
 
@@ -327,7 +350,11 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       state.store_awaiters.clear();
     }
 
-    co_await std::move(task);
+    // Returned from the body, as in the peer request above, so the pin is released here.
+    auto stored = co_await std::move(task).wrap();
+    if (stored.is_error()) {
+      co_return stored.move_as_error();
+    }
     co_return td::Unit{};
   }
 
@@ -421,7 +448,8 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   td::uint64 admitted_bytes_ = 0;
   td::uint64 dropped_payloads_ = 0;
   td::uint64 not_cached_payloads_ = 0;
-  bool stopped_ = false;
+  // Read by a pin released after the group stopped, off this actor, so it is atomic.
+  std::atomic<bool> stopped_{false};
 
   td::uint64 db_payload_reads_ = 0;
   td::uint64 db_payload_read_misses_ = 0;
@@ -436,6 +464,9 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   td::uint64 cold_read_bytes_in_flight_ = 0;
   td::uint64 cold_read_bytes_peak_ = 0;
   td::uint64 cold_reads_refused_ = 0;
+  td::actor::ActorId<> self_id_;
+  // Written by whatever thread releases a pin off this actor, so it is atomic.
+  std::atomic<td::uint64> pins_released_off_actor_{0};
   size_t remote_cold_read_waiters_ = 0;
   size_t remote_cold_read_waiters_peak_ = 0;
 
@@ -460,6 +491,17 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   // database read, a network response) or ended its use of one, so it is where the payload
   // is cached or let go, whatever path the operation took to get here.
   void end_operation(const CandidateId& id, CandidateState& state) {
+    // A coroutine suspended when the group stopped is finished by its caller once this actor
+    // is gone, and releases its pin there. Nothing runs on this actor any more by then and
+    // tear_down() has already returned every cached payload, so there is nothing to update.
+    if (stopped_.load(std::memory_order_acquire)) {
+      return;
+    }
+    if (!(td::actor::detail::get_current_actor_id() == self_id_)) {
+      // Every pin is released on this actor; one released anywhere else races with it.
+      pins_released_off_actor_.fetch_add(1, std::memory_order_relaxed);
+      LOG(ERROR) << "Simplex candidate-resolver: a pin on " << id << " was released off the resolver actor";
+    }
     CHECK(state.active_operations > 0);
     --state.active_operations;
     if (state.active_operations != 0) {
@@ -502,8 +544,8 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   // Whether a payload the entry holds outside the cache may now go to the cache. Unlike
   // can_evict(), the notarization certificate does not matter: it stays in the entry.
   bool payload_cacheable(const CandidateId& id, const CandidateState& state) const {
-    return !stopped_ && state.candidate_and_cert.candidate.has_value() && !state.payload_cached &&
-           slot_is_finalized(id.slot) && is_durable(state) && payload_unused(state);
+    return !stopped_.load(std::memory_order_acquire) && state.candidate_and_cert.candidate.has_value() &&
+           !state.payload_cached && slot_is_finalized(id.slot) && is_durable(state) && payload_unused(state);
   }
 
   // Whether a cached payload may be dropped to make room.
@@ -629,6 +671,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     result.cold_read_bytes_in_flight = cold_read_bytes_in_flight_;
     result.cold_read_bytes_peak = cold_read_bytes_peak_;
     result.cold_reads_refused = cold_reads_refused_;
+    result.pins_released_off_actor = pins_released_off_actor_.load(std::memory_order_relaxed);
     result.remote_cold_read_waiters = remote_cold_read_waiters_;
     result.remote_cold_read_waiters_peak = remote_cold_read_waiters_peak_;
     return result;
@@ -672,7 +715,10 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     cold_read_waiters_.push_back(std::move(promise));
     cold_read_waiters_peak_ = std::max(cold_read_waiters_peak_, cold_read_waiters_.size());
     // The slot is handed over by release_cold_read(), so the count does not change here.
-    co_await std::move(task);
+    auto granted = co_await std::move(task).wrap();
+    if (granted.is_error()) {
+      co_return granted.move_as_error();
+    }
     co_return td::Unit{};
   }
 
@@ -811,7 +857,8 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
                  << " cold_reads_refused=" << cache.cold_reads_refused
                  << " remote_cold_read_waiters=" << cache.remote_cold_read_waiters
                  << " remote_cold_read_waiters_peak=" << cache.remote_cold_read_waiters_peak
-                 << " node_live_over_charge=" << cache.node_live_over_charge;
+                 << " node_live_over_charge=" << cache.node_live_over_charge
+                 << " pins_released_off_actor=" << cache.pins_released_off_actor;
   }
 
   td::Status check_rate_limit(adnl::AdnlNodeIdShort src) {
@@ -887,7 +934,10 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       ++coalesced_reads_;
       auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
       state.load_awaiters.push_back(std::move(promise));
-      co_await std::move(task);
+      auto loaded = co_await std::move(task).wrap();
+      if (loaded.is_error()) {
+        co_return loaded.move_as_error();
+      }
       co_return state.candidate_and_cert.candidate.has_value();
     }
     // Refused before the read is marked as running, so no reader coalesced on it is left
@@ -909,7 +959,10 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
         }
       }
     };
-    co_await acquire_cold_read(remote);
+    auto slot = co_await acquire_cold_read(remote).wrap();
+    if (slot.is_error()) {
+      co_return slot.move_as_error();
+    }
     SCOPE_EXIT {
       release_cold_read();
     };
@@ -920,7 +973,11 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     const td::uint64 store_generation = state.store_generation;
     auto contents_key = create_serialize_tl_object<tl::db_key_candidate>(id.to_tl());
     ++db_payload_reads_;
-    auto data_r = co_await bus.db->get_latest(std::move(contents_key));
+    auto read = co_await bus.db->get_latest(std::move(contents_key)).wrap();
+    if (read.is_error()) {
+      co_return read.move_as_error();
+    }
+    auto data_r = read.move_as_ok();
     const bool superseded = state.store_generation != store_generation;
     if (!data_r.has_value()) {
       ++db_payload_read_misses_;

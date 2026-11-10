@@ -728,6 +728,12 @@ class Driver : public td::actor::Actor {
     require(aggregate <= last.node_limit, where + ": the sessions together hold more than the limit");
     require(last.node_accounting_errors == 0, where + ": the allowance saw an accounting error");
     require(last.node_live_over_charge == 0, where + ": a charge was returned while its allocation was alive");
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+      if (nodes_[i].running) {
+        auto state = co_await cache(i);
+        require(state.pins_released_off_actor == 0, where + ": a pin was released off the resolver actor");
+      }
+    }
     co_return last;
   }
 

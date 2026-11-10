@@ -218,6 +218,9 @@ struct QueryCandidatePayloadCache {
     td::uint64 cold_read_bytes_peak = 0;
     td::uint64 cold_reads_refused = 0;
     size_t remote_cold_read_waiters = 0;
+    // Pins on an entry released by code running off the resolver actor; always zero when every
+    // error is returned from the coroutine that holds the pin.
+    td::uint64 pins_released_off_actor = 0;
     size_t remote_cold_read_waiters_peak = 0;
 
     bool id_tracked = false;
