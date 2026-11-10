@@ -30,9 +30,22 @@
 // Expected: no manager request after the stop; the bus destructs (its stop promise
 // completes) within the deadline, which proves the resolver holds nothing. Before the
 // teardown fix, the waiters woken during tear_down re-registered themselves on the list
-// being walked: the resolver crashed there, or the bus never stopped.
+// being walked: the resolver crashed there, or the bus never stopped. Every guard the stop
+// reaches finds the group stopped and touches nothing: two settlement guards (the attempt and
+// the waiting finalization), the attempt's finalized admission and the resolution's state
+// admission, each counted separately; none runs off the resolver actor.
+//
+// Mode `cold-read` (no argument runs the scenario above): ResolveState(X) for a candidate the
+// candidate resolver does not hold, whose data read the database stand-in holds. The read is
+// held synchronously, on the thread that issues it, so the candidate resolver cannot handle
+// its own stop, and wake the resolution, before the state resolver has torn down. With the
+// resolution proved suspended inside ResolveCandidate and the state resolver proved torn down,
+// the read is released; the resolution's frame then ends on whatever thread completes it, and
+// its state-admission guard must find the group stopped.
 
+#include <array>
 #include <atomic>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -124,6 +137,29 @@ struct Observations {
 Observations observations;
 std::atomic<bool> stop_published{false};
 
+enum class Mode { Teardown, ColdRead };
+Mode mode = Mode::Teardown;
+
+// The cold-read mode's held candidate read.
+struct ColdReadHold {
+  std::mutex mutex;
+  std::condition_variable changed;
+  std::optional<std::string> key;
+  bool entered = false;
+  bool released = false;
+  bool finished = false;
+};
+
+ColdReadHold cold_read;
+
+void release_cold_read() {
+  {
+    std::scoped_lock lock(cold_read.mutex);
+    cold_read.released = true;
+  }
+  cold_read.changed.notify_all();
+}
+
 size_t held_finalizations() {
   std::scoped_lock lock(observations.mutex);
   return observations.held_finalizations;
@@ -207,7 +243,18 @@ class MemoryDb : public consensus::Db {
     return result;
   }
 
+  // The held cold read blocks the thread that issues it until the driver releases it, and then
+  // answers from the map.
   td::actor::Task<std::optional<td::BufferSlice>> get_latest(td::BufferSlice key) const override {
+    {
+      std::unique_lock lock(cold_read.mutex);
+      if (cold_read.key == key.as_slice().str() && !cold_read.entered) {
+        cold_read.entered = true;
+        emit("C10_COLD_READ_HELD");
+        cold_read.changed.wait(lock, [] { return cold_read.released; });
+        cold_read.finished = true;
+      }
+    }
     co_return get(key.as_slice());
   }
 
@@ -423,6 +470,50 @@ class Driver : public td::actor::Actor {
     return held.size();
   }
 
+  // Waits for every guard to reach its expected count of skips after the stop, then requires
+  // each count exactly and no guard run off the resolver actor. Each guard is reported apart:
+  // a total could be made up by one guard skipping twice while another never ran.
+  td::actor::Task<> check_guards(const simplex::StateResolverGuardCountsForTest& before,
+                                 std::array<size_t, static_cast<size_t>(simplex::StateResolverGuard::Count)> want) {
+    static const std::array<const char*, static_cast<size_t>(simplex::StateResolverGuard::Count)> names{
+        "settlement", "state_admission", "finalized_admission"};
+    auto skipped = [&](size_t i) {
+      return simplex::state_resolver_guard_counts_for_test().skipped[i] - before.skipped[i];
+    };
+    if (!co_await wait_until([&] {
+          for (size_t i = 0; i < want.size(); ++i) {
+            if (skipped(i) < want[i]) {
+              return false;
+            }
+          }
+          return true;
+        })) {
+      emit("C10_GUARDS the expected skips did not all arrive before the deadline");
+    }
+    // Anything still on its way in arrives within the settle time and is caught below.
+    co_await settle();
+    const auto after = simplex::state_resolver_guard_counts_for_test();
+    std::string counts;
+    for (size_t i = 0; i < want.size(); ++i) {
+      counts += PSTRING() << " " << names[i] << "=skipped:" << after.skipped[i] - before.skipped[i]
+                          << "/want:" << want[i] << ",off_actor:" << after.off_actor[i] - before.off_actor[i];
+    }
+    emit(PSTRING() << "C10_GUARDS teardowns=" << after.teardowns - before.teardowns << counts);
+    for (size_t i = 0; i < want.size(); ++i) {
+      if (after.off_actor[i] != before.off_actor[i]) {
+        finish(5, PSTRING() << "C10_FAILED: the " << names[i] << " guard ran off the resolver actor "
+                            << after.off_actor[i] - before.off_actor[i] << " times");
+      }
+    }
+    for (size_t i = 0; i < want.size(); ++i) {
+      if (after.skipped[i] - before.skipped[i] != want[i]) {
+        finish(5, PSTRING() << "C10_FAILED: the " << names[i] << " guard was skipped after the stop "
+                            << after.skipped[i] - before.skipped[i] << " times, " << want[i] << " expected");
+      }
+    }
+    co_return td::Unit{};
+  }
+
   void start_node() {
     std::vector<PeerValidator> validators;
     ValidatorWeight total_weight = 0;
@@ -490,6 +581,10 @@ class Driver : public td::actor::Actor {
 
   td::actor::Task<> run_inner() {
     start_node();
+    if (mode == Mode::ColdRead) {
+      co_return co_await run_cold_read();
+    }
+    const auto guards_before = simplex::state_resolver_guard_counts_for_test();
 
     // X: a full candidate on the genesis state, stored locally so the resolver finds it.
     auto X = make_candidate(1, FIRST_PARENT, std::nullopt, 0);
@@ -597,18 +692,112 @@ class Driver : public td::actor::Actor {
     if (after_stop != 0) {
       finish(4, "C10_FAILED: the resolver asked the manager for work after the stop");
     }
+    if (simplex::state_resolver_guard_counts_for_test().teardowns != guards_before.teardowns + 1) {
+      finish(1, "C10_PRECONDITION_FAILED: the state resolver was not torn down exactly once");
+    }
+    co_await check_guards(guards_before, {2, 1, 1});
     finish(0, "C10_TEARDOWN_OK");
+  }
+
+  // ResolveState(X) suspended inside ResolveCandidate on a held candidate read when the group
+  // stops; see the header.
+  td::actor::Task<> run_cold_read() {
+    // X is never stored: its data is read from the database, and that read is held.
+    auto X = make_candidate(1, FIRST_PARENT, std::nullopt, 0);
+    emit(PSTRING() << "C10_CHAIN X=" << id_str(X->id));
+    {
+      std::scoped_lock lock(cold_read.mutex);
+      cold_read.key =
+          create_serialize_tl_object<tos_api::consensus_simplex_db_key_candidate>(X->id.to_tl()).as_slice().str();
+    }
+    const auto before = simplex::state_resolver_guard_counts_for_test();
+
+    auto resolve = bus_.publish<simplex::ResolveState>(ParentId{X->id}).start();
+    if (!co_await wait_until([] {
+          std::scoped_lock lock(cold_read.mutex);
+          return cold_read.entered;
+        })) {
+      finish(1, "C10_PRECONDITION_FAILED: ResolveState never reached X's candidate read");
+    }
+    // The resolution has registered and started (one state waiter, nothing else running), and
+    // the only read of X's data comes from the ResolveCandidate it is waiting on.
+    if (!co_await wait_resolver([](const simplex::QueryFinalizationState::Result& r) {
+          return r.state_waiters == 1 && r.finalizations_started == 0 && r.inflight_waiters == 0;
+        })) {
+      finish(1, "C10_PRECONDITION_FAILED: the resolver does not report one suspended resolution");
+    }
+    if (resolve.await_ready()) {
+      finish(1, "C10_PRECONDITION_FAILED: ResolveState completed while its candidate read was held");
+    }
+    emit("C10_STEP ResolveState suspended inside ResolveCandidate on the held read");
+
+    stop_published.store(true);
+    bus_.publish<StopRequested>();
+    std::weak_ptr<simplex::Bus> weak_bus = bus_ptr_;
+    bus_ptr_.reset();
+    bus_ = {};
+    if (!co_await wait_until(
+            [&] { return simplex::state_resolver_guard_counts_for_test().teardowns == before.teardowns + 1; })) {
+      finish(1, "C10_PRECONDITION_FAILED: the state resolver was never torn down");
+    }
+    {
+      std::scoped_lock lock(cold_read.mutex);
+      if (cold_read.finished) {
+        finish(1, "C10_PRECONDITION_FAILED: the held read ended before the tear-down");
+      }
+    }
+    if (resolve.await_ready()) {
+      finish(1, "C10_PRECONDITION_FAILED: ResolveState completed before its held read was released");
+    }
+    emit("C10_STEP state resolver torn down with the resolution still suspended");
+
+    release_cold_read();
+    if (!co_await wait_until([&] { return resolve.await_ready(); })) {
+      finish(2, "C10_FAILED: ResolveState never completed after the held read was released");
+    }
+    auto resolved = co_await std::move(resolve).wrap();
+    if (resolved.is_ok()) {
+      finish(2, "C10_FAILED: ResolveState completed successfully after the stop");
+    }
+    emit(PSTRING() << "C10_RESOLVE_STATE " << resolved.error().to_string());
+    if (!co_await wait_until([&] { return bus_stopped_->await_ready(); })) {
+      emit(PSTRING() << "C10_BUS_STILL_ALIVE bus_refs=" << weak_bus.use_count());
+      finish(3, "C10_FAILED: the consensus bus did not stop after the held read was released");
+    }
+    co_await std::move(*bus_stopped_);
+    co_await settle();
+    {
+      std::scoped_lock lock(cold_read.mutex);
+      if (!cold_read.finished) {
+        finish(1, "C10_PRECONDITION_FAILED: the held read never finished");
+      }
+    }
+    if (!weak_bus.expired()) {
+      finish(3, "C10_FAILED: the bus object is still referenced after its stop promise completed");
+    }
+    co_await check_guards(before, {0, 1, 0});
+    finish(0, "C10_COLD_READ_OK");
   }
 };
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
   // A crash inside the resolver's teardown is one of the two outcomes this test guards
   // against; print where it happened.
   td::set_default_failure_signal_handler().ensure();
-  td::actor::Scheduler scheduler({2});
+  const std::string name = argc == 2 ? argv[1] : "";
+  if (name.empty()) {
+    mode = Mode::Teardown;
+  } else if (name == "cold-read") {
+    mode = Mode::ColdRead;
+  } else {
+    std::fprintf(stderr, "usage: %s [cold-read]\n", argv[0]);
+    return 2;
+  }
+  // The cold-read mode blocks one worker thread on the held read; the rest keep running.
+  td::actor::Scheduler scheduler({static_cast<size_t>(mode == Mode::ColdRead ? 4 : 2)});
   td::actor::ActorOwn<Driver> driver;
   scheduler.run_in_context([&] {
     driver = td::actor::create_actor<Driver>("c10-driver");
