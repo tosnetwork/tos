@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <array>
+
 #include "consensus/bus.h"
 
 #include "certificate.h"
@@ -460,6 +462,18 @@ enum class UnfinalizedTransition : size_t {
   Count,
 };
 size_t unfinalized_crosschecks_for_test(UnfinalizedTransition kind);
+
+// Test-only. Cleanup a candidate resolver's coroutine guards reach after its group stopped,
+// for the whole process, by kind of guard: `skipped` counts guards that found the group stopped
+// and touched nothing, `attempted` counts cleanup that reached actor state anyway and must stay
+// zero, and `teardowns` counts resolvers whose tear-down has finished.
+enum class ResolverStopCleanup : size_t { Pin, RemoteWait, Slot, Loader, Bytes, Count };
+struct ResolverStopCountsForTest {
+  size_t teardowns = 0;
+  std::array<size_t, static_cast<size_t>(ResolverStopCleanup::Count)> skipped{};
+  std::array<size_t, static_cast<size_t>(ResolverStopCleanup::Count)> attempted{};
+};
+ResolverStopCountsForTest candidate_resolver_stop_counts_for_test();
 
 struct MetricCollector {
   static void register_in(td::actor::Runtime&);

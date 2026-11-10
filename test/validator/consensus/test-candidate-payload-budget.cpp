@@ -33,6 +33,12 @@
 //   concurrent         rehydrations in two sessions released at once stay under it
 //   session-exit       a session that ends returns its charge once, keeps retired ones charged
 //   session-overlap    a new session gets no fresh allowance while the old one holds it
+//   stop-cold-reads    the group stops with two reads holding slots in held database reads
+//                      and a store waiting on a held write
+//   stop-slot-waiter   ... with every slot held and a local and a remote reader queued
+//   stop-coalesced     ... with readers waiting on another reader's read and on a resolve
+//   stop-bytes-guard   ... while a repair write is held with the read buffer counted
+//   stop-notar-write   ... while a notarization certificate write is held
 //   cold-same-id       concurrent cold reads of one candidate are one database read
 //   cold-many          concurrent cold reads of many candidates are bounded and never wrong
 
@@ -128,14 +134,66 @@ bool is_key_of(td::Slice key, td::int32 constructor) {
   return id == constructor;
 }
 
+// Holds database operations until the driver releases them. A held operation waits on a promise
+// the driver completes from its own actor, so it stays pending however the resolver that issued
+// it ends, and completes when released even after that resolver is gone, as a real database
+// write or read does.
+struct Gate {
+  std::mutex mutex;
+  bool held = false;
+  std::vector<td::Promise<td::Unit>> pending;
+  std::atomic<int> entered{0};
+
+  void hold() {
+    std::scoped_lock lock(mutex);
+    held = true;
+  }
+  // The operation waits on the returned task, or does not wait at all.
+  std::optional<td::actor::StartedTask<td::Unit>> enter() {
+    std::scoped_lock lock(mutex);
+    if (!held) {
+      return std::nullopt;
+    }
+    auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
+    pending.push_back(std::move(promise));
+    entered.fetch_add(1);
+    return std::move(task);
+  }
+  int waiting() {
+    std::scoped_lock lock(mutex);
+    return static_cast<int>(pending.size());
+  }
+  void release() {
+    std::vector<td::Promise<td::Unit>> released;
+    {
+      std::scoped_lock lock(mutex);
+      held = false;
+      released = std::exchange(pending, {});
+    }
+    for (auto& p : released) {
+      p.set_value(td::Unit{});
+    }
+  }
+};
+
 // The database records of one node, with the controls the driver uses on them.
 struct MemoryStorage {
   std::mutex mutex;
   std::map<td::BufferSlice, td::BufferSlice> map;
-  std::atomic<bool> hold_payload_reads{false};
-  std::atomic<bool> hold_notar_reads{false};
-  std::atomic<int> held_reads{0};
+  Gate payload_reads_gate;
+  Gate notar_reads_gate;
+  Gate payload_writes_gate;
+  Gate notar_writes_gate;
   std::atomic<int> payload_reads{0};
+  // Held operations whose coroutine frame has been created and destroyed. A frame is destroyed
+  // on completion or, once its resolver is gone, wherever the completion is routed; equal counts
+  // mean no held operation is left anywhere.
+  std::atomic<int> held_ops_started{0};
+  std::atomic<int> held_ops_finished{0};
+
+  int held_reads() {
+    return payload_reads_gate.waiting() + notar_reads_gate.waiting();
+  }
   // 0: writes succeed; 1: candidate writes are cancelled; 2: candidate writes fail.
   std::atomic<int> fail_payload_writes{0};
 
@@ -182,27 +240,57 @@ class MemoryDb : public consensus::Db {
 
   // The value is taken when the read starts: a held read returns what the record was then,
   // as a read that was issued before a later write does.
+  // Ends with the held operation's frame, wherever that is destroyed. It owns the storage, so it
+  // stays valid after the bus and this database are gone.
+  struct HeldOperation {
+    std::shared_ptr<MemoryStorage> storage;
+    explicit HeldOperation(std::shared_ptr<MemoryStorage> s) : storage(std::move(s)) {
+      storage->held_ops_started.fetch_add(1);
+    }
+    HeldOperation(const HeldOperation&) = delete;
+    HeldOperation& operator=(const HeldOperation&) = delete;
+    ~HeldOperation() {
+      storage->held_ops_finished.fetch_add(1);
+    }
+  };
+
   td::actor::Task<std::optional<td::BufferSlice>> get_latest(td::BufferSlice key) const override {
-    auto value = storage_->get(key.as_slice());
+    auto storage = storage_;
+    auto value = storage->get(key.as_slice());
     const bool payload = is_key_of(key.as_slice(), tos_api::consensus_simplex_db_key_candidate::ID);
     const bool notar = is_key_of(key.as_slice(), tos_api::consensus_simplex_db_key_candidateResolver_notarCert::ID);
     if (payload) {
-      storage_->payload_reads.fetch_add(1);
+      storage->payload_reads.fetch_add(1);
     }
-    auto& hold = payload ? storage_->hold_payload_reads : storage_->hold_notar_reads;
-    if ((payload || notar) && hold.load()) {
-      storage_->held_reads.fetch_add(1);
-      while (hold.load()) {
-        co_await td::actor::coro_sleep(td::Timestamp::in(0.002));
+    if (payload || notar) {
+      auto wait = (payload ? storage->payload_reads_gate : storage->notar_reads_gate).enter();
+      if (wait.has_value()) {
+        HeldOperation held{storage};
+        auto released = co_await std::move(*wait).wrap();
+        if (released.is_error()) {
+          co_return released.move_as_error();
+        }
       }
-      storage_->held_reads.fetch_sub(1);
     }
     co_return std::move(value);
   }
 
   td::actor::Task<> set(td::BufferSlice key, td::BufferSlice value) override {
-    if (is_key_of(key.as_slice(), tos_api::consensus_simplex_db_key_candidate::ID)) {
-      int mode = storage_->fail_payload_writes.load();
+    const bool payload = is_key_of(key.as_slice(), tos_api::consensus_simplex_db_key_candidate::ID);
+    const bool notar = is_key_of(key.as_slice(), tos_api::consensus_simplex_db_key_candidateResolver_notarCert::ID);
+    auto storage = storage_;
+    if (payload || notar) {
+      auto wait = (payload ? storage->payload_writes_gate : storage->notar_writes_gate).enter();
+      if (wait.has_value()) {
+        HeldOperation held{storage};
+        auto released = co_await std::move(*wait).wrap();
+        if (released.is_error()) {
+          co_return released.move_as_error();
+        }
+      }
+    }
+    if (payload) {
+      int mode = storage->fail_payload_writes.load();
       if (mode == 1) {
         co_return td::Status::Error(ErrorCode::cancelled, "candidate write cancelled by the test");
       }
@@ -210,7 +298,7 @@ class MemoryDb : public consensus::Db {
         co_return td::Status::Error(ErrorCode::error, "candidate write failed by the test");
       }
     }
-    storage_->put(key.as_slice(), value.as_slice());
+    storage->put(key.as_slice(), value.as_slice());
     co_return td::Unit{};
   }
 
@@ -376,6 +464,11 @@ enum class Mode {
   Concurrent,
   SessionExit,
   SessionOverlap,
+  StopColdReads,
+  StopSlotWaiter,
+  StopCoalesced,
+  StopBytesGuard,
+  StopNotarWrite,
   ColdSameId,
   ColdMany,
 };
@@ -392,6 +485,9 @@ struct Node {
 // The outcome of a request the driver started without waiting for it.
 struct Outcome {
   bool done = false;
+  // How many times the request completed, and the error code it completed with.
+  int completions = 0;
+  int code = 0;
   bool ok = false;
   bool matched = false;
   std::string error;
@@ -674,7 +770,9 @@ class Driver : public td::actor::Actor {
                                       bool want_notar = false) {
     auto result = co_await peer_request(node, expected, want_notar).wrap();
     outcome->done = true;
+    ++outcome->completions;
     if (result.is_error()) {
+      outcome->code = result.error().code();
       outcome->error = result.error().to_string();
       co_return td::Unit{};
     }
@@ -689,13 +787,28 @@ class Driver : public td::actor::Actor {
   td::actor::Task<> resolve_into(size_t node, CandidateRef expected, std::shared_ptr<Outcome> outcome) {
     auto result = co_await nodes_.at(node).bus.publish<simplex::ResolveCandidate>(expected->id).wrap();
     outcome->done = true;
+    ++outcome->completions;
     if (result.is_error()) {
+      outcome->code = result.error().code();
       outcome->error = result.error().to_string();
       co_return td::Unit{};
     }
     outcome->ok = true;
     outcome->candidate = result.ok().candidate;
     outcome->matched = same_contents(outcome->candidate, expected);
+    co_return td::Unit{};
+  }
+
+  td::actor::Task<> store_into(size_t node, CandidateRef candidate, std::shared_ptr<Outcome> outcome) {
+    auto result = co_await nodes_.at(node).bus.publish<simplex::StoreCandidate>(candidate).wrap();
+    outcome->done = true;
+    ++outcome->completions;
+    if (result.is_error()) {
+      outcome->code = result.error().code();
+      outcome->error = result.error().to_string();
+      co_return td::Unit{};
+    }
+    outcome->ok = true;
     co_return td::Unit{};
   }
 
@@ -778,6 +891,16 @@ class Driver : public td::actor::Actor {
         co_return co_await run_session_exit();
       case Mode::SessionOverlap:
         co_return co_await run_session_overlap();
+      case Mode::StopColdReads:
+        co_return co_await run_stop_cold_reads();
+      case Mode::StopSlotWaiter:
+        co_return co_await run_stop_slot_waiter();
+      case Mode::StopCoalesced:
+        co_return co_await run_stop_coalesced();
+      case Mode::StopBytesGuard:
+        co_return co_await run_stop_bytes_guard();
+      case Mode::StopNotarWrite:
+        co_return co_await run_stop_notar_write();
       case Mode::ColdSameId:
         co_return co_await run_cold_same_id();
       case Mode::ColdMany:
@@ -858,10 +981,10 @@ class Driver : public td::actor::Actor {
     auto entry = co_await cache(0, chain[0]->id);
     require(entry.id_tracked && !entry.id_payload_resident, "slot 0 was resident before the test");
 
-    nodes_[0].storage->hold_payload_reads = true;
+    nodes_[0].storage->payload_reads_gate.hold();
     auto outcome = std::make_shared<Outcome>();
     resolve_into(0, chain[0], outcome).start().detach();
-    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads.load() == 1; })) {
+    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads() == 1; })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: the resolve never reached its database read");
     }
     // While the resolve is suspended, its slot and the newer ones are finalized, and the newest
@@ -869,7 +992,7 @@ class Driver : public td::actor::Actor {
     co_await finalize(0, chain[2]);
     auto during = co_await cache(0, chain[2]->id);
     require(during.id_payload_cached, "the newer payload was not cached");
-    nodes_[0].storage->hold_payload_reads = false;
+    nodes_[0].storage->payload_reads_gate.release();
     if (!co_await wait_until([&] { return outcome->done; })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: the resolve never returned");
     }
@@ -898,15 +1021,15 @@ class Driver : public td::actor::Actor {
     auto entry = co_await cache(0, t->id);
     require(!entry.id_payload_resident, "slot 0 was resident before the test");
 
-    nodes_[0].storage->hold_notar_reads = true;
+    nodes_[0].storage->notar_reads_gate.hold();
     auto first = std::make_shared<Outcome>();
     peer_request_into(0, t, first, /*want_notar=*/true).start().detach();
-    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads.load() == 1; })) {
+    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads() == 1; })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: the first request never reached its certificate read");
     }
     co_await must_serve(0, t);
     auto during = co_await cache(0, t->id);
-    nodes_[0].storage->hold_notar_reads = false;
+    nodes_[0].storage->notar_reads_gate.release();
     if (!co_await wait_until([&] { return first->done; })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: the first request never returned");
     }
@@ -931,10 +1054,10 @@ class Driver : public td::actor::Actor {
     auto entry = co_await cache(0, chain[1]->id);
     require(entry.id_payload_cached, "slot 1 was not cached");
 
-    nodes_[0].storage->hold_notar_reads = true;
+    nodes_[0].storage->notar_reads_gate.hold();
     auto outcome = std::make_shared<Outcome>();
     peer_request_into(0, chain[1], outcome, /*want_notar=*/true).start().detach();
-    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads.load() == 1; })) {
+    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads() == 1; })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: the request never reached its certificate read");
     }
     co_await store(0, chain[2]);
@@ -942,7 +1065,7 @@ class Driver : public td::actor::Actor {
     auto during = co_await cache(0, chain[1]->id);
     emit(PSTRING() << "BUDGET_PINNED_REPLY during resident=" << during.id_payload_resident
                    << " cached=" << during.id_payload_cached);
-    nodes_[0].storage->hold_notar_reads = false;
+    nodes_[0].storage->notar_reads_gate.release();
     if (!co_await wait_until([&] { return outcome->done; })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: the request never returned");
     }
@@ -1056,10 +1179,10 @@ class Driver : public td::actor::Actor {
 
     // A peer request pins A (no certificate in memory, its read held), so the room C needs
     // can only come from B, which the test still holds.
-    nodes_[0].storage->hold_notar_reads = true;
+    nodes_[0].storage->notar_reads_gate.hold();
     auto pin = std::make_shared<Outcome>();
     peer_request_into(0, a, pin, /*want_notar=*/true).start().detach();
-    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads.load() == 1; })) {
+    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads() == 1; })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: the request on A never reached its certificate read");
     }
     co_await finalize(0, c);
@@ -1070,7 +1193,7 @@ class Driver : public td::actor::Actor {
     require(same_contents(external, b), "the external reference no longer holds the contents");
     require(dropped.node_retired_payloads == 1 && dropped.node_retired_bytes == charge(b),
             "the dropped payload held elsewhere is not charged as retired");
-    nodes_[0].storage->hold_notar_reads = false;
+    nodes_[0].storage->notar_reads_gate.release();
     if (!co_await wait_until([&] { return pin->done; })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: the request on A never returned");
     }
@@ -1148,15 +1271,15 @@ class Driver : public td::actor::Actor {
     co_await limit_in_charges(chain, 1);
     const auto& a = chain[0];
     notarize(0, a);
-    nodes_[0].storage->hold_payload_reads = true;
+    nodes_[0].storage->payload_reads_gate.hold();
     auto outcome = std::make_shared<Outcome>();
     resolve_into(0, a, outcome).start().detach();
-    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads.load() == 1; })) {
+    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads() == 1; })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: the resolve never reached its database read");
     }
     co_await store(0, a);
     require(persisted(nodes_[0], a), "the store did not write the record");
-    nodes_[0].storage->hold_payload_reads = false;
+    nodes_[0].storage->payload_reads_gate.release();
     if (!co_await wait_until([&] { return outcome->done; })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: the resolve never returned");
     }
@@ -1238,21 +1361,20 @@ class Driver : public td::actor::Actor {
       }
     }
     require(cold.size() >= 4, "too few dropped payloads to rehydrate");
-    nodes_[0].storage->hold_payload_reads = true;
-    nodes_[1].storage->hold_payload_reads = true;
+    nodes_[0].storage->payload_reads_gate.hold();
+    nodes_[1].storage->payload_reads_gate.hold();
     std::vector<std::shared_ptr<Outcome>> outcomes;
     for (auto& [node, candidate] : cold) {
       outcomes.push_back(std::make_shared<Outcome>());
       peer_request_into(node, candidate, outcomes.back()).start().detach();
     }
     const int expected_held = static_cast<int>(cold.size());
-    if (!co_await wait_until([&] {
-          return nodes_[0].storage->held_reads.load() + nodes_[1].storage->held_reads.load() == expected_held;
-        })) {
+    if (!co_await wait_until(
+            [&] { return nodes_[0].storage->held_reads() + nodes_[1].storage->held_reads() == expected_held; })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: the rehydrations did not all reach their reads");
     }
-    nodes_[0].storage->hold_payload_reads = false;
-    nodes_[1].storage->hold_payload_reads = false;
+    nodes_[0].storage->payload_reads_gate.release();
+    nodes_[1].storage->payload_reads_gate.release();
     if (!co_await wait_until(
             [&] { return std::all_of(outcomes.begin(), outcomes.end(), [](const auto& o) { return o->done; }); })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: a rehydration never returned");
@@ -1287,10 +1409,10 @@ class Driver : public td::actor::Actor {
     auto oldest = co_await cache(0, first.front()->id);
     require(!oldest.id_payload_resident, "the oldest payload of the first session was not dropped");
 
-    nodes_[0].storage->hold_payload_reads = true;
+    nodes_[0].storage->payload_reads_gate.hold();
     auto cold = std::make_shared<Outcome>();
     peer_request_into(0, first.front(), cold).start().detach();
-    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads.load() == 1; })) {
+    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads() == 1; })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: the cold read never started");
     }
     auto destroyed = nodes_[0].destroyed;
@@ -1299,7 +1421,7 @@ class Driver : public td::actor::Actor {
     nodes_[0].bus_ptr.reset();
     nodes_[0].running = false;
     co_await settle(0.2);
-    nodes_[0].storage->hold_payload_reads = false;
+    nodes_[0].storage->payload_reads_gate.release();
     if (!co_await wait_until([&] { return destroyed->load(); })) {
       finish(3, "BUDGET_FAILED: the stopped session was never released");
     }
@@ -1349,6 +1471,286 @@ class Driver : public td::actor::Actor {
     finish(0, "BUDGET_OVERLAP_OK");
   }
 
+  // ---- Stopping a group while its resolver has database work pending ----
+
+  // Guards that must find their group stopped and skip their cleanup, by kind.
+  struct StopExpectation {
+    size_t pins = 0;
+    size_t slots = 0;
+    size_t loaders = 0;
+    size_t remote_waits = 0;
+    size_t bytes = 0;
+  };
+
+  static size_t kind_index(simplex::ResolverStopCleanup kind) {
+    return static_cast<size_t>(kind);
+  }
+
+  td::actor::Task<size_t> pins_on(size_t node, const std::vector<CandidateRef>& candidates) {
+    size_t pins = 0;
+    for (const auto& candidate : candidates) {
+      auto entry = co_await cache(node, candidate->id);
+      pins += entry.id_active_operations;
+    }
+    co_return pins;
+  }
+
+  // Stops the node while held database operations are pending, and waits for the resolver's
+  // tear-down while they still are. Then releases them from here, as a database completes its
+  // work whether or not the resolver that asked is still there, and waits until every held
+  // operation's frame, every request and the bus itself are gone. Every guard must have found
+  // its group stopped and skipped its cleanup, exactly as many of each kind as were live at the
+  // stop, none may have reached actor state, and every waiter must have completed once, with
+  // `cancelled`.
+  td::actor::Task<> stop_with_pending(size_t index, StopExpectation expected,
+                                      std::vector<std::shared_ptr<Outcome>> outcomes, const std::string& where) {
+    auto& node = nodes_.at(index);
+    auto storage = node.storage;
+    auto destroyed = node.destroyed;
+    const int pending = storage->held_ops_started.load() - storage->held_ops_finished.load();
+    if (pending <= 0) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: " + where + ": no database operation is pending at the stop");
+    }
+    const auto before = simplex::candidate_resolver_stop_counts_for_test();
+    node.bus.publish<StopRequested>();
+    node.bus = {};
+    node.bus_ptr.reset();
+    node.running = false;
+    if (!co_await wait_until(
+            [&] { return simplex::candidate_resolver_stop_counts_for_test().teardowns == before.teardowns + 1; })) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: " + where + ": the resolver was never torn down");
+    }
+    const int pending_after_teardown = storage->held_ops_started.load() - storage->held_ops_finished.load();
+    emit(PSTRING() << "BUDGET_STOP " << where << " torn_down pending_db_ops=" << pending_after_teardown);
+    if (pending_after_teardown != pending) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: " + where + ": a held operation ended before the tear-down");
+    }
+
+    storage->payload_reads_gate.release();
+    storage->notar_reads_gate.release();
+    storage->payload_writes_gate.release();
+    storage->notar_writes_gate.release();
+
+    const std::array<size_t, 5> want{expected.pins, expected.remote_waits, expected.slots, expected.loaders,
+                                     expected.bytes};
+    auto skipped_delta = [&](size_t i) {
+      return simplex::candidate_resolver_stop_counts_for_test().skipped[i] - before.skipped[i];
+    };
+    auto all_skipped = [&] {
+      for (size_t i = 0; i < want.size(); ++i) {
+        if (skipped_delta(i) < want[i]) {
+          return false;
+        }
+      }
+      return true;
+    };
+    bool cleaned = co_await wait_until([&] {
+      return storage->held_ops_finished.load() == storage->held_ops_started.load() && destroyed->load() &&
+             std::all_of(outcomes.begin(), outcomes.end(), [](const auto& o) { return o->done; }) && all_skipped();
+    });
+    const auto after = simplex::candidate_resolver_stop_counts_for_test();
+    std::string counts;
+    for (size_t i = 0; i < want.size(); ++i) {
+      counts += PSTRING() << " kind" << i << "=skipped:" << after.skipped[i] - before.skipped[i] << "/want:" << want[i]
+                          << ",attempted:" << after.attempted[i] - before.attempted[i];
+    }
+    emit(PSTRING() << "BUDGET_STOP " << where << " cleaned=" << cleaned
+                   << " db_ops=" << storage->held_ops_finished.load() << "/" << storage->held_ops_started.load()
+                   << " bus_destroyed=" << destroyed->load() << counts);
+    for (size_t i = 0; i < want.size(); ++i) {
+      require(after.attempted[i] == before.attempted[i],
+              PSTRING() << where << ": cleanup of kind " << i << " reached actor state after the stop");
+    }
+    require(cleaned, where + ": a frame, request or the bus outlived the stop");
+    for (size_t i = 0; i < want.size(); ++i) {
+      require(after.skipped[i] - before.skipped[i] == want[i],
+              PSTRING() << where << ": " << after.skipped[i] - before.skipped[i] << " guards of kind " << i
+                        << " ran after the stop, " << want[i] << " expected");
+    }
+    for (size_t i = 0; i < outcomes.size(); ++i) {
+      const auto& o = outcomes[i];
+      emit(PSTRING() << "BUDGET_STOP " << where << " waiter " << i << " completions=" << o->completions
+                     << " code=" << o->code << " error=" << o->error);
+      require(o->completions == 1, PSTRING()
+                                       << where << ": waiter " << i << " completed " << o->completions << " times");
+      require(!o->ok && o->code == ErrorCode::cancelled,
+              PSTRING() << where << ": waiter " << i << " did not end with cancelled: " << o->error);
+    }
+    auto budget = simplex::node_candidate_payload_budget().snapshot();
+    require(budget.accounting_errors == 0 && budget.live_over_charge == 0,
+            where + ": the allowance saw an accounting error at the stop");
+    node.runtime.reset();
+    co_return td::Unit{};
+  }
+
+  // Two local resolves of distinct dropped candidates, each holding a read slot in its database
+  // read, and two stores of a third candidate: the first in its held write, the second waiting
+  // on it.
+  td::actor::Task<> run_stop_cold_reads() {
+    auto chain = make_chain(nodes_[0], 4);
+    co_await limit_in_charges(chain, 1);
+    co_await store_and_finalize(0, std::vector<CandidateRef>(chain.begin(), chain.begin() + 3));
+    const auto& a = chain[0];
+    const auto& b = chain[1];
+    const auto& d = chain[3];
+    nodes_[0].storage->payload_reads_gate.hold();
+    nodes_[0].storage->payload_writes_gate.hold();
+    std::vector<std::shared_ptr<Outcome>> outcomes;
+    for (const auto& target : {a, b}) {
+      outcomes.push_back(std::make_shared<Outcome>());
+      resolve_into(0, target, outcomes.back()).start().detach();
+    }
+    for (int i = 0; i < 2; ++i) {
+      outcomes.push_back(std::make_shared<Outcome>());
+      store_into(0, d, outcomes.back()).start().detach();
+    }
+    if (!co_await wait_cache(0, [&](const Cache& c) {
+          return c.cold_reads_in_flight == 2 && nodes_[0].storage->payload_reads_gate.waiting() == 2 &&
+                 nodes_[0].storage->payload_writes_gate.waiting() == 1;
+        })) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the reads did not both hold slots, or the store is not held");
+    }
+    auto d_entry = co_await cache(0, d->id);
+    if (d_entry.id_active_operations != 2) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the second store is not waiting on the first");
+    }
+    StopExpectation expected;
+    expected.pins = co_await pins_on(0, {a, b, d});
+    expected.slots = 2;
+    expected.loaders = 2;
+    co_await stop_with_pending(0, expected, outcomes, "stop-cold-reads");
+    finish(0, "BUDGET_STOP_COLD_READS_OK");
+  }
+
+  // Every read slot held, and a local and a remote reader queued for one.
+  td::actor::Task<> run_stop_slot_waiter() {
+    auto chain = make_chain(nodes_[0], 7);
+    co_await limit_in_charges(chain, 1);
+    co_await store_and_finalize(0, chain);
+    auto limits = co_await cache(0);
+    const size_t slots = limits.cold_read_concurrency;
+    nodes_[0].storage->payload_reads_gate.hold();
+    std::vector<std::shared_ptr<Outcome>> outcomes;
+    std::vector<CandidateRef> involved;
+    for (size_t i = 0; i <= slots; ++i) {
+      outcomes.push_back(std::make_shared<Outcome>());
+      resolve_into(0, chain[i], outcomes.back()).start().detach();
+      involved.push_back(chain[i]);
+    }
+    // The resolves start their reads from scheduled tasks; the peer request comes once they
+    // hold every slot and the last one is queued, so it is the one queued behind them.
+    if (!co_await wait_cache(
+            0, [&](const Cache& c) { return c.cold_reads_in_flight == slots && c.cold_read_waiters == 1; })) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the local resolves did not take every slot and queue one");
+    }
+    outcomes.push_back(std::make_shared<Outcome>());
+    peer_request_into(0, chain[slots + 1], outcomes.back()).start().detach();
+    involved.push_back(chain[slots + 1]);
+    if (!co_await wait_cache(0, [&](const Cache& c) {
+          return c.cold_reads_in_flight == slots && c.cold_read_waiters == 2 && c.remote_cold_read_waiters == 1 &&
+                 nodes_[0].storage->payload_reads_gate.waiting() == static_cast<int>(slots);
+        })) {
+      auto state = co_await cache(0);
+      finish(1, PSTRING() << "BUDGET_PRECONDITION_FAILED: the slots are not all held with a local and a remote "
+                             "reader queued: held="
+                          << nodes_[0].storage->payload_reads_gate.waiting() << " " << describe(state)
+                          << " remote_waiters=" << state.remote_cold_read_waiters);
+    }
+    StopExpectation expected;
+    expected.pins = co_await pins_on(0, involved);
+    expected.slots = slots;
+    expected.loaders = slots + 2;
+    expected.remote_waits = 2;
+    co_await stop_with_pending(0, expected, outcomes, "stop-slot-waiter");
+    finish(0, "BUDGET_STOP_SLOT_WAITER_OK");
+  }
+
+  // Two reads holding slots, a peer request waiting on the first one's read and a second local
+  // resolve of the same candidate waiting on the first resolve.
+  td::actor::Task<> run_stop_coalesced() {
+    auto chain = make_chain(nodes_[0], 3);
+    co_await limit_in_charges(chain, 1);
+    co_await store_and_finalize(0, chain);
+    const auto& a = chain[0];
+    const auto& b = chain[1];
+    nodes_[0].storage->payload_reads_gate.hold();
+    std::vector<std::shared_ptr<Outcome>> outcomes;
+    for (const auto& target : {a, b}) {
+      outcomes.push_back(std::make_shared<Outcome>());
+      resolve_into(0, target, outcomes.back()).start().detach();
+    }
+    if (!co_await wait_cache(0, [&](const Cache& c) { return c.cold_reads_in_flight == 2; })) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the reads did not both hold slots");
+    }
+    auto before = co_await cache(0);
+    outcomes.push_back(std::make_shared<Outcome>());
+    peer_request_into(0, a, outcomes.back()).start().detach();
+    outcomes.push_back(std::make_shared<Outcome>());
+    resolve_into(0, a, outcomes.back()).start().detach();
+    if (!co_await wait_cache(0, [&](const Cache& c) {
+          return c.coalesced_reads == before.coalesced_reads + 1 && c.remote_cold_read_waiters == 1;
+        })) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the peer request did not wait on the running read");
+    }
+    auto a_entry = co_await cache(0, a->id);
+    if (a_entry.id_active_operations != 4) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the second resolve is not waiting on the first");
+    }
+    StopExpectation expected;
+    expected.pins = co_await pins_on(0, {a, b});
+    expected.slots = 2;
+    expected.loaders = 2;
+    expected.remote_waits = 1;
+    co_await stop_with_pending(0, expected, outcomes, "stop-coalesced");
+    finish(0, "BUDGET_STOP_COALESCED_OK");
+  }
+
+  // A read that found another candidate's record, while a late store put the payload back: the
+  // stop comes while the repair write is held, with the read's buffer still counted.
+  td::actor::Task<> run_stop_bytes_guard() {
+    auto chain = make_chain(nodes_[0], 2);
+    co_await limit_in_charges(chain, 1);
+    const auto& a = chain[0];
+    co_await store_and_finalize(0, chain);
+    nodes_[0].storage->put(payload_key(a->id).as_slice(), chain[1]->serialize().as_slice());
+    nodes_[0].storage->payload_reads_gate.hold();
+    std::vector<std::shared_ptr<Outcome>> outcomes;
+    outcomes.push_back(std::make_shared<Outcome>());
+    peer_request_into(0, a, outcomes.back()).start().detach();
+    if (!co_await wait_until([&] { return nodes_[0].storage->payload_reads_gate.waiting() == 1; })) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the read never started");
+    }
+    co_await store(0, a);
+    nodes_[0].storage->payload_writes_gate.hold();
+    nodes_[0].storage->payload_reads_gate.release();
+    if (!co_await wait_cache(0, [&](const Cache& c) {
+          return nodes_[0].storage->payload_writes_gate.waiting() == 1 && c.cold_read_bytes_in_flight > 0 &&
+                 c.durability_revocations == 1;
+        })) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the repair write is not held with the read buffer counted");
+    }
+    StopExpectation expected;
+    expected.pins = co_await pins_on(0, {a});
+    expected.slots = 1;
+    expected.loaders = 1;
+    expected.bytes = 1;
+    co_await stop_with_pending(0, expected, outcomes, "stop-bytes-guard");
+    finish(0, "BUDGET_STOP_BYTES_GUARD_OK");
+  }
+
+  // A notarization certificate write held across the stop. Its task has no guard; the stop must
+  // leave nothing that touches the resolver when the write completes.
+  td::actor::Task<> run_stop_notar_write() {
+    auto chain = make_chain(nodes_[0], 1);
+    nodes_[0].storage->notar_writes_gate.hold();
+    notarize(0, chain[0]);
+    if (!co_await wait_until([&] { return nodes_[0].storage->notar_writes_gate.waiting() == 1; })) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the certificate write never started");
+    }
+    co_await stop_with_pending(0, StopExpectation{}, {}, "stop-notar-write");
+    finish(0, "BUDGET_STOP_NOTAR_WRITE_OK");
+  }
+
   // Concurrent cold reads of one dropped candidate, local and remote, are one database read,
   // and the peer requests waiting on it are held to the waiting allowance: the ones beyond it
   // are refused as busy, a local resolve still waits, and every answer is the candidate.
@@ -1364,7 +1766,7 @@ class Driver : public td::actor::Actor {
     const size_t beyond = 8;
     const size_t remote = 1 + allowance + beyond;
 
-    nodes_[0].storage->hold_payload_reads = true;
+    nodes_[0].storage->payload_reads_gate.hold();
     std::vector<std::shared_ptr<Outcome>> outcomes;
     for (size_t i = 0; i < remote; ++i) {
       outcomes.push_back(std::make_shared<Outcome>());
@@ -1384,10 +1786,10 @@ class Driver : public td::actor::Actor {
       finish(1, "BUDGET_PRECONDITION_FAILED: the readers did not all arrive: " + describe(state));
     }
     auto during = co_await cache(0);
-    emit(PSTRING() << "BUDGET_COLD_SAME held=" << nodes_[0].storage->held_reads.load()
+    emit(PSTRING() << "BUDGET_COLD_SAME held=" << nodes_[0].storage->held_reads()
                    << " remote_waiters=" << during.remote_cold_read_waiters << "/peak "
                    << during.remote_cold_read_waiters_peak << " " << describe(during));
-    require(nodes_[0].storage->held_reads.load() == 1 && during.cold_reads_in_flight == 1,
+    require(nodes_[0].storage->held_reads() == 1 && during.cold_reads_in_flight == 1,
             "more than one database read ran");
     require(during.remote_cold_read_waiters == allowance && during.remote_cold_read_waiters_peak == allowance,
             "the peer requests waiting on the read exceeded their allowance");
@@ -1395,7 +1797,7 @@ class Driver : public td::actor::Actor {
             "the peer requests beyond the allowance were not refused");
     require(during.coalesced_reads == before.coalesced_reads + allowance + 1,
             "the allowed readers and the local resolve were not coalesced");
-    nodes_[0].storage->hold_payload_reads = false;
+    nodes_[0].storage->payload_reads_gate.release();
     if (!co_await wait_until([&] {
           return local->done && std::all_of(outcomes.begin(), outcomes.end(), [](const auto& o) { return o->done; });
         })) {
@@ -1438,15 +1840,15 @@ class Driver : public td::actor::Actor {
       nodes_[0].storage->erase(key.as_slice());
     }
 
-    nodes_[0].storage->hold_payload_reads = true;
+    nodes_[0].storage->payload_reads_gate.hold();
     auto reply = std::make_shared<Outcome>();
     peer_request_into(0, a, reply).start().detach();
-    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads.load() == 1; })) {
+    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads() == 1; })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: the read never started");
     }
     co_await store(0, a);
     require(!persisted(nodes_[0], a), "the late store wrote the record; the sequence did not happen");
-    nodes_[0].storage->hold_payload_reads = false;
+    nodes_[0].storage->payload_reads_gate.release();
     if (!co_await wait_until([&] { return reply->done; })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: the request never returned");
     }
@@ -1482,7 +1884,7 @@ class Driver : public td::actor::Actor {
     for (const auto& candidate : chain) {
       largest_record = std::max<td::uint64>(largest_record, candidate->serialize().size());
     }
-    nodes_[0].storage->hold_payload_reads = true;
+    nodes_[0].storage->payload_reads_gate.hold();
     std::vector<std::shared_ptr<Outcome>> outcomes;
     for (size_t i = 0; i < requests; ++i) {
       outcomes.push_back(std::make_shared<Outcome>());
@@ -1496,14 +1898,13 @@ class Driver : public td::actor::Actor {
       finish(1, "BUDGET_PRECONDITION_FAILED: the cold reads did not all arrive: " + describe(state));
     }
     auto during = co_await cache(0);
-    emit(PSTRING() << "BUDGET_COLD_MANY during held=" << nodes_[0].storage->held_reads.load() << " "
-                   << describe(during));
+    emit(PSTRING() << "BUDGET_COLD_MANY during held=" << nodes_[0].storage->held_reads() << " " << describe(during));
     require(during.cold_reads_in_flight == during.cold_read_concurrency &&
-                nodes_[0].storage->held_reads.load() == static_cast<int>(during.cold_read_concurrency),
+                nodes_[0].storage->held_reads() == static_cast<int>(during.cold_read_concurrency),
             "more database reads ran than the limit");
     require(during.cold_read_waiters == during.cold_read_max_remote_waiters, "the read queue exceeded its limit");
     require(during.cold_reads_refused == requests - admitted, "the requests beyond the queue were not refused");
-    nodes_[0].storage->hold_payload_reads = false;
+    nodes_[0].storage->payload_reads_gate.release();
     if (!co_await wait_until(
             [&] { return std::all_of(outcomes.begin(), outcomes.end(), [](const auto& o) { return o->done; }); })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: a cold read never returned");
@@ -1540,6 +1941,9 @@ struct ModeSpec {
   Mode mode;
   // The limit in candidate charges, or 0 for a limit below one candidate.
   double charges;
+  // Scheduler threads. The stop modes use more, so frames destroyed after a stop can be
+  // destroyed on different threads at once.
+  int workers = 2;
 };
 
 const ModeSpec MODES[] = {
@@ -1563,6 +1967,11 @@ const ModeSpec MODES[] = {
     {"concurrent", Mode::Concurrent, 3},
     {"session-exit", Mode::SessionExit, 3},
     {"session-overlap", Mode::SessionOverlap, 3},
+    {"stop-cold-reads", Mode::StopColdReads, 1, 4},
+    {"stop-slot-waiter", Mode::StopSlotWaiter, 1, 4},
+    {"stop-coalesced", Mode::StopCoalesced, 1, 4},
+    {"stop-bytes-guard", Mode::StopBytesGuard, 1, 4},
+    {"stop-notar-write", Mode::StopNotarWrite, 1, 4},
     {"cold-same-id", Mode::ColdSameId, 1},
     {"cold-many", Mode::ColdMany, 1},
 };
@@ -1587,7 +1996,7 @@ int run_mode(const ModeSpec& spec) {
   td::uint64 limit =
       spec.charges == 0 ? charge - 1 : static_cast<td::uint64>(static_cast<double>(charge) * spec.charges) + charge / 4;
   setenv("TOS_SIMPLEX_CANDIDATE_CACHE_BYTES", std::to_string(limit).c_str(), 1);
-  td::actor::Scheduler scheduler({2});
+  td::actor::Scheduler scheduler({spec.workers});
   td::actor::ActorOwn<Driver> driver;
   scheduler.run_in_context([&] {
     driver = td::actor::create_actor<Driver>("budget-driver", spec.mode);

@@ -5,6 +5,8 @@
  */
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cstdlib>
 #include <deque>
 #include <unordered_set>
@@ -79,6 +81,26 @@ constexpr size_t COLD_READ_CONCURRENCY = 4;
 // is refused as busy, and the peer asks again or asks another validator; local readers always
 // wait, and there is at most one local resolve per candidate.
 constexpr size_t COLD_READ_MAX_REMOTE_WAITERS = 32;
+
+// What cleanup reached after a resolver stopped did, per kind of guard, for the whole process.
+// `skipped` counts guards that found their group stopped and touched nothing; `attempted`
+// counts cleanup that reached actor state anyway, which must never happen.
+struct StopCleanupCounters {
+  std::atomic<size_t> teardowns{0};
+  std::array<std::atomic<size_t>, static_cast<size_t>(ResolverStopCleanup::Count)> skipped{};
+  std::array<std::atomic<size_t>, static_cast<size_t>(ResolverStopCleanup::Count)> attempted{};
+};
+
+StopCleanupCounters& stop_cleanup_counters() {
+  static StopCleanupCounters counters;
+  return counters;
+}
+
+// Called by a guard instead of its cleanup once its group has stopped. It touches no actor
+// state, so it is safe on whatever thread destroys the frame.
+void note_skipped_after_stop(ResolverStopCleanup kind) {
+  stop_cleanup_counters().skipped[static_cast<size_t>(kind)].fetch_add(1, std::memory_order_relaxed);
+}
 
 td::uint64 candidate_data_bytes(const Candidate& candidate) {
   if (const auto* block = std::get_if<BlockCandidate>(&candidate.block)) {
@@ -187,33 +209,47 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     alarm_timestamp() = td::Timestamp::in(60.0);
   }
 
+  // Stopping hands every piece of session state to this function. The stop token is set first;
+  // from then on no guard touches actor state (see the guards' premise below). Every waiter
+  // still registered is taken out of its container before any is completed, so each promise has
+  // exactly one owner: before the stop, the operation that completes it on this actor; after,
+  // this function, which completes it with `cancelled`. Cached payloads go to the node-wide
+  // allowance, which keeps any that something still holds charged after this session is gone.
+  // The entries themselves stay until the actor is destroyed, because a waiter resumed here may
+  // still read its entry on the way out.
   void tear_down() override {
-    // Nothing is cached after this point: an operation that still ends later must not charge
-    // the node-wide allowance for an entry nobody will release.
-    stopped_.store(true, std::memory_order_release);
+    stop_token_->store(true, std::memory_order_release);
+    std::vector<td::Promise<td::Unit>> cancelled;
+    auto take = [&](std::vector<td::Promise<td::Unit>>& waiters) {
+      auto taken = std::exchange(waiters, {});
+      for (auto& p : taken) {
+        cancelled.push_back(std::move(p));
+      }
+    };
     for (auto& [id, s] : state_) {
-      for (auto &p : s.resolve_awaiters) {
-        p.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
-      }
-      for (auto &p : s.store_awaiters) {
-        p.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
-      }
-      for (auto& p : s.load_awaiters) {
-        p.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
-      }
-      s.load_awaiters.clear();
-      // Cached payloads go to the node-wide allowance, which keeps any that something still
-      // holds charged after this session is gone.
+      take(s.resolve_awaiters);
+      take(s.store_awaiters);
+      take(s.load_awaiters);
       if (s.payload_cached) {
         drop_cached_payload(id, s);
       }
+      s.payload_load_in_flight = false;
+      s.notar_store_in_flight = false;
+      s.active_operations = 0;
     }
-    while (!cold_read_waiters_.empty()) {
-      auto promise = std::move(cold_read_waiters_.front());
-      cold_read_waiters_.pop_front();
-      promise.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
+    auto queued = std::exchange(cold_read_waiters_, {});
+    while (!queued.empty()) {
+      cancelled.push_back(std::move(queued.front()));
+      queued.pop_front();
     }
+    cold_reads_in_flight_ = 0;
+    remote_cold_read_waiters_ = 0;
+    cold_read_bytes_in_flight_ = 0;
     payload_budget_.sweep();
+    for (auto& p : cancelled) {
+      p.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
+    }
+    stop_cleanup_counters().teardowns.fetch_add(1, std::memory_order_release);
   }
 
   template <>
@@ -238,9 +274,21 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
 
     if (auto it = state_.find(id); it != state_.end()) {
       auto& state = it->second;
+      // Guards in this actor follow one rule. While the stop token is clear, a guard runs on
+      // this actor, serialized with tear_down(), because every error is returned from the body
+      // (an error escaping an await would leave the guard to whoever destroys the frame). Once
+      // the token is set, a frame may be destroyed on any scheduler thread after this actor is
+      // gone, so the guard checks its own copy of the token before it calls anything on the
+      // actor or reads any entry, and then does nothing. The token is not a lock: it only tells
+      // a guard that tear_down() has taken over its cleanup.
+      auto stop = stop_token_;
       begin_operation(state);
       SCOPE_EXIT {
-        end_operation(id, state);
+        if (!stop->load(std::memory_order_acquire)) {
+          end_operation(id, state);
+        } else {
+          note_skipped_after_stop(ResolverStopCleanup::Pin);
+        }
       };
       // Errors are returned from the body, never left to propagate: an error that escapes an
       // await ends this coroutine without resuming it, and the pin's guard then runs wherever
@@ -283,9 +331,14 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   template <>
   td::actor::Task<ResolveCandidate::Result> process(BusHandle bus, std::shared_ptr<ResolveCandidate> request) {
     CandidateState &state = state_[request->id];
+    auto stop = stop_token_;
     begin_operation(state);
     SCOPE_EXIT {
-      end_operation(request->id, state);
+      if (!stop->load(std::memory_order_acquire)) {
+        end_operation(request->id, state);
+      } else {
+        note_skipped_after_stop(ResolverStopCleanup::Pin);
+      }
     };
 
     if (state.candidate_and_cert.is_complete()) {
@@ -308,7 +361,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       // the task can still be suspended on a request or a cooldown. Taken here, before the
       // task is started, so no scheduling order leaves it unpinned.
       begin_operation(state);
-      resolve_candidate_task(request->id, state).start().detach();
+      resolve_candidate_task(request->id, state, stop_token_).start().detach();
     }
 
     // Returned from the body, as in the peer request above, so the pin is released here.
@@ -322,9 +375,14 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   template <>
   td::actor::Task<> process(BusHandle, std::shared_ptr<StoreCandidate> request) {
     auto &state = state_[request->candidate->id];
+    auto stop = stop_token_;
     begin_operation(state);
     SCOPE_EXIT {
-      end_operation(request->candidate->id, state);
+      if (!stop->load(std::memory_order_acquire)) {
+        end_operation(request->candidate->id, state);
+      } else {
+        note_skipped_after_stop(ResolverStopCleanup::Pin);
+      }
     };
 
     // The id commits to the contents, so a payload already held is the same one; keeping it
@@ -344,10 +402,11 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     if (state.store_awaiters.size() == 1) {
       auto result = co_await store_candidate(request->candidate->id, state).wrap();
 
-      for (auto &p : state.store_awaiters) {
+      // Taken out before any is completed, so a resumed waiter never sees a half-served list.
+      auto awaiters = std::exchange(state.store_awaiters, {});
+      for (auto& p : awaiters) {
         p.set_result(result.clone());
       }
-      state.store_awaiters.clear();
     }
 
     // Returned from the body, as in the peer request above, so the pin is released here.
@@ -448,8 +507,9 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   td::uint64 admitted_bytes_ = 0;
   td::uint64 dropped_payloads_ = 0;
   td::uint64 not_cached_payloads_ = 0;
-  // Read by a pin released after the group stopped, off this actor, so it is atomic.
-  std::atomic<bool> stopped_{false};
+  // Set by tear_down(). Shared, so that a frame destroyed after this actor is gone can still read
+  // its own copy; see the guards' premise in the peer request handler.
+  std::shared_ptr<std::atomic<bool>> stop_token_ = std::make_shared<std::atomic<bool>>(false);
 
   td::uint64 db_payload_reads_ = 0;
   td::uint64 db_payload_read_misses_ = 0;
@@ -491,10 +551,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   // database read, a network response) or ended its use of one, so it is where the payload
   // is cached or let go, whatever path the operation took to get here.
   void end_operation(const CandidateId& id, CandidateState& state) {
-    // A coroutine suspended when the group stopped is finished by its caller once this actor
-    // is gone, and releases its pin there. Nothing runs on this actor any more by then and
-    // tear_down() has already returned every cached payload, so there is nothing to update.
-    if (stopped_.load(std::memory_order_acquire)) {
+    if (cleanup_after_stop(ResolverStopCleanup::Pin)) {
       return;
     }
     if (!(td::actor::detail::get_current_actor_id() == self_id_)) {
@@ -544,7 +601,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   // Whether a payload the entry holds outside the cache may now go to the cache. Unlike
   // can_evict(), the notarization certificate does not matter: it stays in the entry.
   bool payload_cacheable(const CandidateId& id, const CandidateState& state) const {
-    return !stopped_.load(std::memory_order_acquire) && state.candidate_and_cert.candidate.has_value() &&
+    return !stop_token_->load(std::memory_order_acquire) && state.candidate_and_cert.candidate.has_value() &&
            !state.payload_cached && slot_is_finalized(id.slot) && is_durable(state) && payload_unused(state);
   }
 
@@ -690,8 +747,19 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       remote_cold_read_waiters_peak_ = std::max(remote_cold_read_waiters_peak_, remote_cold_read_waiters_);
     }
   }
+  // Cleanup reached on actor state after the stop. A guard checks the token before calling
+  // any cleanup, so this is never true unless a guard lost its check; it is counted for the
+  // test that proves every guard has one, and the cleanup is skipped.
+  bool cleanup_after_stop(ResolverStopCleanup kind) const {
+    if (!stop_token_->load(std::memory_order_acquire)) {
+      return false;
+    }
+    stop_cleanup_counters().attempted[static_cast<size_t>(kind)].fetch_add(1, std::memory_order_relaxed);
+    return true;
+  }
+
   void end_remote_wait(bool remote) {
-    if (!remote) {
+    if (!remote || cleanup_after_stop(ResolverStopCleanup::RemoteWait)) {
       return;
     }
     if (remote_cold_read_waiters_ == 0) {
@@ -702,6 +770,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   }
 
   td::actor::Task<> acquire_cold_read(bool remote) {
+    auto stop = stop_token_;
     if (cold_reads_in_flight_ < COLD_READ_CONCURRENCY) {
       ++cold_reads_in_flight_;
       cold_reads_in_flight_peak_ = std::max(cold_reads_in_flight_peak_, cold_reads_in_flight_);
@@ -709,7 +778,11 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     }
     begin_remote_wait(remote);
     SCOPE_EXIT {
-      end_remote_wait(remote);
+      if (!stop->load(std::memory_order_acquire)) {
+        end_remote_wait(remote);
+      } else {
+        note_skipped_after_stop(ResolverStopCleanup::RemoteWait);
+      }
     };
     auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
     cold_read_waiters_.push_back(std::move(promise));
@@ -723,6 +796,9 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   }
 
   void release_cold_read() {
+    if (cleanup_after_stop(ResolverStopCleanup::Slot)) {
+      return;
+    }
     if (!cold_read_waiters_.empty()) {
       auto promise = std::move(cold_read_waiters_.front());
       cold_read_waiters_.pop_front();
@@ -734,6 +810,26 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       return;
     }
     --cold_reads_in_flight_;
+  }
+
+  // The running read of a payload is over: readers that waited on it are resumed. Taken out of
+  // the entry before any is resumed.
+  void finish_payload_load(CandidateState& state, bool tracked) {
+    if (!tracked || cleanup_after_stop(ResolverStopCleanup::Loader)) {
+      return;
+    }
+    state.payload_load_in_flight = false;
+    auto awaiters = std::exchange(state.load_awaiters, {});
+    for (auto& p : awaiters) {
+      p.set_value(td::Unit{});
+    }
+  }
+
+  void end_cold_read_bytes(td::uint64 bytes) {
+    if (cleanup_after_stop(ResolverStopCleanup::Bytes)) {
+      return;
+    }
+    cold_read_bytes_in_flight_ = saturating_sub(cold_read_bytes_in_flight_, bytes);
   }
 
   // After a revocation, a payload put back in memory while the read ran is written again here,
@@ -916,6 +1012,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   td::actor::Task<bool> try_load_candidate_data_from_db(CandidateId id, CandidateState& state, bool tracked,
                                                         bool remote) {
     auto &bus = *owning_bus();
+    auto stop = stop_token_;
 
     if (state.candidate_and_cert.candidate.has_value()) {
       co_return true;
@@ -929,7 +1026,11 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       }
       begin_remote_wait(remote);
       SCOPE_EXIT {
-        end_remote_wait(remote);
+        if (!stop->load(std::memory_order_acquire)) {
+          end_remote_wait(remote);
+        } else {
+          note_skipped_after_stop(ResolverStopCleanup::RemoteWait);
+        }
       };
       ++coalesced_reads_;
       auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
@@ -950,13 +1051,10 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       state.payload_load_in_flight = true;
     }
     SCOPE_EXIT {
-      if (tracked) {
-        state.payload_load_in_flight = false;
-        auto awaiters = std::move(state.load_awaiters);
-        state.load_awaiters.clear();
-        for (auto& p : awaiters) {
-          p.set_value(td::Unit{});
-        }
+      if (!stop->load(std::memory_order_acquire)) {
+        finish_payload_load(state, tracked);
+      } else {
+        note_skipped_after_stop(ResolverStopCleanup::Loader);
       }
     };
     auto slot = co_await acquire_cold_read(remote).wrap();
@@ -964,7 +1062,11 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       co_return slot.move_as_error();
     }
     SCOPE_EXIT {
-      release_cold_read();
+      if (!stop->load(std::memory_order_acquire)) {
+        release_cold_read();
+      } else {
+        note_skipped_after_stop(ResolverStopCleanup::Slot);
+      }
     };
 
     // Only a store that completes while this read runs is newer than whatever the read returns.
@@ -992,7 +1094,11 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     cold_read_bytes_in_flight_ = saturating_add(cold_read_bytes_in_flight_, read_bytes);
     cold_read_bytes_peak_ = std::max(cold_read_bytes_peak_, cold_read_bytes_in_flight_);
     SCOPE_EXIT {
-      cold_read_bytes_in_flight_ = saturating_sub(cold_read_bytes_in_flight_, read_bytes);
+      if (!stop->load(std::memory_order_acquire)) {
+        end_cold_read_bytes(read_bytes);
+      } else {
+        note_skipped_after_stop(ResolverStopCleanup::Bytes);
+      }
     };
     // Round 140 MEDIUM fix: validate that the deserialized
     // candidate's id matches the requested id, mirroring the
@@ -1112,28 +1218,33 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
 
   void maybe_resume_resolve_awaiters(CandidateState &state) {
     if (state.candidate_and_cert.is_complete()) {
-      for (auto &p : state.resolve_awaiters) {
+      auto awaiters = std::exchange(state.resolve_awaiters, {});
+      for (auto& p : awaiters) {
         p.set_value({});
       }
-      state.resolve_awaiters.clear();
     }
   }
 
   // Requires the caller to have taken one operation pin on `state` for this task; the task
   // releases it when it ends, which also evicts the entry if it has left the window.
-  td::actor::Task<> resolve_candidate_task(CandidateId id, CandidateState &state) {
+  td::actor::Task<> resolve_candidate_task(CandidateId id, CandidateState& state,
+                                           std::shared_ptr<std::atomic<bool>> stop) {
     SCOPE_EXIT {
-      end_operation(id, state);
+      if (!stop->load(std::memory_order_acquire)) {
+        end_operation(id, state);
+      } else {
+        note_skipped_after_stop(ResolverStopCleanup::Pin);
+      }
     };
     auto result = co_await resolve_candidate_inner(id, state).wrap();
     if (result.is_ok()) {
       CHECK(state.candidate_and_cert.is_complete());
       maybe_resume_resolve_awaiters(state);
     } else {
-      for (auto &p : state.resolve_awaiters) {
+      auto awaiters = std::exchange(state.resolve_awaiters, {});
+      for (auto& p : awaiters) {
         p.set_result(result.clone());
       }
-      state.resolve_awaiters.clear();
     }
     co_return td::Unit{};
   }
@@ -1251,6 +1362,17 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
 };
 
 }  // namespace
+
+ResolverStopCountsForTest candidate_resolver_stop_counts_for_test() {
+  auto& counters = stop_cleanup_counters();
+  ResolverStopCountsForTest result;
+  result.teardowns = counters.teardowns.load(std::memory_order_acquire);
+  for (size_t i = 0; i < result.skipped.size(); ++i) {
+    result.skipped[i] = counters.skipped[i].load(std::memory_order_acquire);
+    result.attempted[i] = counters.attempted[i].load(std::memory_order_acquire);
+  }
+  return result;
+}
 
 void CandidateResolver::register_in(td::actor::Runtime &runtime) {
   runtime.register_actor<CandidateResolverImpl>("CandidateResolver");
