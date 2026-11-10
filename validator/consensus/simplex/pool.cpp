@@ -558,10 +558,22 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
   void handle(BusHandle, std::shared_ptr<const CandidateReceived> event) {
     // Track candidate data for QueryValidatorGroupInfo.  Only non-empty
     // candidates carry a block id and hash data that is useful for the
-    // lite-server response; skip empty candidates.
-    if (!event->candidate->is_empty()) {
+    // lite-server response; skip empty candidates. A candidate for a slot already finalized
+    // is never reported (the response covers the current slot) and would otherwise be kept
+    // until the next finalization; the late-candidate store reaches the resolver without it.
+    if (!event->candidate->is_empty() && event->candidate->id.slot >= first_nonfinalized_slot_) {
       received_candidates_.emplace(event->candidate->id, event->candidate);
     }
+  }
+
+  template <>
+  td::actor::Task<QueryPoolReceivedCandidates::Result> process(BusHandle,
+                                                               std::shared_ptr<QueryPoolReceivedCandidates>) {
+    QueryPoolReceivedCandidates::Result result;
+    result.total = received_candidates_.size();
+    result.in_finalized_slots = static_cast<size_t>(std::distance(
+        received_candidates_.begin(), received_candidates_.lower_bound(CandidateId{first_nonfinalized_slot_, {}})));
+    co_return result;
   }
 
   template <>

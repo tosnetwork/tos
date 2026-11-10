@@ -32,6 +32,9 @@
 //                         resolver's entry alive after a store completes it and the window
 //                         passes its slot; the entry is evicted when the task ends.
 //   resolver-pin-error    a resolve task that fails releases its pin too.
+//   pool-late-release     after two slots are finalized, late broadcasts for both arrive and
+//                         nothing is finalized after them: both candidates reach the resolver,
+//                         and Pool keeps no reference to either.
 //   window-helper         late_window_begin() agrees with CandidateRetentionPolicy.
 //   restart-before-start  a node restarts with FinalCerts beyond the too-new gate in its
 //                         database and has no Start yet, so its leader window is not
@@ -137,6 +140,7 @@ enum class Mode {
   ResolverPinError,
   FrontierSkew,
   RestartBeforeStart,
+  PoolLateRelease,
 };
 
 struct Observations {
@@ -688,6 +692,8 @@ class Driver : public td::actor::Actor {
         co_return co_await run_resolver_pin_error(X_alt, Y);
       case Mode::FrontierSkew:
         co_return co_await run_frontier_skew(X_alt, Y, Y_alt, Z);
+      case Mode::PoolLateRelease:
+        co_return co_await run_pool_late_release(X, Y);
       case Mode::RestartBeforeStart:
         // Starts and restarts its own node; it is dispatched before this one is started.
         finish(1, "LATE_HARNESS_FAILED: restart-before-start reached the single-start path");
@@ -909,6 +915,29 @@ class Driver : public td::actor::Actor {
     finish(0, "LATE_SKEW_OK");
   }
 
+  // Late broadcasts for finalized slots, and no finalization after them: the late-candidate
+  // store still reaches the resolver, and Pool, which drops its references only when a slot
+  // is finalized, must not take one for a slot that already is.
+  td::actor::Task<> run_pool_late_release(CandidateRef X, CandidateRef Y) {
+    co_await notarize_and_finalize(X->id);
+    co_await notarize_and_finalize(Y->id);
+    deliver_candidate(X, "late-0");
+    deliver_candidate(Y, "late-1");
+    bool stored = co_await wait_until([&] { return candidate_persisted(X->id) && candidate_persisted(Y->id); });
+    auto refs = co_await bus_.publish<simplex::QueryPoolReceivedCandidates>();
+    auto resolver = co_await bus_.publish<simplex::QueryCandidatePayloadCache>(Y->id);
+    emit(PSTRING() << "LATE_RESULT pool_late_release stored=" << stored << " pool_refs=" << refs.total
+                   << " pool_refs_finalized=" << refs.in_finalized_slots
+                   << " resolver_tracks_Y=" << resolver.id_tracked);
+    if (!stored || !resolver.id_tracked) {
+      finish(3, "LATE_NOT_STORED: a late candidate did not reach the resolver");
+    }
+    if (refs.in_finalized_slots != 0 || refs.total != 0) {
+      finish(3, "LATE_POOL_RETAINED: Pool kept a candidate for a finalized slot");
+    }
+    finish(0, "LATE_POOL_RELEASE_OK");
+  }
+
   // A resolve that fails must release the task's pin as well: the entry for an id nothing
   // else holds is erased once the failed task ends.
   td::actor::Task<> run_resolver_pin_error(CandidateRef X_alt, CandidateRef Y) {
@@ -1088,6 +1117,7 @@ const ModeSpec MODES[] = {
     {"resolver-pin-error", Mode::ResolverPinError, "1", "1"},
     {"frontier-skew", Mode::FrontierSkew, "1", nullptr},
     {"restart-before-start", Mode::RestartBeforeStart, nullptr, nullptr},
+    {"pool-late-release", Mode::PoolLateRelease, nullptr, nullptr},
     {"window-helper", std::nullopt, nullptr, nullptr},
 };
 

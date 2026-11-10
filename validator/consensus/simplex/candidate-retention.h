@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <map>
 #include <optional>
+#include <utility>
 
 #include "consensus/types.h"
 #include "td/utils/check.h"
@@ -107,13 +108,15 @@ class CandidateRetentionPolicy {
 // `can_evict` must reject entries referenced by an in-flight coroutine. The
 // helper deliberately leaves rejected old entries in place so a later
 // finalization/alarm pass can remove them after the operation completes.
-template <class State, class CanEvict>
+// `on_erase(id, state)` runs for each entry just before it is erased.
+template <class State, class CanEvict, class OnErase>
 size_t prune_candidate_states(std::map<CandidateId, State>& states, td::uint32 first_retained_slot,
-                              CanEvict&& can_evict) {
+                              CanEvict&& can_evict, OnErase&& on_erase) {
   size_t erased = 0;
   auto end = states.lower_bound(CandidateId{first_retained_slot, {}});
   for (auto it = states.begin(); it != end;) {
     if (can_evict(it->second)) {
+      on_erase(it->first, it->second);
       it = states.erase(it);
       ++erased;
     } else {
@@ -121,6 +124,13 @@ size_t prune_candidate_states(std::map<CandidateId, State>& states, td::uint32 f
     }
   }
   return erased;
+}
+
+template <class State, class CanEvict>
+size_t prune_candidate_states(std::map<CandidateId, State>& states, td::uint32 first_retained_slot,
+                              CanEvict&& can_evict) {
+  return prune_candidate_states(states, first_retained_slot, std::forward<CanEvict>(can_evict),
+                                [](const CandidateId&, const State&) {});
 }
 
 }  // namespace tos::validator::consensus::simplex

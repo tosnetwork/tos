@@ -123,7 +123,7 @@ jobs:
             tos-proof-verify test-proof-verify proof-verify-fs-shim proof-persisted-fsync-shim tos-proof-embedded test-proof-verify-embedded test-proof-acquisition test-proof-readonly-query test-self-pay-simulation-context test-simulation-config test-simulation-account test-self-pay-simulation test-self-pay-simulation-live test-self-pay-simulation-json test-json-rpc-transport test-json-rpc-explorer \
             test-n5-manager-db-fixture test-consensus test-get-method-context test-control-getter test-control-getter-budget test-control-getter-query test-control-getter-transport \
             test-notarize-after-transient-resolve test-state-resolver-teardown test-late-candidate-window \
-            test-candidate-window-durability \
+            test-candidate-window-durability test-candidate-payload-budget \
             test-skip-after-finality-backlog test-counted-finalizations test-unfinalized-count-resolver \
             test-custom-overlay-relay-dedup test-pq-consensus-key-rotation test-fsync-dir-failure-shim \
             test-wallet-index test-wallet-index-apply test-wallet-index-source test-candidate-data-cache test-shard-block-confirmations \
@@ -372,6 +372,12 @@ jobs:
       # task keeps its resolver entry alive until it ends.
       - name: Check Simplex late candidates for finalized slots
         run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-late-candidate-window$'
+
+      # The candidate resolver keeps finalized payloads within one allowance for the whole node,
+      # never drops one that is in use or not durable, and serves every dropped one again from
+      # the database.
+      - name: Check the Simplex candidate payload budget
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^candidate-payload-budget-'
 
       # The own-decision log: its rules, formats, limits and failure recovery, and a restarted
       # validator that signs no decision conflicting with one it may already have signed.

@@ -88,6 +88,17 @@ std::string QueryVoteIngress::contents_to_string() const {
   return "{}";
 }
 
+std::string QueryCandidatePayloadCache::contents_to_string() const {
+  if (!id.has_value()) {
+    return "{}";
+  }
+  return PSTRING() << "{id=" << *id << "}";
+}
+
+std::string QueryPoolReceivedCandidates::contents_to_string() const {
+  return "{}";
+}
+
 std::string StoreCandidate::contents_to_string() const {
   return PSTRING() << "{id=" << candidate->id << "}";
 }
