@@ -328,6 +328,10 @@ add_test(NAME a142-unfinalized-count-backlog-sequence COMMAND test-unfinalized-c
 set_tests_properties(a142-unfinalized-count-backlog-sequence PROPERTIES TIMEOUT 60
     ENVIRONMENT "TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED=1;TOS_SIMPLEX_INJECT_TRANSIENT_FINALIZATION_FAILURES=4;TOS_SIMPLEX_PENDING_FINALIZATIONS_MAX=1"
     PASS_REGULAR_EXPRESSION "A142_BACKLOG_SEQUENCE \\(true,2\\)\\(false,1\\) pending_peak=3 pending_now=0\nA142_OK backlog-sequence")
+# A finalized-marker read that fails on another thread: the finalization settles on the resolver.
+add_test(NAME a142-unfinalized-count-marker-read-fails COMMAND test-unfinalized-count-resolver marker-read-fails)
+set_tests_properties(a142-unfinalized-count-marker-read-fails PROPERTIES TIMEOUT 60
+                     ENVIRONMENT "TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED=1")
 
 # A candidate that arrives after its slot is finalized, inside and outside the window in
 # which the candidate resolver still retains the slot; and the resolver's lifetime pin for a
@@ -402,6 +406,10 @@ target_link_libraries(test-state-resolver-teardown PRIVATE
     tdutils
 )
 add_test(NAME c10-state-resolver-teardown COMMAND test-state-resolver-teardown)
+# The group stops while a state resolution is suspended inside a held candidate read.
+add_test(NAME c10-state-resolver-teardown-cold-read COMMAND test-state-resolver-teardown cold-read)
+# An outer bound, so a harness deadlock fails instead of hanging the job.
+set_tests_properties(c10-state-resolver-teardown c10-state-resolver-teardown-cold-read PROPERTIES TIMEOUT 120)
 
 add_executable(test-validator-manager-resource-policy test-validator-manager-resource-policy.cpp)
 target_link_libraries(test-validator-manager-resource-policy PRIVATE
