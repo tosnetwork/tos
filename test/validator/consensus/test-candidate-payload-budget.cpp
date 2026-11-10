@@ -958,7 +958,10 @@ class Driver : public td::actor::Actor {
     auto before = co_await cache(0);
     for (size_t i = 0; i < 4; ++i) {
       co_await must_serve(0, chain[i]);
-      co_await check_bound(PSTRING() << "reenforce-rehydrate-" << i);
+      // Built before the await: a PSTRING temporary uses a thread-local stack allocator and must
+      // not live across a suspension.
+      std::string where = PSTRING() << "reenforce-rehydrate-" << i;
+      co_await check_bound(where);
     }
     auto after = co_await cache(0);
     require(after.db_payload_reads == before.db_payload_reads + 4, "the rehydrations did not read the database");
