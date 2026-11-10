@@ -385,6 +385,32 @@ foreach(mode bound rehydrate pinned-resolve pinned-reply pinned-rehydrate reenfo
     set_tests_properties(candidate-payload-budget-${mode} PROPERTIES TIMEOUT 120)
 endforeach()
 
+# The production state resolver replays a finalized chain whose payloads the node-wide budget
+# dropped: they come back from the database, never from the network, and the state matches the
+# default-budget run.
+add_executable(test-candidate-cache-state-replay test-candidate-cache-state-replay.cpp)
+target_link_libraries(test-candidate-cache-state-replay PRIVATE
+    validator
+    tos_validator
+    smc-envelope
+    tos_block
+    adnl
+    overlay
+    dht
+    tl_api
+    tl-utils
+    tos_crypto
+    tos_pq_consensus_signer
+    tos_pq_consensus
+    tos_mldsa44
+    tdactor
+    tdutils
+)
+foreach(mode low-budget default-budget)
+    add_test(NAME candidate-cache-state-replay-${mode} COMMAND test-candidate-cache-state-replay ${mode})
+    set_tests_properties(candidate-cache-state-replay-${mode} PROPERTIES TIMEOUT 120)
+endforeach()
+
 # A group that stops while a finalization is in flight and callers wait on it must release
 # the resolver, its waiters and the bus.
 add_executable(test-state-resolver-teardown test-state-resolver-teardown.cpp)

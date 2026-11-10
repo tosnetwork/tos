@@ -34,3 +34,5 @@ decision-log-scale-retained
 c04-health-ledger-concurrent
 c04-health-action-pool-stopped-duplicate
 c04-health-action-producer-stop-ordering
+candidate-cache-state-replay-low-budget
+candidate-cache-state-replay-default-budget
