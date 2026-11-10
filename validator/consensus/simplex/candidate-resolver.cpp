@@ -622,6 +622,12 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     }
     const auto& original = **state.candidate_and_cert.candidate;
     auto charge = compact_candidate_charge(original);
+    // A payload larger than the whole allowance never fits, so dropping others cannot help.
+    if (charge > payload_budget_.limit()) {
+      state.candidate_and_cert.candidate.reset();
+      ++not_cached_payloads_;
+      return;
+    }
     // Retired payloads whose last holder is gone give their room back first.
     payload_budget_.sweep();
     while (!payload_budget_.try_reserve(charge)) {

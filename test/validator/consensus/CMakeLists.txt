@@ -364,7 +364,7 @@ target_link_libraries(test-candidate-payload-budget PRIVATE
 foreach(mode bound rehydrate pinned-resolve pinned-reply pinned-rehydrate reenforce oversized persist-cancelled persist-failed
              external-ref revoke-missing revoke-corrupt revoke-mismatch stale-read refill-missing refill-corrupt shared-budget concurrent
              session-exit session-overlap stop-cold-reads stop-slot-waiter stop-coalesced stop-bytes-guard
-             stop-notar-write external-slice cold-same-id cold-many)
+             stop-notar-write external-slice cold-same-id cold-many oversized-keeps-cache)
     add_test(NAME candidate-payload-budget-${mode} COMMAND test-candidate-payload-budget ${mode})
     set_tests_properties(candidate-payload-budget-${mode} PROPERTIES TIMEOUT 120)
 endforeach()

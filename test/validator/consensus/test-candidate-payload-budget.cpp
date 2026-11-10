@@ -363,7 +363,9 @@ class OverlayStub : public td::actor::SpawnsWith<simplex::Bus>, public td::actor
   }
 };
 
-BlockCandidate make_block(BlockSeqno seqno, const BlockIdExt& prev) {
+// `padding_bytes` adds about that many bytes of distinct cells to the collated data, for a
+// candidate larger than the others.
+BlockCandidate make_block(BlockSeqno seqno, const BlockIdExt& prev, size_t padding_bytes = 0) {
   BlockSeqno prev_seqno = seqno - 1;
   double gen_utime = 1'700'000'000.0 + seqno;
 
@@ -410,7 +412,25 @@ BlockCandidate make_block(BlockSeqno seqno, const BlockIdExt& prev) {
                    .store_long(0, 32)
                    .store_long((td::uint64)(gen_utime * 1000.0), 64)
                    .finalize_novm();
-  td::BufferSlice collated_data = vm::std_boc_serialize_multi({extra}, 2).move_as_ok();
+  std::vector<td::Ref<vm::Cell>> collated_roots{extra};
+  if (padding_bytes > 0) {
+    // A chain of full cells, each with its own contents so none is deduplicated.
+    constexpr size_t CELL_BYTES = 127;
+    td::Ref<vm::Cell> padding;
+    for (size_t i = 0; i * CELL_BYTES < padding_bytes; ++i) {
+      vm::CellBuilder builder;
+      builder.store_long(seqno, 32).store_long(static_cast<td::int64>(i), 64);
+      for (size_t j = 12; j < CELL_BYTES; ++j) {
+        builder.store_long(static_cast<td::int64>((i * 131 + j * 7 + seqno) & 0xff), 8);
+      }
+      if (padding.not_null()) {
+        builder.store_ref(padding);
+      }
+      padding = builder.finalize_novm();
+    }
+    collated_roots.push_back(padding);
+  }
+  td::BufferSlice collated_data = vm::std_boc_serialize_multi(collated_roots, 2).move_as_ok();
 
   return BlockCandidate(ValidatorId{fill(0x99)},
                         BlockIdExt(BlockId(SHARD, seqno), block_root->get_hash().bits(), td::sha256_bits256(data)),
@@ -473,6 +493,7 @@ enum class Mode {
   ExternalSlice,
   ColdSameId,
   ColdMany,
+  OversizedKeepsCache,
 };
 
 struct Node {
@@ -543,14 +564,16 @@ class Driver : public td::actor::Actor {
   }
 
   // A chain of candidates in consecutive slots, starting at `first_slot`. `seqno_base` keeps the
-  // block data, and with it the ids, of different nodes apart.
+  // block data, and with it the ids, of different nodes apart. The last candidate gets
+  // `last_padding_bytes` of extra collated data.
   std::vector<CandidateRef> make_chain(const Node& node, size_t count, td::uint32 first_slot = 0,
-                                       BlockSeqno seqno_base = 0) {
+                                       BlockSeqno seqno_base = 0, size_t last_padding_bytes = 0) {
     std::vector<CandidateRef> result;
     BlockIdExt prev = FIRST_PARENT;
     ParentId parent = std::nullopt;
     for (size_t i = 0; i < count; ++i) {
-      auto block = make_block(seqno_base + static_cast<BlockSeqno>(i) + 1, prev);
+      auto block =
+          make_block(seqno_base + static_cast<BlockSeqno>(i) + 1, prev, i + 1 == count ? last_padding_bytes : 0);
       td::uint32 slot = first_slot + static_cast<td::uint32>(i);
       auto id = CandidateHashData::create_full(block, parent).build_id_with(slot);
       auto leader = node.bus_ptr->collator_schedule->expected_collator_for(slot);
@@ -909,6 +932,8 @@ class Driver : public td::actor::Actor {
         co_return co_await run_cold_same_id();
       case Mode::ColdMany:
         co_return co_await run_cold_many();
+      case Mode::OversizedKeepsCache:
+        co_return co_await run_keeps_cache(false);
     }
     co_return td::Unit{};
   }
@@ -1133,6 +1158,112 @@ class Driver : public td::actor::Actor {
     co_await must_serve(0, chain[0]);
     co_await check_bound("oversized-served");
     finish(0, "BUDGET_OVERSIZED_OK");
+  }
+
+  // Node 0's older payloads are cached and could be dropped to make room: durable, finalized,
+  // unused, inside the retention window, and nothing dropped yet.
+  td::actor::Task<Cache> require_droppable(std::vector<CandidateRef> older, std::string where) {
+    auto state = co_await check_bound(where);
+    require(state.cached_payloads == older.size(), where + ": the older payloads are not all cached");
+    require(state.dropped_payloads == 0, where + ": a payload was dropped before the test");
+    require(state.pinned_bytes == 0 && state.cold_reads_in_flight == 0, where + ": a payload is in use");
+    for (const auto& candidate : older) {
+      auto entry = co_await cache(0, candidate->id);
+      require(entry.id_tracked && entry.id_payload_cached && entry.id_durable && entry.id_active_operations == 0,
+              where + ": an older payload is not cached, durable and unused");
+      require(persisted(nodes_[0], candidate), where + ": an older payload is not in the database");
+    }
+    co_return state;
+  }
+
+  // The older payloads are still cached and nothing was dropped since `before`.
+  td::actor::Task<Cache> require_kept(std::vector<CandidateRef> older, Cache before, std::string where) {
+    auto state = co_await check_bound(where);
+    emit(PSTRING() << "BUDGET_KEPT " << where << " " << describe(state));
+    require(state.cached_payloads == older.size(), where + ": an older cached payload was dropped");
+    require(state.dropped_payloads == before.dropped_payloads, where + ": the drop count changed");
+    for (const auto& candidate : older) {
+      auto entry = co_await cache(0, candidate->id);
+      require(entry.id_tracked && entry.id_payload_cached, where + ": an older payload is no longer cached");
+    }
+    co_return state;
+  }
+
+  // A finalized payload that cannot be cached however many of the session's older payloads
+  // are dropped must leave them cached. Without `competing` the payload is larger than the
+  // whole allowance. With it, another session holds part of the allowance throughout, and
+  // the payload fits under the limit but not in the free room together with everything the
+  // session could drop.
+  td::actor::Task<> run_keeps_cache(bool competing) {
+    std::string mode = competing ? "unreachable-room-keeps-cache" : "oversized-keeps-cache";
+    auto small = charge(make_chain(nodes_[0], 1)[0]);
+    auto chain = make_chain(nodes_[0], 3, 0, 0, 2 * small);
+    std::vector<CandidateRef> older(chain.begin(), chain.begin() + 2);
+    const auto& large = chain[2];
+    std::vector<CandidateRef> other;
+    td::uint64 limit = 0;
+    if (competing) {
+      start_node(1);
+      other = make_chain(nodes_[1], 2, 0, 100);
+      std::vector<CandidateRef> smalls = older;
+      smalls.insert(smalls.end(), other.begin(), other.end());
+      limit = co_await limit_in_charges(smalls, 4);
+      co_await store_and_finalize(1, other);
+      auto held = co_await cache(1);
+      require(held.cached_payloads == other.size(), "the other session did not cache its payloads");
+    } else {
+      limit = co_await limit_in_charges(older, 2);
+    }
+    co_await store_and_finalize(0, older);
+    auto before = co_await require_droppable(older, mode + "-setup");
+    // The room dropping every older payload of this session could reach at best.
+    auto reachable = simplex::saturating_add(simplex::saturating_sub(before.node_limit, before.node_charged_bytes),
+                                             before.cached_bytes);
+    emit(PSTRING() << "BUDGET_KEEPS_CACHE " << mode << " limit=" << limit << " small=" << small
+                   << " large=" << charge(large) << " reachable=" << reachable);
+    require(before.node_retired_payloads == 0, "a retired payload holds room before the test");
+    if (competing) {
+      auto held = co_await cache(1);
+      require(before.node_charged_bytes == before.cached_bytes + held.cached_bytes,
+              "the charge is not this session's and the other session's cached payloads");
+      require(charge(large) <= limit, "the payload does not fit under the limit");
+      require(reachable < charge(large), "dropping the older payloads would make room");
+    } else {
+      require(charge(large) > limit, "the payload is not larger than the allowance");
+    }
+
+    co_await store(0, large);
+    notarize(0, large);
+    co_await finalize(0, large);
+    require(persisted(nodes_[0], large), "the large payload was not persisted");
+    auto entry = co_await cache(0, large->id);
+    require(entry.id_tracked && entry.id_durable && !entry.id_payload_resident,
+            "the large payload is not tracked as durable and let go");
+    auto finalized = co_await require_kept(older, before, mode + "-finalized");
+    require(finalized.not_cached_payloads == before.not_cached_payloads + 1, "the large payload was not refused");
+    require(finalized.admitted_payloads == before.admitted_payloads, "the large payload was cached");
+
+    // The large payload is served from the database; that read caches nothing and drops nothing.
+    co_await must_serve(0, large);
+    auto served = co_await require_kept(older, before, mode + "-served");
+    require(served.db_payload_reads == finalized.db_payload_reads + 1,
+            "the large payload was not read from the database");
+    entry = co_await cache(0, large->id);
+    require(!entry.id_payload_resident, "the large payload stayed resident after it was served");
+
+    // The older payloads are served from the cache.
+    for (const auto& candidate : older) {
+      co_await must_serve(0, candidate);
+    }
+    auto reread = co_await require_kept(older, before, mode + "-reread");
+    require(reread.db_payload_reads == served.db_payload_reads, "an older payload was read from the database");
+    require(network.total_requests() == 0, "a payload was requested from the network");
+    if (competing) {
+      auto held = co_await cache(1);
+      require(held.cached_payloads == other.size() && held.dropped_payloads == 0,
+              "the other session's payloads were dropped");
+    }
+    finish(0, competing ? "BUDGET_UNREACHABLE_ROOM_KEEPS_CACHE_OK" : "BUDGET_OVERSIZED_KEEPS_CACHE_OK");
   }
 
   td::actor::Task<> run_persist_failure(int failure) {
@@ -2013,6 +2144,7 @@ const ModeSpec MODES[] = {
     {"external-slice", Mode::ExternalSlice, 2},
     {"cold-same-id", Mode::ColdSameId, 1},
     {"cold-many", Mode::ColdMany, 1},
+    {"oversized-keeps-cache", Mode::OversizedKeepsCache, 2},
 };
 
 // Every candidate the modes build has the same shape, so one candidate's charge sets the
