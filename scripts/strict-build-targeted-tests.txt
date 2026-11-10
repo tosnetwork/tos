@@ -29,3 +29,4 @@ decision-log-scale-memory
 decision-log-scale-reconcile-scaling
 decision-log-scale-full-restart
 decision-log-scale-retained
+test-candidate-broadcast-guard
