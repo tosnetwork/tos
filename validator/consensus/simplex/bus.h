@@ -179,6 +179,9 @@ struct QueryCandidatePayloadCache {
     size_t node_retired_payloads = 0;
     td::uint64 node_refused_reservations = 0;
     td::uint64 node_accounting_errors = 0;
+    // Releases of a charge while its allocation was still alive. Zero when charges are returned
+    // only after the payload is freed.
+    td::uint64 node_live_over_charge = 0;
 
     // This resolver's cached finalized payloads.
     size_t entries = 0;
@@ -203,7 +206,8 @@ struct QueryCandidatePayloadCache {
     td::uint64 durability_revocations = 0;
 
     // Cold reads: database payload reads in flight, readers waiting for a read slot, and the
-    // bytes those reads hold. Remote readers beyond the waiting limit are refused.
+    // bytes those reads hold. Peer requests waiting for a slot or for another reader's read are
+    // counted together, and those beyond the waiting limit are refused.
     size_t cold_read_concurrency = 0;
     size_t cold_read_max_remote_waiters = 0;
     size_t cold_reads_in_flight = 0;
@@ -213,6 +217,8 @@ struct QueryCandidatePayloadCache {
     td::uint64 cold_read_bytes_in_flight = 0;
     td::uint64 cold_read_bytes_peak = 0;
     td::uint64 cold_reads_refused = 0;
+    size_t remote_cold_read_waiters = 0;
+    size_t remote_cold_read_waiters_peak = 0;
 
     bool id_tracked = false;
     bool id_payload_resident = false;

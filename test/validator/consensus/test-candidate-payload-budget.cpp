@@ -27,6 +27,8 @@
 //   revoke-corrupt     the payload comes back from the network, is written again, and is
 //   revoke-mismatch    read from the database afterwards
 //   stale-read         a read that started before a successful store does not revoke it
+//   refill-missing     a payload refilled in memory while a read finds the record missing
+//   refill-corrupt     or bad does not stop the revocation, and the record is written again
 //   shared-budget      two sessions together stay under the one allowance
 //   concurrent         rehydrations in two sessions released at once stay under it
 //   session-exit       a session that ends returns its charge once, keeps retired ones charged
@@ -340,17 +342,17 @@ std::string describe(const Cache& c) {
   return PSTRING() << "limit=" << c.node_limit << " charged=" << c.node_charged_bytes << " peak=" << c.node_charged_peak
                    << " retired=" << c.node_retired_bytes << "/" << c.node_retired_payloads
                    << " refused=" << c.node_refused_reservations << " errors=" << c.node_accounting_errors
-                   << " entries=" << c.entries << " cached=" << c.cached_payloads << "/" << c.cached_bytes
-                   << " admitted=" << c.admitted_payloads << "/" << c.admitted_bytes
-                   << " dropped=" << c.dropped_payloads << " not_cached=" << c.not_cached_payloads
-                   << " pinned=" << c.pinned_bytes << " nondurable=" << c.nondurable_bytes
-                   << " nonfinalized=" << c.nonfinalized_bytes << " db_reads=" << c.db_payload_reads
-                   << " misses=" << c.db_payload_read_misses << " invalid=" << c.db_payload_read_invalid
-                   << " coalesced=" << c.coalesced_reads << " revocations=" << c.durability_revocations
-                   << " cold_in_flight=" << c.cold_reads_in_flight << "/peak " << c.cold_reads_in_flight_peak
-                   << " cold_waiters=" << c.cold_read_waiters << "/peak " << c.cold_read_waiters_peak
-                   << " cold_bytes=" << c.cold_read_bytes_in_flight << "/peak " << c.cold_read_bytes_peak
-                   << " cold_refused=" << c.cold_reads_refused;
+                   << " live_over_charge=" << c.node_live_over_charge << " entries=" << c.entries
+                   << " cached=" << c.cached_payloads << "/" << c.cached_bytes << " admitted=" << c.admitted_payloads
+                   << "/" << c.admitted_bytes << " dropped=" << c.dropped_payloads
+                   << " not_cached=" << c.not_cached_payloads << " pinned=" << c.pinned_bytes
+                   << " nondurable=" << c.nondurable_bytes << " nonfinalized=" << c.nonfinalized_bytes
+                   << " db_reads=" << c.db_payload_reads << " misses=" << c.db_payload_read_misses
+                   << " invalid=" << c.db_payload_read_invalid << " coalesced=" << c.coalesced_reads
+                   << " revocations=" << c.durability_revocations << " cold_in_flight=" << c.cold_reads_in_flight
+                   << "/peak " << c.cold_reads_in_flight_peak << " cold_waiters=" << c.cold_read_waiters << "/peak "
+                   << c.cold_read_waiters_peak << " cold_bytes=" << c.cold_read_bytes_in_flight << "/peak "
+                   << c.cold_read_bytes_peak << " cold_refused=" << c.cold_reads_refused;
 }
 
 enum class Mode {
@@ -368,6 +370,8 @@ enum class Mode {
   RevokeCorrupt,
   RevokeMismatch,
   StaleRead,
+  RefillMissing,
+  RefillCorrupt,
   SharedBudget,
   Concurrent,
   SessionExit,
@@ -722,6 +726,7 @@ class Driver : public td::actor::Actor {
     require(last.node_charged_peak <= last.node_limit, where + ": the node-wide charge once exceeded the limit");
     require(aggregate <= last.node_limit, where + ": the sessions together hold more than the limit");
     require(last.node_accounting_errors == 0, where + ": the allowance saw an accounting error");
+    require(last.node_live_over_charge == 0, where + ": a charge was returned while its allocation was alive");
     co_return last;
   }
 
@@ -752,6 +757,10 @@ class Driver : public td::actor::Actor {
       case Mode::RevokeCorrupt:
       case Mode::RevokeMismatch:
         co_return co_await run_revoke();
+      case Mode::RefillMissing:
+        co_return co_await run_refill(false);
+      case Mode::RefillCorrupt:
+        co_return co_await run_refill(true);
       case Mode::StaleRead:
         co_return co_await run_stale_read();
       case Mode::SharedBudget:
@@ -1318,7 +1327,9 @@ class Driver : public td::actor::Actor {
     finish(0, "BUDGET_OVERLAP_OK");
   }
 
-  // Concurrent cold reads of one dropped candidate, local and remote, are one database read.
+  // Concurrent cold reads of one dropped candidate, local and remote, are one database read,
+  // and the peer requests waiting on it are held to the waiting allowance: the ones beyond it
+  // are refused as busy, a local resolve still waits, and every answer is the candidate.
   td::actor::Task<> run_cold_same_id() {
     auto chain = make_chain(nodes_[0], 2);
     co_await limit_in_charges(chain, 1);
@@ -1326,41 +1337,112 @@ class Driver : public td::actor::Actor {
     const auto& a = chain[0];
     auto before = co_await cache(0);
     const int reads_before = nodes_[0].storage->payload_reads.load();
+    const size_t allowance = before.cold_read_max_remote_waiters;
+    // One reader runs the read; the allowance waits on it; the rest are beyond it.
+    const size_t beyond = 8;
+    const size_t remote = 1 + allowance + beyond;
 
     nodes_[0].storage->hold_payload_reads = true;
     std::vector<std::shared_ptr<Outcome>> outcomes;
-    for (int i = 0; i < 8; ++i) {
+    for (size_t i = 0; i < remote; ++i) {
       outcomes.push_back(std::make_shared<Outcome>());
       peer_request_into(0, a, outcomes.back()).start().detach();
     }
-    outcomes.push_back(std::make_shared<Outcome>());
-    resolve_into(0, a, outcomes.back()).start().detach();
-    // Every reader has arrived once it is reading, waiting for a read slot, or waiting for the
-    // read of another reader.
-    const size_t readers = outcomes.size();
+    auto local = std::make_shared<Outcome>();
+    resolve_into(0, a, local).start().detach();
+    // Every reader has arrived once it is reading, waiting for a read slot, waiting for the read
+    // of another reader, or refused.
+    const size_t readers = remote + 1;
     if (!co_await wait_cache(0, [&](const Cache& c) {
-          return c.coalesced_reads - before.coalesced_reads + c.cold_reads_in_flight + c.cold_read_waiters == readers;
+          return c.coalesced_reads - before.coalesced_reads + c.cold_reads_in_flight + c.cold_read_waiters +
+                     (c.cold_reads_refused - before.cold_reads_refused) ==
+                 readers;
         })) {
-      finish(1, "BUDGET_PRECONDITION_FAILED: the readers did not all arrive");
+      auto state = co_await cache(0);
+      finish(1, "BUDGET_PRECONDITION_FAILED: the readers did not all arrive: " + describe(state));
     }
     auto during = co_await cache(0);
-    emit(PSTRING() << "BUDGET_COLD_SAME held=" << nodes_[0].storage->held_reads.load() << " " << describe(during));
+    emit(PSTRING() << "BUDGET_COLD_SAME held=" << nodes_[0].storage->held_reads.load()
+                   << " remote_waiters=" << during.remote_cold_read_waiters << "/peak "
+                   << during.remote_cold_read_waiters_peak << " " << describe(during));
     require(nodes_[0].storage->held_reads.load() == 1 && during.cold_reads_in_flight == 1,
             "more than one database read ran");
-    require(during.coalesced_reads == before.coalesced_reads + readers - 1, "the readers were not coalesced");
+    require(during.remote_cold_read_waiters == allowance && during.remote_cold_read_waiters_peak == allowance,
+            "the peer requests waiting on the read exceeded their allowance");
+    require(during.cold_reads_refused == before.cold_reads_refused + beyond,
+            "the peer requests beyond the allowance were not refused");
+    require(during.coalesced_reads == before.coalesced_reads + allowance + 1,
+            "the allowed readers and the local resolve were not coalesced");
     nodes_[0].storage->hold_payload_reads = false;
-    if (!co_await wait_until(
-            [&] { return std::all_of(outcomes.begin(), outcomes.end(), [](const auto& o) { return o->done; }); })) {
+    if (!co_await wait_until([&] {
+          return local->done && std::all_of(outcomes.begin(), outcomes.end(), [](const auto& o) { return o->done; });
+        })) {
       finish(1, "BUDGET_PRECONDITION_FAILED: a reader never returned");
     }
+    require(local->ok && local->matched, "the local resolve got the wrong answer: " + local->error);
+    size_t served = 0;
     for (const auto& outcome : outcomes) {
-      require(outcome->ok && outcome->matched, "a coalesced reader got the wrong answer: " + outcome->error);
+      if (outcome->ok) {
+        require(outcome->matched, "a coalesced reader got the wrong answer");
+        ++served;
+      }
     }
+    require(served == 1 + allowance, "a peer request inside the allowance was not served");
     auto after = co_await check_bound("cold-same-id");
+    require(after.remote_cold_read_waiters == 0, "a refused or served peer request is still counted as waiting");
     require(nodes_[0].storage->payload_reads.load() == reads_before + 1, "the readers were not coalesced");
     require(after.db_payload_reads == before.db_payload_reads + 1, "the resolver counted more than one read");
     require(after.cold_reads_in_flight_peak <= after.cold_read_concurrency, "the cold reads exceeded their limit");
+    // A refused peer asks again and is served.
+    co_await must_serve(0, a);
     finish(0, "BUDGET_COLD_SAME_OK");
+  }
+
+  // A record goes missing or bad after the candidate was stored and dropped. While a read of it
+  // runs, a late store puts the payload back in memory without writing, as the entry still
+  // believes the record durable. The read must still revoke that belief and the record must be
+  // written again before the payload can be dropped.
+  td::actor::Task<> run_refill(bool corrupt) {
+    auto chain = make_chain(nodes_[0], 2);
+    co_await limit_in_charges(chain, 1);
+    const auto& a = chain[0];
+    co_await store_and_finalize(0, chain);
+    auto entry = co_await cache(0, a->id);
+    require(entry.id_durable && !entry.id_payload_resident, "A was not dropped as durable");
+    auto key = payload_key(a->id);
+    if (corrupt) {
+      nodes_[0].storage->put(key.as_slice(), td::Slice("not a candidate record"));
+    } else {
+      nodes_[0].storage->erase(key.as_slice());
+    }
+
+    nodes_[0].storage->hold_payload_reads = true;
+    auto reply = std::make_shared<Outcome>();
+    peer_request_into(0, a, reply).start().detach();
+    if (!co_await wait_until([&] { return nodes_[0].storage->held_reads.load() == 1; })) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the read never started");
+    }
+    co_await store(0, a);
+    require(!persisted(nodes_[0], a), "the late store wrote the record; the sequence did not happen");
+    nodes_[0].storage->hold_payload_reads = false;
+    if (!co_await wait_until([&] { return reply->done; })) {
+      finish(1, "BUDGET_PRECONDITION_FAILED: the request never returned");
+    }
+    require(reply->ok && reply->matched, "the request did not get the refilled candidate");
+    auto state = co_await check_bound(corrupt ? "refill-corrupt" : "refill-missing");
+    entry = co_await cache(0, a->id);
+    emit(PSTRING() << "BUDGET_REFILL revocations=" << state.durability_revocations
+                   << " persisted=" << persisted(nodes_[0], a) << " durable=" << entry.id_durable
+                   << " resident=" << entry.id_payload_resident);
+    require(state.durability_revocations == 1, "the bad record did not revoke durability");
+    require(persisted(nodes_[0], a), "the record was not written again before the payload could be dropped");
+    require(entry.id_durable && !entry.id_payload_resident, "the repaired payload was not dropped as durable");
+
+    // The repaired record is read without the network.
+    notarize(0, a);
+    co_await resolve(0, a);
+    require(network.total_requests() == 0, "the candidate was requested from the network");
+    finish(0, "BUDGET_REFILL_OK");
   }
 
   // Concurrent cold reads of many dropped candidates under a held database: bounded reads, a
@@ -1453,6 +1535,8 @@ const ModeSpec MODES[] = {
     {"revoke-corrupt", Mode::RevokeCorrupt, 1},
     {"revoke-mismatch", Mode::RevokeMismatch, 1},
     {"stale-read", Mode::StaleRead, 1},
+    {"refill-missing", Mode::RefillMissing, 1},
+    {"refill-corrupt", Mode::RefillCorrupt, 1},
     {"shared-budget", Mode::SharedBudget, 3},
     {"concurrent", Mode::Concurrent, 3},
     {"session-exit", Mode::SessionExit, 3},

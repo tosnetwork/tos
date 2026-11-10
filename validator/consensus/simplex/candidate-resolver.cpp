@@ -74,9 +74,10 @@ int candidate_resolve_max_attempts_from_env() {
 // and the candidate decoded from it until the reader is done, so this bounds the cold-read
 // buffers of a resolver to this many candidates. Readers beyond it wait in arrival order.
 constexpr size_t COLD_READ_CONCURRENCY = 4;
-// Peer requests that may wait for a read slot. A peer request that would wait beyond this is
-// refused as busy, and the peer asks again or asks another validator; local readers always wait,
-// and there is at most one local resolve per candidate.
+// Peer requests that may wait at once, for a read slot or for another reader's read of the same
+// candidate, all candidates of the resolver together. A peer request that would wait beyond this
+// is refused as busy, and the peer asks again or asks another validator; local readers always
+// wait, and there is at most one local resolve per candidate.
 constexpr size_t COLD_READ_MAX_REMOTE_WAITERS = 32;
 
 td::uint64 candidate_data_bytes(const Candidate& candidate) {
@@ -434,6 +435,8 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   td::uint64 cold_read_bytes_in_flight_ = 0;
   td::uint64 cold_read_bytes_peak_ = 0;
   td::uint64 cold_reads_refused_ = 0;
+  size_t remote_cold_read_waiters_ = 0;
+  size_t remote_cold_read_waiters_peak_ = 0;
 
   static bool can_evict(const CandidateState& state) {
     const CandidateEvictionState eviction_state{
@@ -539,7 +542,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       drop_cached_payload(victim_id, state_.find(victim_id)->second);
     }
     CachedPayloadAllocations allocations;
-    auto compact = make_compact_candidate(original, allocations);
+    auto compact = make_compact_candidate(original, allocations, payload_budget_);
     if (allocations.charge != charge) {
       LOG(ERROR) << "Simplex candidate-resolver: compact copy of " << id << " is charged " << allocations.charge
                  << " bytes, reserved " << charge;
@@ -590,6 +593,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     result.node_retired_payloads = node.retired_payloads;
     result.node_refused_reservations = node.refused_reservations;
     result.node_accounting_errors = node.accounting_errors;
+    result.node_live_over_charge = node.live_over_charge;
     result.entries = state_.size();
     result.cached_payloads = cached_payloads_.size();
     result.cached_bytes = cached_bytes_;
@@ -624,22 +628,45 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     result.cold_read_bytes_in_flight = cold_read_bytes_in_flight_;
     result.cold_read_bytes_peak = cold_read_bytes_peak_;
     result.cold_reads_refused = cold_reads_refused_;
+    result.remote_cold_read_waiters = remote_cold_read_waiters_;
+    result.remote_cold_read_waiters_peak = remote_cold_read_waiters_peak_;
     return result;
   }
 
-  // A peer request that would have to wait behind a full queue of readers is refused; a
-  // local reader is never refused.
-  bool cold_read_must_refuse(bool remote) const {
-    return remote && cold_reads_in_flight_ >= COLD_READ_CONCURRENCY &&
-           cold_read_waiters_.size() >= COLD_READ_MAX_REMOTE_WAITERS;
+  // A peer request that would have to wait while the peer requests already waiting fill their
+  // allowance is refused; a local reader is never refused.
+  bool remote_wait_must_refuse(bool remote) const {
+    return remote && remote_cold_read_waiters_ >= COLD_READ_MAX_REMOTE_WAITERS;
   }
 
-  td::actor::Task<> acquire_cold_read() {
+  // Counts a waiting peer request against the allowance until it stops waiting, however it does.
+  void begin_remote_wait(bool remote) {
+    if (remote) {
+      ++remote_cold_read_waiters_;
+      remote_cold_read_waiters_peak_ = std::max(remote_cold_read_waiters_peak_, remote_cold_read_waiters_);
+    }
+  }
+  void end_remote_wait(bool remote) {
+    if (!remote) {
+      return;
+    }
+    if (remote_cold_read_waiters_ == 0) {
+      LOG(ERROR) << "Simplex candidate-resolver: a peer request stopped waiting that was not counted";
+      return;
+    }
+    --remote_cold_read_waiters_;
+  }
+
+  td::actor::Task<> acquire_cold_read(bool remote) {
     if (cold_reads_in_flight_ < COLD_READ_CONCURRENCY) {
       ++cold_reads_in_flight_;
       cold_reads_in_flight_peak_ = std::max(cold_reads_in_flight_peak_, cold_reads_in_flight_);
       co_return td::Unit{};
     }
+    begin_remote_wait(remote);
+    SCOPE_EXIT {
+      end_remote_wait(remote);
+    };
     auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
     cold_read_waiters_.push_back(std::move(promise));
     cold_read_waiters_peak_ = std::max(cold_read_waiters_peak_, cold_read_waiters_.size());
@@ -660,6 +687,20 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       return;
     }
     --cold_reads_in_flight_;
+  }
+
+  // After a revocation, a payload put back in memory while the read ran is written again here,
+  // under the reader's pin, so it is durable before it can be cached and dropped. A failed write
+  // leaves it in memory, reported as non-durable.
+  td::actor::Task<> repair_record(CandidateId id, CandidateState& state, bool tracked) {
+    if (!tracked || !state.candidate_and_cert.candidate.has_value() || is_durable(state)) {
+      co_return td::Unit{};
+    }
+    auto stored = co_await store_candidate(id, state).wrap();
+    if (stored.is_error()) {
+      LOG(WARNING) << "Simplex candidate-resolver: could not repair the record of " << id << ": " << stored.error();
+    }
+    co_return td::Unit{};
   }
 
   // A read proved that the database does not hold this candidate's record as the entry
@@ -766,7 +807,10 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
                  << " cold_read_waiters_peak=" << cache.cold_read_waiters_peak
                  << " cold_read_bytes_in_flight=" << cache.cold_read_bytes_in_flight
                  << " cold_read_bytes_peak=" << cache.cold_read_bytes_peak
-                 << " cold_reads_refused=" << cache.cold_reads_refused;
+                 << " cold_reads_refused=" << cache.cold_reads_refused
+                 << " remote_cold_read_waiters=" << cache.remote_cold_read_waiters
+                 << " remote_cold_read_waiters_peak=" << cache.remote_cold_read_waiters_peak
+                 << " node_live_over_charge=" << cache.node_live_over_charge;
   }
 
   td::Status check_rate_limit(adnl::AdnlNodeIdShort src) {
@@ -829,14 +873,25 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       co_return true;
     }
     if (tracked && state.payload_load_in_flight) {
-      // One read per candidate at a time: wait for the running one and use what it found.
+      // One read per candidate at a time: wait for the running one and use what it found. A
+      // peer request waits here only within the same allowance as for a read slot.
+      if (remote_wait_must_refuse(remote)) {
+        ++cold_reads_refused_;
+        co_return td::Status::Error(ErrorCode::notready, "candidate database reads are busy");
+      }
+      begin_remote_wait(remote);
+      SCOPE_EXIT {
+        end_remote_wait(remote);
+      };
       ++coalesced_reads_;
       auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
       state.load_awaiters.push_back(std::move(promise));
       co_await std::move(task);
       co_return state.candidate_and_cert.candidate.has_value();
     }
-    if (cold_read_must_refuse(remote)) {
+    // Refused before the read is marked as running, so no reader coalesced on it is left
+    // without an answer.
+    if (cold_reads_in_flight_ >= COLD_READ_CONCURRENCY && remote_wait_must_refuse(remote)) {
       ++cold_reads_refused_;
       co_return td::Status::Error(ErrorCode::notready, "candidate database reads are busy");
     }
@@ -853,22 +908,24 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
         }
       }
     };
-    co_await acquire_cold_read();
+    co_await acquire_cold_read(remote);
     SCOPE_EXIT {
       release_cold_read();
     };
 
-    // A store that completes while this read runs is newer than whatever the read returns.
+    // Only a store that completes while this read runs is newer than whatever the read returns.
+    // A payload put back in memory meanwhile proves nothing about the record: a store skips the
+    // write while the entry still believes the record durable.
     const td::uint64 store_generation = state.store_generation;
     auto contents_key = create_serialize_tl_object<tl::db_key_candidate>(id.to_tl());
     ++db_payload_reads_;
     auto data_r = co_await bus.db->get_latest(std::move(contents_key));
-    const bool superseded =
-        state.store_generation != store_generation || state.candidate_and_cert.candidate.has_value();
+    const bool superseded = state.store_generation != store_generation;
     if (!data_r.has_value()) {
       ++db_payload_read_misses_;
       if (!superseded) {
         revoke_durability(id, state, "is missing");
+        co_await repair_record(id, state, tracked);
       }
       co_return state.candidate_and_cert.candidate.has_value();
     }
@@ -899,6 +956,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       ++db_payload_read_invalid_;
       if (!superseded) {
         revoke_durability(id, state, "does not decode");
+        co_await repair_record(id, state, tracked);
       }
       co_return state.candidate_and_cert.candidate.has_value();
     }
@@ -910,6 +968,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       ++db_payload_read_invalid_;
       if (!superseded) {
         revoke_durability(id, state, "holds another candidate");
+        co_await repair_record(id, state, tracked);
       }
       co_return state.candidate_and_cert.candidate.has_value();
     }

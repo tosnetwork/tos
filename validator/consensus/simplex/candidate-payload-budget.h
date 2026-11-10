@@ -64,6 +64,13 @@ struct CachedPayloadAllocations {
 // stays charged here until the last holder is gone, which sweep() notices. Retired payloads
 // belong to this object, not to the session that cached them, so they stay charged after
 // that session ends and are never charged twice or released twice.
+//
+// A charge is returned only after the payload it covers is freed, so the cached allocations
+// alive at any moment never exceed what is charged, and with it the limit. `headroom_` is the
+// charged bytes no live cached allocation uses: a reservation adds to it, a compact copy takes
+// from it while alive, and a release takes the charge back. It is one counter, so a release
+// that would let it fall below zero is a release before the allocation was freed, wherever the
+// other sessions are; that is counted as live bytes over the charge.
 class CandidatePayloadBudget {
  public:
   struct Snapshot {
@@ -74,6 +81,7 @@ class CandidatePayloadBudget {
     size_t retired_payloads = 0;
     td::uint64 refused_reservations = 0;
     td::uint64 accounting_errors = 0;
+    td::uint64 live_over_charge = 0;
   };
 
   explicit CandidatePayloadBudget(td::uint64 limit) : limit_(limit) {
@@ -96,6 +104,7 @@ class CandidatePayloadBudget {
       }
     } while (!charged_.compare_exchange_weak(current, current + charge, std::memory_order_acq_rel,
                                              std::memory_order_acquire));
+    headroom_.fetch_add(static_cast<td::int64>(charge), std::memory_order_acq_rel);
     auto charged = current + charge;
     auto peak = charged_peak_.load(std::memory_order_relaxed);
     while (peak < charged && !charged_peak_.compare_exchange_weak(peak, charged, std::memory_order_relaxed)) {
@@ -106,6 +115,12 @@ class CandidatePayloadBudget {
   // Returns a charge reserved earlier. Returning more than is charged is an accounting
   // error: it is counted and logged, and the counter stops at zero instead of wrapping.
   void release(td::uint64 charge) {
+    auto headroom = headroom_.fetch_sub(static_cast<td::int64>(charge), std::memory_order_acq_rel);
+    if (headroom < static_cast<td::int64>(charge)) {
+      live_over_charge_.fetch_add(1, std::memory_order_relaxed);
+      LOG(ERROR) << "Simplex candidate-resolver: payload cache released " << charge
+                 << " bytes still used by a live cached allocation";
+    }
     auto current = charged_.load(std::memory_order_acquire);
     td::uint64 next = 0;
     do {
@@ -124,6 +139,8 @@ class CandidatePayloadBudget {
   void retire(CandidateRef payload, const CachedPayloadAllocations& allocations) {
     Retired entry{std::move(payload), allocations};
     if (!is_held_elsewhere(entry)) {
+      // Freed first, so the charge never comes back while the allocation is alive.
+      entry.payload = {};
       release(entry.allocations.charge);
       return;
     }
@@ -132,8 +149,8 @@ class CandidatePayloadBudget {
     retired_.push_back(std::move(entry));
   }
 
-  // Returns the charge of every retired payload nothing holds any more. The payloads
-  // themselves are freed after the lock is released.
+  // Returns the charge of every retired payload nothing holds any more. Each payload is freed,
+  // outside the lock, before its charge is returned.
   void sweep() {
     std::vector<Retired> released;
     {
@@ -150,7 +167,8 @@ class CandidatePayloadBudget {
         retired_.pop_back();
       }
     }
-    for (const auto& entry : released) {
+    for (auto& entry : released) {
+      entry.payload = {};
       release(entry.allocations.charge);
     }
   }
@@ -162,10 +180,19 @@ class CandidatePayloadBudget {
     result.charged_peak = charged_peak_.load(std::memory_order_relaxed);
     result.refused_reservations = refused_.load(std::memory_order_relaxed);
     result.accounting_errors = accounting_errors_.load(std::memory_order_relaxed);
+    result.live_over_charge = live_over_charge_.load(std::memory_order_relaxed);
     std::scoped_lock lock(mutex_);
     result.retired_bytes = retired_bytes_;
     result.retired_payloads = retired_.size();
     return result;
+  }
+
+  // A compact copy charged to this allowance came alive or was freed.
+  void note_allocated(td::uint64 charge) {
+    headroom_.fetch_sub(static_cast<td::int64>(charge), std::memory_order_acq_rel);
+  }
+  void note_freed(td::uint64 charge) {
+    headroom_.fetch_add(static_cast<td::int64>(charge), std::memory_order_acq_rel);
   }
 
  private:
@@ -191,6 +218,8 @@ class CandidatePayloadBudget {
   std::atomic<td::uint64> charged_peak_{0};
   std::atomic<td::uint64> refused_{0};
   std::atomic<td::uint64> accounting_errors_{0};
+  std::atomic<td::int64> headroom_{0};
+  std::atomic<td::uint64> live_over_charge_{0};
   mutable std::mutex mutex_;
   std::vector<Retired> retired_;
   td::uint64 retired_bytes_ = 0;
@@ -222,7 +251,27 @@ inline td::uint64 compact_candidate_charge(const Candidate& candidate) {
   return charge;
 }
 
-inline CandidateRef make_compact_candidate(const Candidate& candidate, CachedPayloadAllocations& allocations) {
+// The cache's copy of a candidate. It tells the allowance when it is freed, which is when its
+// allocations are, since the cache keeps it until no clone of them is left.
+struct CachedCandidate final : Candidate {
+  CachedCandidate(CandidatePayloadBudget& budget, td::uint64 charge, CandidateId id, ParentId parent_id,
+                  PeerValidatorId leader, std::variant<BlockIdExt, BlockCandidate> block, td::BufferSlice signature)
+      : Candidate(id, std::move(parent_id), leader, std::move(block), std::move(signature))
+      , budget_(budget)
+      , charge_(charge) {
+    budget_.note_allocated(charge_);
+  }
+  ~CachedCandidate() override {
+    budget_.note_freed(charge_);
+  }
+
+ private:
+  CandidatePayloadBudget& budget_;
+  td::uint64 charge_;
+};
+
+inline CandidateRef make_compact_candidate(const Candidate& candidate, CachedPayloadAllocations& allocations,
+                                           CandidatePayloadBudget& budget) {
   size_t next = 0;
   auto copy = [&](const td::BufferSlice& slice) {
     if (slice.empty()) {
@@ -237,11 +286,11 @@ inline CandidateRef make_compact_candidate(const Candidate& candidate, CachedPay
   if (const auto* original = std::get_if<BlockCandidate>(&candidate.block)) {
     BlockCandidate block{original->producer, original->id, original->collated_file_hash, copy(original->data),
                          copy(original->collated_data)};
-    return td::make_ref<Candidate>(candidate.id, candidate.parent_id, candidate.leader, std::move(block),
-                                   std::move(signature));
+    return td::make_ref<CachedCandidate>(budget, allocations.charge, candidate.id, candidate.parent_id,
+                                         candidate.leader, std::move(block), std::move(signature));
   }
-  return td::make_ref<Candidate>(candidate.id, candidate.parent_id, candidate.leader,
-                                 std::get<BlockIdExt>(candidate.block), std::move(signature));
+  return td::make_ref<CachedCandidate>(budget, allocations.charge, candidate.id, candidate.parent_id, candidate.leader,
+                                       std::get<BlockIdExt>(candidate.block), std::move(signature));
 }
 
 }  // namespace tos::validator::consensus::simplex
