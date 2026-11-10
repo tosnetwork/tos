@@ -120,6 +120,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   friend class ExtMessageManagerTestHarness;
   friend class ExtMessagePriorityTestHarness;
   friend class StartupCatchupManagerProbe;
+  friend class CandidateBroadcastGuardProbe;
 
  private:
   // WAITERS

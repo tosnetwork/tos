@@ -31,6 +31,7 @@ decision-log-scale-memory
 decision-log-scale-reconcile-scaling
 decision-log-scale-full-restart
 decision-log-scale-retained
+test-candidate-broadcast-guard
 c04-health-ledger-concurrent
 c04-health-action-pool-stopped-duplicate
 c04-health-action-producer-stop-ordering

@@ -696,11 +696,32 @@ td::actor::Task<> ValidatorManagerImpl::new_block_candidate_broadcast(BlockIdExt
       SCOPE_EXIT {
         active_candidate_broadcasts_.finish(block_id);
       };
-      auto handle = co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::get_block_handle, block_id, true);
-      Ref<BlockData> block = co_await create_block(block_id, std::move(data));
-      co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::set_block_data, handle, std::move(block));
-      co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::wait_block_state, handle, 0,
-                              td::Timestamp::in(60.0), true);
+      // Errors are returned from the body, never left to propagate: an error that escapes an
+      // await ends this coroutine without resuming it, and the guard above then runs wherever
+      // the caller destroys the frame. set_block_data fails from the database callback, so an
+      // escaped error would release the admission on the database thread, off this actor.
+      auto r_handle =
+          co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::get_block_handle, block_id, true).wrap();
+      if (r_handle.is_error()) {
+        co_return r_handle.move_as_error();
+      }
+      auto handle = r_handle.move_as_ok();
+      auto r_block = create_block(block_id, std::move(data));
+      if (r_block.is_error()) {
+        co_return r_block.move_as_error();
+      }
+      auto stored =
+          co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::set_block_data, handle, r_block.move_as_ok())
+              .wrap();
+      if (stored.is_error()) {
+        co_return stored.move_as_error();
+      }
+      auto applied = co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::wait_block_state, handle, 0,
+                                             td::Timestamp::in(60.0), true)
+                         .wrap();
+      if (applied.is_error()) {
+        co_return applied.move_as_error();
+      }
       VLOG(VALIDATOR_DEBUG) << "Processed candidate broadcast " << block_id.to_str();
       if (is_valid_nonfinal_group(block_id.shard_full(), cc_seqno)) {
         NonfinalGroupInfo &info = nonfinal_info_[{block_id.shard_full(), cc_seqno}];
