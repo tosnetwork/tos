@@ -217,34 +217,33 @@ class Network:
 
             process_env = os.environ.copy()
             process_env.update(start_options.env)
+            if not self._network._direct_node_logs:
+                # Streamed evidence collectors depend on a complete sequence of
+                # native log records, including conflicting or duplicate markers.
+                process_env.setdefault("TOS_SYNCHRONOUS_STDERR", "1")
 
-            match start_options.debug:
-                case None:
-                    self.__process = await self._network.process_backend.spawn(
-                        self.name,
-                        executable,
-                        cmd_flags,
-                        self._directory,
-                        process_env,
-                    )
-                case "rr":
-                    l.info(f"Recording {self.name} with rr")
-                    self.__process = await self._network.process_backend.spawn(
-                        self.name,
-                        "rr",
-                        ["record", str(executable), *cmd_flags],
-                        self._directory,
-                        process_env,
-                    )
+            command: Path | str = executable
+            if start_options.debug == "rr":
+                l.info(f"Recording {self.name} with rr")
+                command = "rr"
+                cmd_flags = ["record", str(executable), *cmd_flags]
 
-            assert self.__process.stderr is not None  # to placate pyright
+            backend = self._network.process_backend
+            launch = (self.name, command, cmd_flags, self._directory, process_env)
+            if self._network._direct_node_logs:
+                if not isinstance(backend, LocalProcessBackend):
+                    raise ValueError("direct node logs require a local process backend")
+                # The child keeps its own fd. Raw bytes are visible to readers even
+                # while the event loop is busy, and no parent-side drain is needed.
+                with self.log_path.open("wb") as raw_log:
+                    self.__process = await backend.spawn(*launch, stderr=raw_log.fileno())
+            else:
+                self.__process = await backend.spawn(*launch)
+                assert self.__process.stderr is not None
+                self.__log_streamer = LogStreamer(
+                    open(self.log_path, "wb"), self.name, self.__process.stderr,
+                )
             self.__process_watcher = asyncio.create_task(process_watcher())
-
-            self.__log_streamer = LogStreamer(
-                open(self.log_path, "wb"),
-                self.name,
-                self.__process.stderr,
-            )
 
         def announce_to(self, dht: "DHTNode"):
             self._static_nodes.append(dht)
@@ -259,6 +258,8 @@ class Network:
 
         @property
         def log_stream_fd_binding(self) -> dict[str, int]:
+            if self._network._direct_node_logs:
+                raise RuntimeError("node stderr is written directly to its raw log")
             if self.__log_streamer is None:
                 raise RuntimeError("validator raw log streamer is not running")
             return self.__log_streamer.fd_binding()
@@ -294,8 +295,6 @@ class Network:
 
         async def stop(self):
             if self.__process:
-                # No exception can occur between self.__process and self._log_streamer creation
-                assert self.__log_streamer is not None
                 assert self.__process_watcher is not None
 
                 if self.__process.returncode is None:
@@ -316,8 +315,9 @@ class Network:
                 # The process is gone; only a descendant that inherited the pipe
                 # can still hold the log open, and it must not hold the test.
                 # Cutting the pipe also lets the process watcher finish.
-                if not await self.__log_streamer.aclose(timeout=LOG_DRAIN_SECONDS):
-                    l.warning(f"Node '{self.name}' left a process holding its log pipe")
+                if self.__log_streamer is not None:
+                    if not await self.__log_streamer.aclose(timeout=LOG_DRAIN_SECONDS):
+                        l.warning(f"Node '{self.name}' left a process holding its log pipe")
                 await self.__process_watcher
 
                 self.__process = None
@@ -332,6 +332,7 @@ class Network:
         *,
         base_port: int = 2000,
         process_backend: ProcessBackend | None = None,
+        direct_node_logs: bool = False,
     ):
         self._install = install
         self._directory = directory.absolute()
@@ -339,6 +340,7 @@ class Network:
         self._node_idx = 0
         self._status = _Status.INITED
         self._process_backend = process_backend or LocalProcessBackend()
+        self._direct_node_logs = direct_node_logs
 
         self._toslib = install.toslibjson
         self._event_loop = ToslibEventLoop(self._toslib, event_loop)

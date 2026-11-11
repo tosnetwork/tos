@@ -205,12 +205,13 @@ class CollationStatsTests(unittest.TestCase):
 
 
 class NodeMetricsTests(unittest.TestCase):
-    def test_parse_keeps_only_the_ingress_series(self):
+    def test_parse_keeps_ingress_and_stderr_loss_series(self):
         page = "\n".join(
             [
                 "# HELP x",
                 'tos_ext_message_admission_total{outcome="ok"} 7',
                 "tos_overlay_broadcast_received_total 3",
+                "tos_stderr_log_dropped_total 11",
                 "process_resident_memory_bytes 1e9",
                 "tos_mempool_size NaN-not-a-number",
             ]
@@ -220,6 +221,7 @@ class NodeMetricsTests(unittest.TestCase):
             {
                 'tos_ext_message_admission_total{outcome="ok"}': 7.0,
                 "tos_overlay_broadcast_received_total": 3.0,
+                "tos_stderr_log_dropped_total": 11.0,
             },
         )
 

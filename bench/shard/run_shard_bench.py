@@ -430,7 +430,7 @@ async def main(a: argparse.Namespace) -> int:
     working_dir.mkdir()
     opened: list[chain.PacedClient] = []
     t2: dict[str, Any] | None = None
-    async with Network(install, working_dir) as network:
+    async with Network(install, working_dir, direct_node_logs=True) as network:
         if network.config.auth_network_tag is None:
             network.config.auth_network_tag = hashlib.sha256(b"tos-shard-bench").digest()
         network.config.shard_validators = a.validators

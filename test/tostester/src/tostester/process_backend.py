@@ -43,6 +43,8 @@ class LocalProcessBackend(ProcessBackend):
         cwd: Path,
         env: Mapping[str, str],
         capture_stdout: bool = False,
+        *,
+        stderr: int = asyncio.subprocess.PIPE,
     ) -> asyncio.subprocess.Process:
         del node_name
         return await asyncio.create_subprocess_exec(
@@ -51,7 +53,7 @@ class LocalProcessBackend(ProcessBackend):
             cwd=cwd,
             env=env,
             stdout=asyncio.subprocess.PIPE if capture_stdout else None,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=stderr,
         )
 
     def manifest(self) -> dict[str, object]:

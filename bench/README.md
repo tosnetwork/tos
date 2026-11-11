@@ -74,14 +74,28 @@ material derived from it).
 
 ## How a stage is measured
 
-1. Read every load wallet's PRIMARY nonce.
+1. Read the participating wallets' PRIMARY nonces and the sink balances.
 2. Pre-sign the whole stage: one ML-DSA-44-signed external per transfer.
    Wallets are reused round-robin, never faster than `--min-reuse` seconds.
 3. Send at the offered rate through sender connections spread over every
    validator, while a scanner reads every basechain block.
-4. Drain, then read every counter again: `transfers_executed` is exact, and
-   `transfers_unaccounted` is what was planned but never executed (refused,
-   expired or blocked behind a failed predecessor).
+4. Drain, then read the on-chain state again. Sink balance gains determine
+   `transfers_executed`; nonce changes count accepted requests. The stage
+   records undelivered transfers in `transfers_unaccounted`.
+
+Local nodes write stderr directly into their per-node log files under
+`network/`. Signing and wallet preparation leave the event loop available to
+serve other nodes. With `--metrics-base-port`, the stage's `node_metrics_delta`
+also reports changes in the validator's `tos_stderr_log_dropped_total`,
+`tos_stderr_log_dropped_errors_total` and `tos_stderr_log_write_errors_total`.
+These count discarded diagnostics, the ERROR subset, and failed writes,
+respectively. The separate session stats files supply the collation measurements.
+
+Standalone validators send ordinary stderr diagnostics through a bounded writer
+(256 records and 1 MiB, including the active write). ERROR has reserved capacity.
+The synchronous file logger selected with `--logname` retains its rotation policy.
+Tostester's streamed evidence captures select `TOS_SYNCHRONOUS_STDERR=1`
+to preserve complete records and depend on their reader continuously draining the pipe.
 
 A stage is `below_offered_rate` when under 95% of planned transfers execute or
 the steady-state transfer rate falls below 90% of the offered rate. It is
