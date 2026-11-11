@@ -34,11 +34,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import TextIO
 
 REPO = Path(__file__).resolve().parents[2]
 BUILD = REPO / "build"
@@ -58,6 +60,17 @@ DELETE_DONE = re.compile(
 )
 ERASE_ACK = re.compile(r"VALCLEANUP erase_ack session=(?P<session>\S+)")
 FUTURE_SEQNO = 9000000
+
+
+def _start_cleanup_engine(cmd: list[str], node: Path, log: TextIO) -> subprocess.Popen[bytes]:
+    # Both collectors inspect the last cleanup decisions after an abrupt exit.
+    return subprocess.Popen(
+        cmd,
+        cwd=node,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        env={**os.environ, "TOS_SYNCHRONOUS_STDERR": "1"},
+    )
 
 
 def _latest_node(name: str = "node2") -> Path | None:
@@ -230,7 +243,7 @@ def main() -> int:
     ]
     exited_early = False
     with restart_log.open("w") as lf:
-        proc = subprocess.Popen(cmd, cwd=str(node), stdout=lf, stderr=subprocess.STDOUT)
+        proc = _start_cleanup_engine(cmd, node, lf)
         try:
             deadline = time.monotonic() + args.seconds
             while time.monotonic() < deadline:

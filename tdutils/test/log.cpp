@@ -19,9 +19,12 @@
 */
 
 #include <cerrno>
+#include <chrono>
 #include <functional>
+#include <future>
 #include <limits>
 
+#include "td/utils/AsyncStderrLog.h"
 #include "td/utils/FileLog.h"
 #include "td/utils/ScopeGuard.h"
 #include "td/utils/Slice.h"
@@ -34,6 +37,12 @@
 #include "td/utils/port/path.h"
 #include "td/utils/port/thread.h"
 #include "td/utils/tests.h"
+
+#if TD_PORT_POSIX
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 char disable_linker_warning_about_empty_file_tdutils_test_log_cpp TD_UNUSED;
 
@@ -145,6 +154,153 @@ TEST(Log, TsLogger) {
     return td::make_unique<FileLog>();
   });
 }
+
+namespace {
+struct PausedLogSink {
+  std::promise<void> entered;
+  std::promise<void> resume;
+  std::vector<std::string> records;
+
+  bool write(td::Slice data) {
+    if (records.empty()) {
+      entered.set_value();
+      resume.get_future().wait();
+    }
+    records.push_back(data.str());
+    return true;
+  }
+  void wait_for_writer() {
+    ASSERT_TRUE(entered.get_future().wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+  }
+};
+}  // namespace
+
+TEST(Log, AsyncStderrEntryLimitAndErrorReserve) {
+  PausedLogSink sink;
+  td::AsyncStderrLog log([&](td::Slice data) { return sink.write(data); });
+  const auto before = log.stats();
+  std::string first = "caller-owned";
+  log.append(first, verbosity_INFO);
+  sink.wait_for_writer();
+  first.assign(first.size(), 'x');
+  for (size_t i = 1; i <= log.max_records - log.error_records; ++i) {
+    log.append("message", verbosity_INFO);
+  }
+  for (size_t i = 0; i <= log.error_records; ++i) {
+    log.append("error", verbosity_ERROR);
+  }
+  ASSERT_EQ(before.dropped + 2, log.stats().dropped);
+  ASSERT_EQ(before.dropped_errors + 1, log.stats().dropped_errors);
+  ASSERT_TRUE(!log.flush());
+  sink.resume.set_value();
+  ASSERT_TRUE(log.flush());
+  ASSERT_EQ(log.max_records, sink.records.size());
+  ASSERT_TRUE(sink.records.front().find("caller-owned") != std::string::npos);
+  ASSERT_TRUE(sink.records.back().find("error") != std::string::npos);
+  for (size_t i = 0; i < 10; ++i) {
+    log.append("after wrap", verbosity_INFO);
+  }
+  ASSERT_TRUE(log.flush());
+  ASSERT_EQ(log.max_records + 10, sink.records.size());
+}
+
+TEST(Log, AsyncStderrBytesIncludeInFlightRecord) {
+  PausedLogSink sink;
+  td::AsyncStderrLog log([&](td::Slice data) { return sink.write(data); });
+  const size_t framing = td::ansi_color_to_str(log.color_for(verbosity_ERROR)).size() +
+                         td::ansi_color_to_str(td::AnsiColor::Empty).size() + 1;
+  std::string record(log.max_bytes - framing, 'a');
+  const auto before = log.stats();
+  log.append(record, verbosity_ERROR);
+  sink.wait_for_writer();
+  log.append("next", verbosity_ERROR);
+  ASSERT_EQ(before.dropped_errors + 1, log.stats().dropped_errors);
+  sink.resume.set_value();
+  ASSERT_TRUE(log.flush());
+  ASSERT_EQ(static_cast<size_t>(1), sink.records.size());
+  ASSERT_EQ(log.max_bytes, sink.records[0].size());
+  record.push_back('b');
+  log.append(record, verbosity_ERROR);
+  ASSERT_EQ(before.dropped_errors + 2, log.stats().dropped_errors);
+  log.append("recovered", verbosity_INFO);
+  ASSERT_TRUE(log.flush());
+  ASSERT_EQ(static_cast<size_t>(2), sink.records.size());
+}
+
+TEST(Log, AsyncStderrShutdownRetainsOnlyInFlightRecord) {
+  auto sink = std::make_shared<PausedLogSink>();
+  std::promise<void> destroyed;
+  auto done = destroyed.get_future();
+  const auto before = td::AsyncStderrLog::stats();
+  {
+    // The pending writer owns the sink and its in-flight copy after shutdown.
+    auto guard = std::shared_ptr<void>(nullptr, [&](void *) { destroyed.set_value(); });
+    td::AsyncStderrLog log([guard, sink](td::Slice data) { return sink->write(data); });
+    log.append("in flight", verbosity_INFO);
+    sink->wait_for_writer();
+    log.append("discard at deadline", verbosity_ERROR);
+  }
+  ASSERT_EQ(before.dropped_errors + 1, td::AsyncStderrLog::stats().dropped_errors);
+  sink->resume.set_value();
+  ASSERT_TRUE(done.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+  ASSERT_EQ(static_cast<size_t>(1), sink->records.size());
+}
+
+#if TD_PORT_POSIX
+TEST(Log, AsyncStderrFatalCallback) {
+  const auto pid = fork();
+  ASSERT_TRUE(pid >= 0);
+  if (pid == 0) {
+    alarm(5);
+    td::AsyncStderrLog log([](td::Slice) -> bool { _Exit(2); });
+    td::set_log_fatal_error_callback([](td::CSlice message) { _Exit(message == "fatal callback" ? 42 : 3); });
+    log.append("fatal callback", verbosity_FATAL);
+    _Exit(4);
+  }
+  int status = 0;
+  pid_t waited;
+  do {
+    waited = waitpid(pid, &status, 0);
+  } while (waited < 0 && errno == EINTR);
+  ASSERT_EQ(pid, waited);
+  ASSERT_TRUE(WIFEXITED(status));
+  ASSERT_EQ(42, WEXITSTATUS(status));
+}
+
+TEST(Log, AsyncStderrDescriptorOwnershipAndErrors) {
+  int pipe_fds[2];
+  ASSERT_EQ(0, pipe(pipe_fds));
+  const int observer = dup(pipe_fds[1]);
+  ASSERT_TRUE(observer >= 0);
+  const int flags = fcntl(observer, F_GETFL);
+  ASSERT_TRUE(flags >= 0);
+#ifdef F_GETNOSIGPIPE
+  const int signal_policy = fcntl(observer, F_GETNOSIGPIPE);
+#endif
+  {
+    td::AsyncStderrLog log(pipe_fds[1]);
+    ASSERT_EQ(0, close(pipe_fds[1]));
+    const auto before = log.stats();
+    log.append("bytes\n", verbosity_INFO);
+    ASSERT_TRUE(log.flush());
+    char buf[64];
+    auto n = read(pipe_fds[0], buf, sizeof(buf));
+    ASSERT_TRUE(n > 0);
+    ASSERT_EQ(td::ansi_color_to_str(log.color_for(verbosity_INFO)).str() + "bytes" +
+                  td::ansi_color_to_str(td::AnsiColor::Empty).str() + "\n",
+              std::string(buf, static_cast<size_t>(n)));
+    ASSERT_EQ(0, close(pipe_fds[0]));
+    log.append("reader closed", verbosity_WARNING);
+    ASSERT_TRUE(log.flush());
+    ASSERT_EQ(before.write_errors + 1, log.stats().write_errors);
+    ASSERT_EQ(flags & O_NONBLOCK, fcntl(observer, F_GETFL) & O_NONBLOCK);
+  }
+#ifdef F_GETNOSIGPIPE
+  ASSERT_EQ(signal_policy, fcntl(observer, F_GETNOSIGPIPE));
+#endif
+  ASSERT_EQ(0, close(observer));
+}
+#endif
 
 TEST(Log, TsFileLogRotationBoundsFileSize) {
   // A TsFileLog created with a finite rotation threshold must actually rotate:

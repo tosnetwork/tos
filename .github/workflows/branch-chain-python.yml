@@ -417,6 +417,22 @@ jobs:
           uv sync --no-dev
           uv run test/tostester/generate_tl.py
 
+      - name: Exercise local bench signing and delivery on four validators
+        timeout-minutes: 12
+        run: |
+          cmake -S bench/pq-signer -B build/bench-pq-signer -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/bench-pq-signer --parallel 4
+          uv run python bench/tests/test_preparation.py --signer build/bench-pq-signer/bench-pq-signer
+          uv run python bench/run_local_bench.py --out "$RUNNER_TEMP/bench-log-smoke" \
+            --validators 4 --send-via validators --wallets 16 --rates 1 --duration 10 \
+            --warmup 0 --drain 20 --node-verbosity 2 --sinks 4 --signer-threads 1
+          python3 - "$RUNNER_TEMP/bench-log-smoke/results.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          stage, = json.loads(Path(sys.argv[1]).read_bytes())["stages"]
+          assert stage["messages_sent"] == stage["transfers_executed"] == 10, stage
+          PY
+
       - name: Exercise explorer RPCs on candidate and ordinary version-16 networks
         timeout-minutes: 10
         run: |

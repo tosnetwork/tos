@@ -148,7 +148,7 @@ class CaptureNodeOffline(unittest.TestCase):
             ],
             cwd=self.db,
             stderr=subprocess.PIPE,
-            env={"PATH": os.environ.get("PATH", "/bin")},
+            env={"PATH": os.environ.get("PATH", "/bin"), "TOS_SYNCHRONOUS_STDERR": "1"},
         )
         # Wait until the child's control socket is listening; fds of a starting
         # interpreter can vanish while being listed, so tolerate that.
@@ -271,7 +271,9 @@ class CaptureNodeOffline(unittest.TestCase):
         self.assertEqual(sorted(receipt["full_ids"]), ["20", "21", "22"])
         self.assertEqual(self.block_source_calls, [20, 21, 22])
         self.assertTrue(all(row["exit"] == 0 for row in receipt["proofs"].values()))
-        self.assertEqual(receipt["process_before"]["environment"]["names"], ["PATH"])
+        self.assertEqual(
+            receipt["process_before"]["environment"]["names"], ["PATH", "TOS_SYNCHRONOUS_STDERR"]
+        )
         rpc_order = [row["label"] for row in receipt["rpc"]]
         self.assertEqual(rpc_order[0], "masterchain-info")
         self.assertTrue((self.out / "receipt.json").is_file())

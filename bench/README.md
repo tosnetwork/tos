@@ -74,14 +74,28 @@ material derived from it).
 
 ## How a stage is measured
 
-1. Read every load wallet's PRIMARY nonce.
+1. Read the participating wallets' PRIMARY nonces and the sink balances.
 2. Pre-sign the whole stage: one ML-DSA-44-signed external per transfer.
    Wallets are reused round-robin, never faster than `--min-reuse` seconds.
 3. Send at the offered rate through sender connections spread over every
    validator, while a scanner reads every basechain block.
-4. Drain, then read every counter again: `transfers_executed` is exact, and
-   `transfers_unaccounted` is what was planned but never executed (refused,
-   expired or blocked behind a failed predecessor).
+4. Drain, then read the on-chain state again. Sink balance gains determine
+   `transfers_executed`; nonce changes count accepted requests. The stage
+   records undelivered transfers in `transfers_unaccounted`.
+
+Local nodes write stderr directly into their per-node log files under
+`network/`. Signing and wallet preparation leave the event loop available to
+serve other nodes. With `--metrics-base-port`, the stage's `node_metrics_delta`
+also reports changes in the validator's `tos_stderr_log_dropped_total`,
+`tos_stderr_log_dropped_errors_total` and `tos_stderr_log_write_errors_total`.
+These count discarded diagnostics, the ERROR subset, and failed writes,
+respectively. The separate session stats files supply the collation measurements.
+
+Standalone validators send ordinary stderr diagnostics through a bounded writer
+(256 records and 1 MiB, including the active write). ERROR has reserved capacity.
+The synchronous file logger selected with `--logname` retains its rotation policy.
+Tostester's streamed evidence captures select `TOS_SYNCHRONOUS_STDERR=1`
+to preserve complete records and depend on their reader continuously draining the pipe.
 
 A stage is `below_offered_rate` when under 95% of planned transfers execute or
 the steady-state transfer rate falls below 90% of the offered rate. It is
@@ -114,16 +128,15 @@ either way.
 * Liteserver admission: each connection admits 64 queries/s with 32 in flight,
   and each node admits 512 medium-class queries/s (including `sendMessage`).
   Read connections stay at 48 queries/s.
-* External admission: a node admits 30 external messages per 10 s from one
-  client identity. The bench opens enough sender connections (each its own
-  identity, paced at 2.5/s) for the highest offered rate, capped by
-  `--max-senders`; on a public network the equivalent is many independent
-  clients.
-* Connections: a liteserver admits 64 connections per source IP. With every
-  bench connection on one host, at most 56 senders per node are used, so one
-  host can offer about 140 externals/s per validator (560/s with four). A
-  higher rate is refused up front rather than measured as a chain shortfall. Sends are never
-  retried, so a refusal at the node is reported as a result.
+* The pool's default address limit is 30 checked external messages per 10 s
+  for one destination wallet. The bench spreads transfers across load wallets
+  and enforces `--min-reuse` per wallet.
+* The sender paces each connection at up to 10 externals/s and uses at most
+  56 sending connections per node, leaving room for readers under the 64
+  connections per source IP limit. Four validators therefore allow an offered
+  schedule of up to 2,240 externals/s before applying `--max-senders`.
+  At 600/s the bench opens 90 sending connections in total. The results
+  record node refusals and how many transfers reach the sinks.
 * External messages are capped at 64 KiB; deployment batches are sized under
   that.
 * Requests are valid for at most 3,600 s, so `--duration + --drain` must leave

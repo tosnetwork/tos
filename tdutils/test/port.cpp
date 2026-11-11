@@ -152,7 +152,41 @@ TEST(Port, Writev) {
 #include <mutex>
 #include <signal.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <unistd.h>
+
+TEST(Port, AsyncStderrFatalDeadline) {
+  auto *output = std::tmpfile();
+  ASSERT_TRUE(output != nullptr);
+  auto pid = fork();
+  ASSERT_TRUE(pid >= 0);
+  if (pid == 0) {
+    if (dup2(fileno(output), STDERR_FILENO) < 0) {
+      _Exit(2);
+    }
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGALRM);
+    if (pthread_sigmask(SIG_BLOCK, &mask, nullptr) != 0) {
+      _Exit(3);
+    }
+    // Exercise the deadline itself without depending on stack-trace tools or timing.
+    set_failure_signal_message({});
+    raise(SIGALRM);
+    _Exit(4);
+  }
+  int status = 0;
+  pid_t waited;
+  do {
+    waited = waitpid(pid, &status, 0);
+  } while (waited < 0 && errno == EINTR);
+  ASSERT_EQ(pid, waited);
+  ASSERT_TRUE(WIFEXITED(status));
+  ASSERT_EQ(EXIT_FAILURE, WEXITSTATUS(status));
+  ASSERT_EQ(0, std::fseek(output, 0, SEEK_END));
+  ASSERT_EQ(0L, std::ftell(output));
+  ASSERT_EQ(0, std::fclose(output));
+}
 
 static std::mutex m;
 static std::vector<std::string> ptrs;

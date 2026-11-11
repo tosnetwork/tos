@@ -44,6 +44,9 @@ void signal_safe_write_signal_number(int sig, bool add_header = true);
 
 void signal_safe_write_pointer(void *p, bool add_header = true);
 
+// Called immediately before fatal callback dispatch/abort in processes that install the default failure handler.
+void set_failure_signal_message(Slice message);
+
 Status set_default_failure_signal_handler();
 
 }  // namespace td

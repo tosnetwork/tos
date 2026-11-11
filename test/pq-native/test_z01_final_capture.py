@@ -202,7 +202,10 @@ class FinalCaptureControls(unittest.TestCase):
                 "--json-rpc-address",
                 "127.0.0.1:27600",
             ]
-            clean_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+            clean_env = {
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "TOS_SYNCHRONOUS_STDERR": "1",
+            }
             process = subprocess.Popen(command, cwd=db, stderr=subprocess.PIPE, env=clean_env)
             try:
                 assert process.stderr is not None
@@ -213,7 +216,9 @@ class FinalCaptureControls(unittest.TestCase):
                     process.pid, db, binary_sha, raw, "valid", "127.0.0.1:27600", config, pipe_inode
                 )
                 self.assertEqual(snapshot["stderr_pipe_inode"], pipe_inode)
-                self.assertEqual(snapshot["environment"]["names"], ["PATH"])
+                self.assertEqual(
+                    snapshot["environment"]["names"], ["PATH", "TOS_SYNCHRONOUS_STDERR"]
+                )
                 self.assertTrue((raw / "valid-proc-environ.raw").is_file())
                 with self.assertRaisesRegex(z01.EvidenceError, "stderr pipe differs"):
                     z01.process_snapshot(
@@ -232,17 +237,31 @@ class FinalCaptureControls(unittest.TestCase):
                 process.stderr.close()
 
     def test_environment_refuses_local_runtime_knobs(self):
+        log_mode = b"TOS_SYNCHRONOUS_STDERR=1\0"
         self.assertEqual(
-            z01.environment_policy(b"PATH=/bin\0HOME=/tmp\0")["names"], ["HOME", "PATH"]
+            z01.environment_policy(b"PATH=/bin\0HOME=/tmp\0" + log_mode)["names"],
+            ["HOME", "PATH", "TOS_SYNCHRONOUS_STDERR"],
         )
-        self.assertEqual(z01.environment_policy(b"")["names"], [])
+        for raw in (
+            b"",
+            b"PATH=/bin\0",
+            b"TOS_SYNCHRONOUS_STDERR=0\0",
+            b"TOS_SYNCHRONOUS_STDERR=01\0",
+        ):
+            with (
+                self.subTest(raw=raw),
+                self.assertRaisesRegex(z01.EvidenceError, "requires TOS_SYNCHRONOUS_STDERR=1"),
+            ):
+                z01.environment_policy(raw)
+        with self.assertRaisesRegex(z01.EvidenceError, "duplicate"):
+            z01.environment_policy(log_mode + log_mode)
         for raw in (
             b"PATH=/bin\0TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS=9\0",
             b"TOS_ROCKSDB_BLOCK_CACHE_SIZE=1\0",
             b"TOS_TEST_ORIGIN_TRANSIENT_FAILURES=1\0",
         ):
             with self.assertRaisesRegex(z01.EvidenceError, "local runtime knobs"):
-                z01.environment_policy(raw)
+                z01.environment_policy(log_mode + raw)
         with self.assertRaisesRegex(z01.EvidenceError, "malformed process environment"):
             z01.environment_policy(b"PATH=/bin")
         with self.assertRaisesRegex(z01.EvidenceError, "duplicate"):
@@ -268,6 +287,7 @@ class FinalCaptureControls(unittest.TestCase):
             ]
             env = {
                 "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "TOS_SYNCHRONOUS_STDERR": "1",
                 "TOS_SIMPLEX_CANDIDATE_RESOLVE_MAX_ATTEMPTS": "1",
             }
             process = subprocess.Popen(command, cwd=db, stderr=subprocess.PIPE, env=env)

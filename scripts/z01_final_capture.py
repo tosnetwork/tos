@@ -176,29 +176,27 @@ def process_snapshot(
     }
 
 
-# Every TOS_* variable the node reads is a test, fault-injection, diagnostic or
-# cache knob (for example TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS); none belongs
-# in a Z01 final-parameter process, so the whole prefix is refused.
-FORBIDDEN_ENV_PREFIX = b"TOS_"
-
-
 def environment_policy(environ_raw: bytes) -> dict[str, Any]:
-    """Reject any local TOS_* runtime knob in one node process environment."""
+    """Require complete stderr evidence and refuse all other local TOS_* settings."""
     require(environ_raw == b"" or environ_raw.endswith(b"\0"), "malformed process environment")
-    names = []
+    values: dict[bytes, bytes] = {}
     for entry in environ_raw.split(b"\0"):
         if not entry:
             continue
-        name, separator, _ = entry.partition(b"=")
+        name, separator, value = entry.partition(b"=")
         require(bool(separator) and bool(name), "malformed process environment entry")
-        names.append(name)
-    require(len(names) == len(set(names)), "duplicate process environment name")
+        require(name not in values, "duplicate process environment name")
+        values[name] = value
+    log_mode = b"TOS_SYNCHRONOUS_STDERR"
     forbidden = sorted(
-        name.decode("ascii", "replace") for name in names if name.startswith(FORBIDDEN_ENV_PREFIX)
+        name.decode("ascii", "replace")
+        for name in values
+        if name.startswith(b"TOS_") and name != log_mode
     )
     require(not forbidden, f"node environment carries local runtime knobs: {forbidden}")
+    require(values.get(log_mode) == b"1", "native log capture requires TOS_SYNCHRONOUS_STDERR=1")
     return {
-        "names": sorted(name.decode("ascii", "replace") for name in names),
+        "names": sorted(name.decode("ascii", "replace") for name in values),
         "environ_sha256": sha(environ_raw),
     }
 

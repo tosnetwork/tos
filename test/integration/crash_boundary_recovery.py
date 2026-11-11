@@ -47,6 +47,7 @@ _script_module = (
 ENGINE = _script_module.ENGINE
 INJECT = _script_module.INJECT
 _latest_node = _script_module._latest_node
+_start_cleanup_engine = _script_module._start_cleanup_engine
 _zerostate_hashes = _script_module._zerostate_hashes
 
 FATAL = re.compile(
@@ -113,7 +114,7 @@ def _launch(
     ]
     self_exited = False
     with log.open("w") as lf:
-        proc = subprocess.Popen(cmd, cwd=str(node), stdout=lf, stderr=subprocess.STDOUT)
+        proc = _start_cleanup_engine(cmd, node, lf)
         try:
             deadline = time.monotonic() + seconds
             while time.monotonic() < deadline:

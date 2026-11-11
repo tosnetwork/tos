@@ -1678,6 +1678,10 @@ tos_test(test-tdactor)
 
 #BEGIN toslib
 tos_test(test-tdutils ${BENCHMARK_FILTER})
+if (UNIX)
+  add_test(NAME validator-stderr-logging COMMAND test-tdutils --filter +AsyncStderr)
+  set_tests_properties(validator-stderr-logging PROPERTIES TIMEOUT 30 FAIL_REGULAR_EXPRESSION "(^|\n)0 test\\(s\\) passed")
+endif()
 tos_test(test-toslib-offline)
 #END toslib
 

@@ -29,6 +29,8 @@ class RunnerGuards(unittest.TestCase):
         live.refuse_local_knobs({"PATH": "/bin", "HOME": "/tmp"})
         with self.assertRaisesRegex(live.RunError, "TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS"):
             live.refuse_local_knobs({"TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS": "2"})
+        with self.assertRaisesRegex(live.RunError, "TOS_SYNCHRONOUS_STDERR"):
+            live.refuse_local_knobs({"TOS_SYNCHRONOUS_STDERR": "1"})
 
     def test_harness_refuses_22_before_fift(self):
         refusals = live.harness_refusals()
