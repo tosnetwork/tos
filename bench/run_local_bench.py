@@ -9,8 +9,7 @@ clock:
    deploys its fixed share of load wallets with ML-DSA-44-signed externals of
    up to 255 actions.
 3. For each offered rate: pre-sign one ML-DSA-44 external per transfer, send at
-   the offered rate through sender connections paced under the node's
-   per-identity external admission window, scan every basechain block, drain,
+   the offered rate through paced sender connections, scan every basechain block, drain,
    then read every load wallet's PRIMARY nonce to account for each transfer.
 
 Outputs (under --out): results.json, plus per stage blocks.csv and timeline.csv.
@@ -413,17 +412,9 @@ class Bench:
         deadline = await self._now() + a.duration + a.drain + 600
         transfer = nano(a.transfer_value)
         t_sign = time.time()
-        bocs = []
-        for first in range(0, count, DEPLOY_CHUNK):
-            stop = min(count, first + DEPLOY_CHUNK)
-            addresses = (self.load_addresses[k % n].hash_part for k in range(first, stop))
-            nonces = {address: start[address] for address in addresses}
-            batch = await self.preparer.run(
-                preparation.WalletWork.transfers, first, stop, n, nonces, transfer, deadline
-            )
-            if len(batch) != stop - first:
-                raise RuntimeError("wallet preparation returned the wrong number of externals")
-            bocs.extend(batch)
+        bocs = await self.preparer.presign(
+            self.load_addresses, start, count, transfer, deadline, DEPLOY_CHUNK
+        )
         sign_seconds = time.time() - t_sign
         log.info("quantum @ %g/s: %d transfers pre-signed in %.1fs", rate, count, sign_seconds)
 

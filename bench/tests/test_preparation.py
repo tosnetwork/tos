@@ -57,11 +57,11 @@ class PreparationTests(unittest.IsolatedAsyncioTestCase):
     async def test_presigned_messages_match_in_send_order(self):
         tool = self.working_signer()
         work = preparation.WalletWork(tool, self.config)
-        wallets = work.derive("load", range(2))
+        wallets = work.derive("load", range(5))
         dest = sinks(self.config.sink_count, self.config.seed)
         start = {w.address.hash_part: 5 + i * 7 for i, w in enumerate(wallets)}
         expected = []
-        for k in range(7):
+        for k in range(19):
             w = wallets[k % len(wallets)]
             req = w.request(
                 start[w.address.hash_part] + k // len(wallets),
@@ -70,21 +70,41 @@ class PreparationTests(unittest.IsolatedAsyncioTestCase):
             )
             [sig] = tool.sign([(w.pq_seed, req.hash)], QSP_PRIMARY_CONTEXT)
             expected.append(w.external(req, sig).serialize().to_boc())
-        async with preparation.wallet_preparer(tool, self.config) as worker:
-            result = []
-            for first in range(0, 7, 3):
-                result.extend(
-                    await worker.run(
-                        preparation.WalletWork.transfers,
-                        first,
-                        min(7, first + 3),
-                        2,
-                        start,
-                        11,
-                        165000,
-                    )
+        batches = {"public": [], "sign": []}
+        run_batch = tool.run_batch
+
+        async def counted(args, lines):
+            batches[args[0]].append(lines.count(b"\n"))
+            return await run_batch(args, lines)
+
+        with patch.object(tool, "run_batch", counted):
+            async with preparation.wallet_preparer(tool, self.config) as worker:
+                result = await worker.presign(
+                    [w.address for w in wallets], start, 19, 11, 165000, 3
                 )
         self.assertEqual(result, expected)
+        self.assertEqual(batches["public"], [3, 2])
+        self.assertEqual(sum(batches["sign"]), 19)
+        self.assertLessEqual(max(batches["sign"]), 3)
+
+    def test_soak_and_high_reuse_plans_cover_each_transfer_once(self):
+        sizes = [(300000, int(rate * 1500)) for rate in (600, 600.1, 600.2, 600.3)]
+        for wallet_count, count in [*sizes, (2, 6001), (2001, 19), (7, 0)]:
+            with self.subTest(wallet_count=wallet_count, count=count):
+                derived = 0
+                visits = bytearray(count)
+                for wallets, batches in preparation.transfer_plan(wallet_count, count, 2000):
+                    self.assertEqual(wallets.start, derived)
+                    self.assertLessEqual(len(wallets), 2000)
+                    derived = wallets.stop
+                    for positions in batches:
+                        self.assertLessEqual(len(positions), 2000)
+                        for k in positions:
+                            if k % wallet_count not in wallets:
+                                self.fail("transfer scheduled outside the current wallet chunk")
+                            visits[k] += 1
+                self.assertEqual(derived, min(wallet_count, count))
+                self.assertEqual(visits.count(1), count)
 
     async def test_two_deployers_keep_their_own_wallets_and_nonces(self):
         tool = self.working_signer()

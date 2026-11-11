@@ -4,6 +4,7 @@ import asyncio
 import multiprocessing
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from itertools import batched
 from multiprocessing.connection import Connection
 
 from pytosiq_core import Cell
@@ -38,6 +39,7 @@ class WalletWork:
         self.config = config
         self.destinations = sinks(config.sink_count, config.seed)
         self.deploy_queues: dict[int, list[QuantumWallet]] = {}
+        self.transfer_wallets: dict[int, tuple[QuantumWallet, int]] = {}
 
     def derive(self, tag, indices):
         c = self.config
@@ -73,24 +75,39 @@ class WalletWork:
             del self.deploy_queues[deployer.wallet_id]
         return boc, bool(queue)
 
-    def transfers(self, first, stop, wallet_count, start, transfer, deadline):
-        batch = range(first, stop)
-        indices = list(dict.fromkeys(k % wallet_count for k in batch))
-        wallets = dict(zip(indices, self.derive("load", indices), strict=True))
+    def start_transfer_chunk(self, indices, start):
+        if self.transfer_wallets:
+            raise RuntimeError("previous transfer wallet chunk is incomplete")
+        for i, wallet in zip(indices, self.derive("load", indices), strict=True):
+            self.transfer_wallets[i] = (wallet, start[wallet.address.hash_part])
+
+    def transfers(self, positions, wallet_count, count, transfer, deadline):
         jobs = []
-        for k in batch:
-            wallet = wallets[k % wallet_count]
+        for k in positions:
+            i = k % wallet_count
+            wallet, nonce = self.transfer_wallets[i]
             request = wallet.request(
-                start[wallet.address.hash_part] + k // wallet_count,
+                nonce + k // wallet_count,
                 [wallet.transfer(self.destinations[k % len(self.destinations)], transfer)],
                 deadline,
             )
             jobs.append((wallet, request))
+            if k + wallet_count >= count:
+                del self.transfer_wallets[i]
         signatures = self.signer.sign([(w.pq_seed, r.hash) for w, r in jobs], QSP_PRIMARY_CONTEXT)
         return [
             w.external(r, sig).serialize().to_boc()
             for (w, r), sig in zip(jobs, signatures, strict=True)
         ]
+
+
+def transfer_plan(wallet_count: int, count: int, batch_size: int):
+    """Derive each used wallet once and sign its scheduled transfers in bounded batches."""
+    used = min(wallet_count, count)
+    for first in range(0, used, batch_size):
+        wallets = range(first, min(used, first + batch_size))
+        positions = (k for i in wallets for k in range(i, count, wallet_count))
+        yield wallets, batched(positions, batch_size)
 
 
 def _worker(channel: Connection, config: WalletConfig):
@@ -111,6 +128,20 @@ class WalletPreparer:
         self.channel = channel
         self.lock = asyncio.Lock()
         self.broken = False
+
+    async def presign(self, addresses, start, count, transfer, deadline, batch_size) -> list[bytes]:
+        wallet_count = len(addresses)
+        bocs = [b""] * count
+        for wallets, batches in transfer_plan(wallet_count, count, batch_size):
+            nonces = {addresses[i].hash_part: start[addresses[i].hash_part] for i in wallets}
+            await self.run(WalletWork.start_transfer_chunk, wallets, nonces)
+            for positions in batches:
+                signed = await self.run(
+                    WalletWork.transfers, positions, wallet_count, count, transfer, deadline
+                )
+                for k, boc in zip(positions, signed, strict=True):
+                    bocs[k] = boc
+        return bocs
 
     async def run(self, method, *args):
         # A single in-flight request also caps total native parallelism at --signer-threads

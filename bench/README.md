@@ -128,16 +128,15 @@ either way.
 * Liteserver admission: each connection admits 64 queries/s with 32 in flight,
   and each node admits 512 medium-class queries/s (including `sendMessage`).
   Read connections stay at 48 queries/s.
-* External admission: a node admits 30 external messages per 10 s from one
-  client identity. The bench opens enough sender connections (each its own
-  identity, paced at 2.5/s) for the highest offered rate, capped by
-  `--max-senders`; on a public network the equivalent is many independent
-  clients.
-* Connections: a liteserver admits 64 connections per source IP. With every
-  bench connection on one host, at most 56 senders per node are used, so one
-  host can offer about 140 externals/s per validator (560/s with four). A
-  higher rate is refused up front rather than measured as a chain shortfall. Sends are never
-  retried, so a refusal at the node is reported as a result.
+* The pool's default address limit is 30 checked external messages per 10 s
+  for one destination wallet. The bench spreads transfers across load wallets
+  and enforces `--min-reuse` per wallet.
+* The sender paces each connection at up to 10 externals/s and uses at most
+  56 sending connections per node, leaving room for readers under the 64
+  connections per source IP limit. Four validators therefore allow an offered
+  schedule of up to 2,240 externals/s before applying `--max-senders`.
+  At 600/s the bench opens 90 sending connections in total. The results
+  record node refusals and how many transfers reach the sinks.
 * External messages are capped at 64 KiB; deployment batches are sized under
   that.
 * Requests are valid for at most 3,600 s, so `--duration + --drain` must leave
