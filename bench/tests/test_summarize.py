@@ -6,12 +6,14 @@ Run: uv run python bench/tests/test_summarize.py
 import argparse
 import asyncio
 import csv
+import socket
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src")]
@@ -315,6 +317,58 @@ class NodeMetricsTests(unittest.TestCase):
         after = {"node-1": {"a": 4.0, "b": 5.0, "c": 2.0}}
         self.assertEqual(bench.metrics_delta(before, after), {"node-1": {"a": 3.0, "c": 2.0}})
 
+    def test_shard_progress_uses_each_nodes_absolute_gauges_from_one_scrape(self):
+        before = {
+            "validator-1": bench.parse_metrics(
+                "tos_masterchain_seqno 140\ntos_shardclient_seqno 139\ntos_external_total 4"
+            ),
+            "ingress-1": bench.parse_metrics("tos_masterchain_seqno 0\ntos_shardclient_seqno 0"),
+        }
+        after = {
+            "validator-1": bench.parse_metrics(
+                "tos_masterchain_seqno 153\ntos_shardclient_seqno 150\ntos_external_total 9"
+            ),
+            "ingress-1": bench.parse_metrics(
+                "tos_masterchain_seqno 153\ntos_shardclient_seqno 119"
+            ),
+        }
+        self.assertEqual(
+            bench.shard_progress(after)["validator-1"],
+            {"status": "ok", "masterchain_seqno": 153, "shardclient_seqno": 150, "lag_blocks": 3},
+        )
+        self.assertEqual(bench.shard_progress(before)["validator-1"]["lag_blocks"], 1)
+        self.assertEqual(bench.shard_progress(before)["ingress-1"]["lag_blocks"], 0)
+        self.assertEqual(bench.shard_progress(after)["ingress-1"]["lag_blocks"], 34)
+        self.assertEqual(
+            bench.metrics_delta(before, after),
+            {"validator-1": {"tos_external_total": 5.0}, "ingress-1": {}},
+        )
+
+    def test_unavailable_shard_gauge_and_failed_scrape_report_unknown_lag(self):
+        for value in ("", "NaN", "+Inf", "-1", "0.5", "4294967296"):
+            with self.subTest(value=value):
+                snapshot = bench.parse_metrics(
+                    f"tos_masterchain_seqno 153\ntos_shardclient_seqno {value}"
+                )
+                self.assertEqual(
+                    bench.shard_progress({"validator-1": snapshot})["validator-1"],
+                    {
+                        "status": "missing_gauge",
+                        "masterchain_seqno": 153,
+                        "shardclient_seqno": None,
+                        "lag_blocks": None,
+                    },
+                )
+        self.assertEqual(
+            bench.shard_progress({"node-2": None})["node-2"],
+            {
+                "status": "scrape_failed",
+                "masterchain_seqno": None,
+                "shardclient_seqno": None,
+                "lag_blocks": None,
+            },
+        )
+
     def test_a_failed_scrape_is_reported_not_turned_into_counters(self):
         before = {"node-1": None, "node-2": {"a": 1.0}, "node-3": None}
         after = {"node-1": {"a": 9.0}, "node-2": None, "node-3": None}
@@ -333,8 +387,10 @@ class NodeMetricsTests(unittest.TestCase):
         off = argparse.Namespace(node_arg=extra, metrics_base_port=0)
         self.assertEqual(bench.node_args(off, "node-test"), extra)
         on = argparse.Namespace(node_arg=extra, metrics_base_port=39100)
-        args = bench.node_args(on, "node-test")
+        with patch.dict(bench.METRIC_PORTS, {"node-test": 39100}):
+            args = bench.node_args(on, "node-test")
         self.assertEqual(args[0], "--exporter-address")
+        self.assertEqual(args[1], "127.0.0.1:39100")
         self.assertEqual(args[2:], extra)
         bench.METRIC_PORTS.pop("node-test", None)
         none = argparse.Namespace(node_arg=[], metrics_base_port=0)
@@ -389,12 +445,61 @@ class ScrapeTests(unittest.TestCase):
 
 
 class NodeArgTests(unittest.TestCase):
+    def test_default_metrics_cover_all_nodes_and_allow_an_explicit_opt_out(self):
+        for options, expected in (
+            ([], None),
+            (["--metrics-base-port", "40200"], 40200),
+            (["--metrics-base-port", "0"], 0),
+            (["--node-arg=--exporter-address=127.0.0.1:45678"], 0),
+        ):
+            with (
+                self.subTest(options=options),
+                patch.object(sys, "argv", ["bench", "--out", ".", *options]),
+            ):
+                self.assertEqual(bench.parse_args().metrics_base_port, expected)
+
+    def test_metrics_ports_cover_each_node_and_refuse_an_occupied_address(self):
+        nodes = []
+        for name in ("validator", "ingress"):
+            node = Mock(spec=bench.FullNode)
+            node.name = name
+            node.transport_ports = (2001, 2002, 2003)
+            nodes.append(node)
+        ports = bench.metrics_ports(nodes, None)
+        self.assertEqual(set(ports), {"validator", "ingress"})
+        self.assertEqual(len(set(ports.values())), 2)
+        self.assertTrue(all(port > 0 for port in ports.values()))
+        self.assertEqual(bench.metrics_ports(nodes, 0), {})
+        with socket.create_server(("127.0.0.1", 0)) as other:
+            with self.assertRaisesRegex(SystemExit, "cannot bind local metrics port"):
+                bench.metrics_ports(nodes, other.getsockname()[1])
+
     def test_harness_options_cannot_be_forwarded(self):
         self.assertIsNone(bench.node_arg_conflict(["--celldb-cache-min-size=0"], 39100))
         self.assertIsNotNone(bench.node_arg_conflict(["--session-logs=x.log"], 0))
         self.assertIsNotNone(bench.node_arg_conflict(["--exporter-address=127.0.0.1:1"], 39100))
         # Without the harness exporter, forwarding one is the caller's choice.
         self.assertIsNone(bench.node_arg_conflict(["--exporter-address=127.0.0.1:1"], 0))
+
+
+class ProgressSamplingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_a_gap_during_the_stage_is_kept_after_the_node_catches_up(self):
+        drained = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        caught_up = {"node-1": {"tos_masterchain_seqno": 12.0, "tos_shardclient_seqno": 12.0}}
+
+        def scrape():
+            if drained.is_set():
+                return caught_up
+            loop.call_soon_threadsafe(drained.set)
+            return {"node-1": {"tos_masterchain_seqno": 12.0, "tos_shardclient_seqno": 9.0}}
+
+        with patch.object(bench, "scrape_metrics", side_effect=scrape):
+            samples, final = await asyncio.wait_for(bench.sample_node_progress(drained, 0.001), 2)
+        self.assertEqual(len(samples), 1)
+        self.assertGreater(samples[0]["sampled_at"], 0)
+        self.assertEqual(samples[0]["nodes"]["node-1"]["lag_blocks"], 3)
+        self.assertEqual(bench.shard_progress(final)["node-1"]["lag_blocks"], 0)
 
 
 class ChainNowTests(unittest.TestCase):

@@ -433,6 +433,16 @@ jobs:
           stage, = json.loads(Path(sys.argv[1]).read_bytes())["stages"]
           assert stage["messages_sent"] == stage["transfers_executed"] == 10, stage
           assert stage["scanner_lag"] is None and stage["blocks"] > 0, stage
+          assert stage["scanner_head_source"] == "shard_client", stage["scanner_head_source"]
+          progress = stage["node_shard_progress"]
+          assert progress["samples"], progress
+          nodes = {f"node-{i}" for i in range(1, 5)}
+          for snapshot in (progress["before"], *(s["nodes"] for s in progress["samples"]), progress["after"]):
+              assert set(snapshot) == nodes, snapshot
+              for reading in snapshot.values():
+                  assert reading["status"] == "ok" and reading["masterchain_seqno"] > 0, reading
+                  assert reading["shardclient_seqno"] > 0, reading
+                  assert reading["lag_blocks"] == reading["masterchain_seqno"] - reading["shardclient_seqno"], reading
           PY
 
       - name: Exercise explorer RPCs on candidate and ordinary version-16 networks
