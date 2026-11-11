@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from tostester.n6_cluster import (
 from tostester.network import FullNode, Network, StartOptions
 from tostester.pq_launch_limits import MAX_SHARD_COMMITTEE
 
+from toslib import ToslibError
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -33,6 +36,73 @@ def parse_args() -> argparse.Namespace:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+SHARD_CLIENT_STATE_CAPABILITY = 8  # liteserver capability: getMasterchainInfoExt mode 1
+
+
+async def check_shard_client_state(client, node: FullNode, install: Install) -> dict[str, object]:
+    """getMasterchainInfoExt mode 1 names a masterchain block from the shard client's state.
+
+    The head advertised by default (mode 0) can name shard blocks the shard client has not applied
+    yet, so a lookup of one of them can answer NOTREADY. Every shard top under the mode-1 head
+    must be served. Unknown mode bits stay refused, and lite-client exposes the query."""
+    default = await client.get_masterchain_info_ext(0)
+    applied = await client.get_masterchain_info_ext(1)
+    require(
+        default.capabilities & SHARD_CLIENT_STATE_CAPABILITY
+        and applied.capabilities & SHARD_CLIENT_STATE_CAPABILITY,
+        f"liteserver does not advertise the shard-client-state capability: {applied.capabilities}",
+    )
+    require(default.mode == 0 and applied.mode == 1, "getMasterchainInfoExt did not echo the mode")
+    require(
+        applied.last.workchain == -1 and applied.last.seqno > 0,
+        f"mode 1 did not name a masterchain block: {applied.last}",
+    )
+    shard_tops = (await client.get_shards(applied.last)).shards
+    require(bool(shard_tops), "mode-1 masterchain block has no shards")
+    for top in shard_tops:
+        served = await client.lookup_block(top.workchain, top.shard, seqno=top.seqno)
+        require(
+            served.seqno == top.seqno and served.root_hash == top.root_hash,
+            f"shard top {top} under the mode-1 head was not served as the same block",
+        )
+    try:
+        await client.get_masterchain_info_ext(2)
+    except ToslibError as error:
+        require("unsupported getMasterchainInfo mode" in str(error), f"mode 2: {error}")
+    else:
+        raise AssertionError("getMasterchainInfoExt mode 2 was not refused")
+
+    config_path = node.directory / "lite-client-shard-client-state.json"
+    config_path.write_text(node.liteserver_config.to_json())
+    process = await asyncio.create_subprocess_exec(
+        str(install.lite_client_exe),
+        "-C",
+        str(config_path),
+        "-r",
+        "-t",
+        "30",
+        "-c",
+        "lastshardclient",
+        cwd=node.directory,
+        env=os.environ.copy(),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    output = (await asyncio.wait_for(process.communicate(), timeout=45.0))[0].decode(
+        errors="replace"
+    )
+    require(
+        process.returncode == 0 and "latest masterchain block in shard client state is" in output,
+        f"lite-client lastshardclient failed (rc {process.returncode}): {output[-500:]}",
+    )
+    return {
+        "default_head_seqno": default.last.seqno,
+        "shard_client_head_seqno": applied.last.seqno,
+        "shard_tops_served": len(shard_tops),
+        "lite_client_lastshardclient": True,
+    }
 
 
 async def main(args: argparse.Namespace):
@@ -119,6 +189,8 @@ async def main(args: argparse.Namespace):
             wallet_state.seqno == 1, "wallet deployment did not advance the source wallet seqno"
         )
 
+        shard_client_state = await check_shard_client_state(client, nodes[0], install)
+
         assert consensus is not None
         sustained = await observe_sustained_consensus(
             nodes,
@@ -151,6 +223,7 @@ async def main(args: argparse.Namespace):
             "wallet_balance_changed": True,
             "wallet_seqno": wallet_state.seqno,
             "actor_stats_and_perf_counters": True,
+            "shard_client_state": shard_client_state,
             "sustained_observation": sustained,
             "lite_admission_drop_warnings": admission_drops,
             "evidence_class": "COLOCATED_DIAGNOSTIC_ONLY",

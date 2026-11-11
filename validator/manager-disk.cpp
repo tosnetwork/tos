@@ -1003,6 +1003,11 @@ void ValidatorManagerImpl::get_last_liteserver_state_block(
   return get_top_masterchain_state_block(std::move(promise));
 }
 
+void ValidatorManagerImpl::get_shard_client_state_block(
+    td::Promise<std::pair<td::Ref<MasterchainState>, BlockIdExt>> promise) {
+  return get_top_masterchain_state_block(std::move(promise));
+}
+
 void ValidatorManagerImpl::get_node_consensus_status(td::Promise<NodeConsensusStatus> promise) {
   // The disk manager is an offline tool, not a live consensus node.
   promise.set_error(td::Status::Error(tos::ErrorCode::notready, "not supported by the disk manager"));

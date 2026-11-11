@@ -52,8 +52,17 @@ class ScannerStageTests(unittest.IsolatedAsyncioTestCase):
             thermal_log=None,
         )
         transport = AsyncMock()
-        transport.get_masterchain_info.return_value = SimpleNamespace(last=object())
-        transport.get_shards.side_effect = shard_heads(100, 103)
+        advertised_mc, applied_mc = object(), object()
+        transport.get_masterchain_info_ext.side_effect = lambda mode: SimpleNamespace(
+            mode=mode, capabilities=15, last={0: advertised_mc, 1: applied_mc}[mode]
+        )
+        heads = shard_heads(100, 103)
+
+        def get_shards(masterchain_block):
+            self.assertIs(masterchain_block, applied_mc)
+            return next(heads)
+
+        transport.get_shards.side_effect = get_shards
         wallet = Address((0, b"w" * 32))
         transport.get_block_header.return_value = SimpleNamespace(gen_utime=int(time.time()))
         transport.get_block_transactions.return_value = [SimpleNamespace(account=wallet.hash_part)]
@@ -111,9 +120,10 @@ class ScannerStageTests(unittest.IsolatedAsyncioTestCase):
             patch.object(bench, "package_temperatures", return_value=None),
         ):
             first = await asyncio.wait_for(run.stage(4), timeout=5)
-            transport.get_shards.side_effect = shard_heads(103, 104)
+            heads = shard_heads(103, 104)
             second = await run.stage(3)
 
+        transport.get_masterchain_info.assert_not_awaited()
         lag = first["scanner_lag"]
         self.assertEqual(lag["first_missing_seqno"], 102)
         self.assertEqual(lag["last_scanned_seqno"], 101)

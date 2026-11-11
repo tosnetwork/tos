@@ -83,17 +83,22 @@ material derived from it).
    `transfers_executed`; nonce changes count accepted requests. The stage
    records undelivered transfers in `transfers_unaccounted`.
 
-The scanner reads consecutive blocks from one liteserver. When that server
+The scanner reads consecutive blocks from one liteserver. At stage start it
+checks the server's capabilities. With shard-client support it uses
+`getMasterchainInfoExt(mode=1)` to select the masterchain block whose shards
+the node has applied, for the starting cursor, each poll and the final cutoff.
+On an older server it uses the advertised head (mode 0). The stage records the
+choice in `scanner_head_source` as `shard_client` or `advertised`. When the server
 reports that its shard client has yet to apply a requested block, the scanner
 retries the same block. It timestamps each block once its transactions are
 available. A gap can wait up to 30 seconds from the first lag response,
 including time spent in subsequent reads. At the end of the drain, the
-scanner takes one final advertised head as its cutoff. All remaining blocks
+scanner takes one final head from the same source as its cutoff. All remaining blocks
 share a single retry grace period from that point. A recovered wait that
 overlaps the steady measurement window is recorded as an observer bottleneck.
 
 If the gap persists, the stage records `scanner_lag` with the last scanned
-height, first missing height, advertised shard head, timeout and server error.
+height, first missing height, target shard head, timeout and server error.
 The next rate can still run. The stage keeps the scanned prefix, sender
 records and independent balance and nonce measurements. Whole-stage scan
 rates, inclusion latency and the saturation verdict are null. A healthy
@@ -101,7 +106,21 @@ stage reports `scanner_lag: null`.
 
 Local nodes write stderr directly into their per-node log files under
 `network/`. Signing and wallet preparation leave the event loop available to
-serve other nodes. With `--metrics-base-port`, the stage's `node_metrics_delta`
+serve other nodes. The bench enables a loopback metrics exporter on each validator
+and ingress node on an available port. Use `--metrics-base-port PORT` to reserve a
+consecutive range, or `--metrics-base-port 0` to disable collection. Passing your own
+`--node-arg=--exporter-address=...` also leaves collection to you.
+
+Each stage's `node_shard_progress` contains a `before` snapshot prior to signing,
+periodic `samples` during sending and drain, and an `after` snapshot at the end
+of drain. Each periodic entry includes its scrape start time (`sampled_at`, Unix
+seconds) and its `nodes`. The sampler waits 15 seconds between scrapes. For each
+node, `lag_blocks` is `masterchain_seqno - shardclient_seqno` from the same
+exporter response. Both heights count masterchain blocks. A node with an unavailable
+height or a failed scrape records `missing_gauge` or `scrape_failed` and a null
+lag. A zero lag describes that sample; short gaps may fall between samples.
+
+With collection enabled, the stage's `node_metrics_delta`
 also reports changes in the validator's `tos_stderr_log_dropped_total`,
 `tos_stderr_log_dropped_errors_total` and `tos_stderr_log_write_errors_total`.
 These count discarded diagnostics, the ERROR subset, and failed writes,

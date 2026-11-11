@@ -796,6 +796,12 @@ target_link_libraries(test-candidate-broadcast-guard PRIVATE validator full-node
                       tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
 target_compile_definitions(test-candidate-broadcast-guard PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
 
+# getMasterchainInfoExt mode 1 answers from the shard client state, not the advertised head.
+add_executable(test-liteserver-shard-client-state test/test-td-main.cpp test/test-liteserver-shard-client-state.cpp)
+target_link_libraries(test-liteserver-shard-client-state PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
+target_compile_definitions(test-liteserver-shard-client-state PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
 add_executable(test-ext-message-generated-checker test/test-td-main.cpp test/test-ext-message-generated-checker.cpp)
 target_link_libraries(test-ext-message-generated-checker PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
                       tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
@@ -2180,6 +2186,7 @@ tos_test(test-ext-message-pool)
 tos_test(test-ext-message-expiry)
 tos_test(test-ext-message-manager)
 tos_test(test-candidate-broadcast-guard)
+tos_test(test-liteserver-shard-client-state)
 tos_test(test-ext-message-ingress)
 tos_test(test-ext-message-admission-budget)
 tos_test(test-msg-envelope)

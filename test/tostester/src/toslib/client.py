@@ -95,6 +95,13 @@ class ToslibClient:
         request = toslib_api.Blocks_getMasterchainInfoRequest()
         return request.parse_result(await self._toslib_wrapper.execute(request))
 
+    async def get_masterchain_info_ext(self, mode: int = 0) -> toslib_api.Blocks_masterchainInfoExt:
+        """liteServer.getMasterchainInfoExt. Mode 1 answers from the shard client's state, whose
+        shard blocks the server has applied; mode 0 is the head it advertises by default."""
+        assert self._toslib_wrapper is not None
+        request = toslib_api.Blocks_getMasterchainInfoExtRequest(mode=mode)
+        return request.parse_result(await self._toslib_wrapper.execute(request))
+
     async def get_config_param(self, param: int) -> Cell:
         """Read a parameter from the running chain, not the local Genesis file."""
         assert self._toslib_wrapper is not None

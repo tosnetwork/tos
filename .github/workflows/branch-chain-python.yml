@@ -117,7 +117,7 @@ jobs:
           cmake --build build --parallel 4 --target \
             gen_fif create-state toslibjson func fift emulator \
             generate-random-id tos-pq-consensus-key \
-            dht-server validator-engine-console validator-engine tos-rpc tos-wallet-index tos-wallet-index-snapshot tos-wallet-index-dump wallet-index-source-fixture test-node-store-fixture \
+            dht-server lite-client validator-engine-console validator-engine tos-rpc tos-wallet-index tos-wallet-index-snapshot tos-wallet-index-dump wallet-index-source-fixture test-node-store-fixture \
             create-hardfork test-tos-collator test-apply-block-readback-latency \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
             tos-proof-verify test-proof-verify proof-verify-fs-shim proof-persisted-fsync-shim tos-proof-embedded test-proof-verify-embedded test-proof-acquisition test-proof-readonly-query test-self-pay-simulation-context test-simulation-config test-simulation-account test-self-pay-simulation test-self-pay-simulation-live test-self-pay-simulation-json test-json-rpc-transport test-json-rpc-explorer \
@@ -433,6 +433,16 @@ jobs:
           stage, = json.loads(Path(sys.argv[1]).read_bytes())["stages"]
           assert stage["messages_sent"] == stage["transfers_executed"] == 10, stage
           assert stage["scanner_lag"] is None and stage["blocks"] > 0, stage
+          assert stage["scanner_head_source"] == "shard_client", stage["scanner_head_source"]
+          progress = stage["node_shard_progress"]
+          assert progress["samples"], progress
+          nodes = {f"node-{i}" for i in range(1, 5)}
+          for snapshot in (progress["before"], *(s["nodes"] for s in progress["samples"]), progress["after"]):
+              assert set(snapshot) == nodes, snapshot
+              for reading in snapshot.values():
+                  assert reading["status"] == "ok" and reading["masterchain_seqno"] > 0, reading
+                  assert reading["shardclient_seqno"] > 0, reading
+                  assert reading["lag_blocks"] == reading["masterchain_seqno"] - reading["shardclient_seqno"], reading
           PY
 
       - name: Exercise explorer RPCs on candidate and ordinary version-16 networks

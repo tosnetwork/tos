@@ -437,6 +437,7 @@ class ValidatorManagerInterface : public td::actor::Actor, public metrics::Async
       td::Promise<std::pair<td::Ref<MasterchainState>, BlockIdExt>> promise) = 0;
   virtual void get_last_liteserver_state_block(
       td::Promise<std::pair<td::Ref<MasterchainState>, BlockIdExt>> promise) = 0;
+  virtual void get_shard_client_state_block(td::Promise<std::pair<td::Ref<MasterchainState>, BlockIdExt>> promise) = 0;
   // Single-turn consistent snapshot of this node's masterchain consensus view (read-only,
   // for the getNodeConsensusStatus admin RPC). Assembling applied + served + key block +
   // validator-set + live-key membership in one message handling avoids the cross-read

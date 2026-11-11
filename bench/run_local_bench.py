@@ -28,11 +28,13 @@ import math
 import os
 import platform
 import shlex
+import socket
 import subprocess
 import sys
 import time
 import urllib.request
 from collections.abc import Mapping
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -139,8 +141,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--metrics-base-port",
         type=int,
-        default=0,
-        help="export each node's Prometheus metrics on consecutive ports from this one (0: off)",
+        help="first local node metrics port (default: choose available ports, 0: off)",
     )
     p.add_argument(
         "--ingress-ls-priority",
@@ -185,6 +186,15 @@ def parse_args() -> argparse.Namespace:
         "--keep-running", action="store_true", help="leave the net up after the bench (Ctrl-C ends)"
     )
     a = p.parse_args()
+    if a.metrics_base_port is None and any(
+        arg.split("=", 1)[0] == "--exporter-address" for arg in a.node_arg
+    ):
+        a.metrics_base_port = 0
+    if (
+        a.metrics_base_port
+        and not 1 <= a.metrics_base_port <= 65536 - a.validators - a.ingress_nodes
+    ):
+        p.error("--metrics-base-port must leave a valid port for every node")
     a.rates = [float(r) for r in a.rates.split(",") if r.strip()]
     if not a.rates or any(not 0 < r <= 100_000 for r in a.rates):
         p.error("rates must be positive")
@@ -438,6 +448,8 @@ class Bench:
         scanner.track = {address.hash_part for address in used}
         await scanner.start_position()
         scan_task = asyncio.create_task(scanner.run())
+        drained = asyncio.Event()
+        progress_task = asyncio.create_task(sample_node_progress(drained)) if METRIC_PORTS else None
         try:
             t0, records = await asyncio.to_thread(
                 sender.distributed_send,
@@ -452,17 +464,22 @@ class Bench:
             )
             t_sent = time.time()
             await asyncio.sleep(a.drain)
-            metrics_after = await asyncio.to_thread(scrape_metrics) if METRIC_PORTS else {}
+            drained.set()
             scanner.stop()
             # Reconcile at the end of the drain even if the observer is still
             # waiting for a block on its separate scan connection.
             end = await self.counters(used)
             sinks_after = await chain.read_balances(self.pool, self.sinks)
+            await scan_task
+            node_metrics = await progress_task if progress_task is not None else None
         except BaseException:
-            scan_task.cancel()
-            await asyncio.gather(scan_task, return_exceptions=True)
+            tasks: list[asyncio.Task[Any]] = [scan_task]
+            if progress_task is not None:
+                tasks.append(progress_task)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             raise
-        await scan_task
         # A consumed nonce means the wallet accepted and paid for the request, not that the
         # transfer went out (an unaffordable send action is skipped under send mode 3).
         # Delivered transfers are what reached the sinks: every transfer carries the same
@@ -478,8 +495,15 @@ class Bench:
         result["requests_accepted_but_not_delivered"] = consumed - executed
         result["sink_value_gained_nanotos"] = gained
         result["sender_connections"] = senders
-        if METRIC_PORTS:
+        result["scanner_head_source"] = scanner.head_source
+        if node_metrics is not None:
+            samples, metrics_after = node_metrics
             result["node_metrics_delta"] = metrics_delta(metrics_before, metrics_after)
+            result["node_shard_progress"] = {
+                "before": shard_progress(metrics_before),
+                "samples": samples,
+                "after": shard_progress(metrics_after),
+            }
         result["block_limits_evidence"] = await asyncio.to_thread(
             self.block_limits_evidence, t0 + a.warmup, t_sent
         )
@@ -838,7 +862,7 @@ def set_ingress_ls_priority(ingress: list[FullNode], priority: int, out: Path) -
     log.info("ingress liteserver check priority set to %d on %d nodes", priority, len(ingress))
 
 
-def node_arg_conflict(node_arg: list[str], metrics_base_port: int) -> str | None:
+def node_arg_conflict(node_arg: list[str], metrics_base_port: int | None) -> str | None:
     """Why --node-arg would clash with an option the harness sets itself, or None.
 
     A second --exporter-address makes the engine open a second exporter and abort; a second
@@ -853,47 +877,115 @@ def node_arg_conflict(node_arg: list[str], metrics_base_port: int) -> str | None
     return None
 
 
+def metrics_ports(nodes: list[FullNode], base: int | None) -> dict[str, int]:
+    if base == 0:
+        return {}
+    ports = {}
+    transport = {port for node in nodes for port in node.transport_ports}
+    with ExitStack() as reservations:
+        for index, node in enumerate(nodes):
+            port = base + index if base is not None else 0
+            sock = reservations.enter_context(socket.socket())
+            try:
+                sock.bind(("127.0.0.1", port))
+            except OSError as error:
+                raise SystemExit(
+                    f"{node.name}: cannot bind local metrics port {port}: {error}"
+                ) from error
+            actual = sock.getsockname()[1]
+            if actual in transport:
+                raise SystemExit(
+                    f"{node.name}: metrics port {actual} overlaps a node transport port"
+                )
+            ports[node.name] = actual
+    return ports
+
+
 def node_args(a: argparse.Namespace, node_name: str) -> list[str]:
     """The extra validator-engine arguments of one node: its metrics exporter, then --node-arg."""
     extra = list(a.node_arg)
-    if not a.metrics_base_port:
+    if node_name not in METRIC_PORTS:
         return extra
-    port = METRIC_PORTS.setdefault(node_name, a.metrics_base_port + len(METRIC_PORTS))
+    port = METRIC_PORTS[node_name]
     return ["--exporter-address", f"127.0.0.1:{port}", *extra]
 
 
 METRIC_WORDS = ("ext_message", "external", "broadcast", "mempool", "stderr_log_")
+SHARD_PROGRESS_GAUGES = ("tos_masterchain_seqno", "tos_shardclient_seqno")
 
 
 def parse_metrics(text: str) -> dict[str, float]:
-    """Ingress series and validator stderr loss counters from a Prometheus text page."""
+    """Ingress series, stderr loss counters and block heights from one Prometheus page."""
     series: dict[str, float] = {}
     for line in text.splitlines():
         if line.startswith("#") or not line.strip():
             continue
-        key, _, value = line.rpartition(" ")
-        if any(word in key for word in METRIC_WORDS):
+        sample = line.rsplit(None, 1)
+        if len(sample) != 2:
+            continue
+        key, value = sample
+        if key in SHARD_PROGRESS_GAUGES or any(word in key for word in METRIC_WORDS):
             try:
-                series[key] = float(value)
+                number = float(value)
             except ValueError:
                 continue
+            if key in SHARD_PROGRESS_GAUGES and not (number.is_integer() and 0 <= number < 2**32):
+                continue
+            series[key] = number
     return series
 
 
 def scrape_metrics() -> dict[str, dict[str, float] | None]:
-    """Every node's counters keyed by node name; None for a node whose scrape failed."""
+    """Every node's series keyed by node name; None for a node whose scrape failed."""
     out: dict[str, dict[str, float] | None] = {}
     for name, port in METRIC_PORTS.items():
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=10) as reply:
                 text = reply.read().decode()
-        except (OSError, http.client.HTTPException) as error:
+        except (OSError, http.client.HTTPException, UnicodeDecodeError) as error:
             # A refused, timed-out or truncated response fails this node only.
             out[name] = None
             log.warning("metrics scrape of %s failed: %s", name, error)
             continue
         out[name] = parse_metrics(text)
     return out
+
+
+def shard_progress(
+    snapshot: Mapping[str, Mapping[str, float] | None],
+) -> dict[str, dict[str, str | int | None]]:
+    """Absolute heights and their difference from the same response for each node."""
+    out: dict[str, dict[str, str | int | None]] = {}
+    for node, series in snapshot.items():
+        values = series or {}
+        masterchain = values.get("tos_masterchain_seqno")
+        shardclient = values.get("tos_shardclient_seqno")
+        lag = None
+        if masterchain is not None and shardclient is not None:
+            lag = int(masterchain - shardclient)
+            status = "ok"
+        else:
+            status = "scrape_failed" if series is None else "missing_gauge"
+        out[node] = {
+            "status": status,
+            "masterchain_seqno": int(masterchain) if masterchain is not None else None,
+            "shardclient_seqno": int(shardclient) if shardclient is not None else None,
+            "lag_blocks": lag,
+        }
+    return out
+
+
+async def sample_node_progress(drained: asyncio.Event, interval: float = 15.0):
+    """Sample during send and drain, then return one final scrape for both stage reports."""
+    samples = []
+    while not drained.is_set():
+        try:
+            await asyncio.wait_for(drained.wait(), timeout=interval)
+        except TimeoutError:
+            started = time.time()
+            snapshot = await asyncio.to_thread(scrape_metrics)
+            samples.append({"sampled_at": started, "nodes": shard_progress(snapshot)})
+    return samples, await asyncio.to_thread(scrape_metrics)
 
 
 def metrics_delta(
@@ -914,7 +1006,11 @@ def metrics_delta(
         if start is None or end is None:
             out[node] = {"scrape_failed": failed}
             continue
-        out[node] = {k: v - start.get(k, 0.0) for k, v in end.items() if v != start.get(k, 0.0)}
+        out[node] = {
+            k: v - start.get(k, 0.0)
+            for k, v in end.items()
+            if k not in SHARD_PROGRESS_GAUGES and v != start.get(k, 0.0)
+        }
     return out
 
 
@@ -999,6 +1095,8 @@ async def main(a: argparse.Namespace) -> int:
             node = network.create_full_node()
             node.announce_to(dht)
             ingress.append(node)
+        METRIC_PORTS.clear()
+        METRIC_PORTS.update(metrics_ports([*nodes, *ingress], a.metrics_base_port))
         async with asyncio.TaskGroup() as group:
             group.create_task(dht.run())
             for node in nodes:
