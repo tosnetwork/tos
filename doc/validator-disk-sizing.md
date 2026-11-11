@@ -185,3 +185,22 @@ The measurement was read-only. It ran on each validator as root over SSH, at
 
 Key-block times come from JSON-RPC `getBlockHeader` on the `prev_key_block_seqno`
 chain.
+
+## 8. Comparison with upstream TON
+
+Checked against upstream TON v2026.10 (`857b8a57`), function by function. The
+retention rules this note depends on are the same:
+
+| Rule | Upstream | TOS | Effect on disk |
+|---|---|---|---|
+| Snapshot schedule and TTL (`is_persistent_state`, `persistent_state_ttl`) | 2^17 s windows, `2^18 << b` | identical | none |
+| Which key blocks get a snapshot (`need_serialize`, `have_newer_persistent_state`), random delay 0–6 h | as stated | identical. TOS adds a test-only switch to skip the delay. | none |
+| Snapshot GC (`persistent_state_gc`, `got_gc_masterchain_handle`) | delete on TTL expiry or an unresolvable handle | identical | none |
+| Engine TTL defaults (`validator.h`) | state 1 d, archive 7 d, key proof 10 y | identical | none |
+| Block (archive package) GC candidates | packages older than `gc_ts − archive_ttl`, never the newest candidate | the same candidates (`archive_packages_by_ttl`). TOS also refuses to delete a package that a reader, an applying block or an unapplied block may still need (`archive-gc-floor.h`). | TOS can only keep more, never less |
+| State GC (`try_advance_gc_masterchain_block`) | `state-ttl`, plus a hold while upstream's global-balance calculator runs (`gc_blockers_`) | `state-ttl`; TOS has no global-balance calculator, so no hold | upstream may briefly keep extra states |
+| Serializer with a block the database no longer knows | escapes to the latest key block only when the handle has a timestamp | the same escape, plus one after a day without progress when the handle has no timestamp (a liveness fix) | none in normal operation |
+| Engine log size | no built-in limit; the engine reopens its log on SIGHUP, so an external logrotate must cap it | built-in `--log-rotate-mb` / `--log-keep-files` | TOS logs are capped without logrotate; an upstream host needs logrotate |
+
+So the measured behaviour, including the open point in §5, follows logic shared
+with upstream; it is not a TOS-specific change.
