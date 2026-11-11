@@ -5,6 +5,7 @@ Run: uv run python bench/tests/test_summarize.py
 
 import argparse
 import asyncio
+import csv
 import sys
 import tempfile
 import unittest
@@ -46,8 +47,8 @@ def blocks(t0: float, per_block: int, n: int = 20):
     ]
 
 
-def run(self, rate, count, records, rows, executed, t0, t_sent):
-    scanner = SimpleNamespace(rows=rows, first_seen={})
+def run(self, rate, count, records, rows, executed, t0, t_sent, lag=None):
+    scanner = SimpleNamespace(rows=rows, first_seen={}, lag=lag)
     return bench.Bench.summarize(self, rate, count, records, scanner, executed, t0, t_sent, 0.1)
 
 
@@ -146,6 +147,90 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(r["observer_late_blocks"], 1)
         self.assertIn("block scanner lagged the chain", r["non_chain_bottlenecks"])
         self.assertFalse(r["saturated"])
+
+    def test_only_retry_intervals_overlapping_the_steady_window_affect_saturation(self):
+        t0 = 1000.0
+        for name, start, end, refusal, observer, saturated in (
+            ("straddles", 0.5, 8.5, None, True, False),
+            ("warmup", 0.1, 0.5, None, False, True),
+            ("drain", 8.1, 8.5, None, False, True),
+            ("confirmed-backlog", 7.5, 8.5, STALE, True, True),
+        ):
+            with self.subTest(name=name):
+                rows = blocks(t0, 1, n=1)
+                rows[0].lag_started_at = t0 + start
+                rows[0].observed = t0 + end
+                records = [SendRecord(0, t0, t0, refusal is None, refusal, "c0")]
+                r = run(
+                    make(self.out / name), 1, 1, records, rows, int(refusal is None), t0, t0 + 8
+                )
+                self.assertTrue(r["below_offered_rate"])
+                self.assertIsNone(r["scanner_lag"])
+                self.assertEqual(r["observer_late_blocks"], 0)
+                self.assertEqual(
+                    "block scanner lagged the chain" in r["non_chain_bottlenecks"], observer
+                )
+                self.assertEqual(r["saturated"], saturated)
+
+    def test_timeline_only_counts_observations_inside_the_send_and_drain_window(self):
+        t0 = 1000.0
+        rows = blocks(t0, 1, n=5)
+        for row, offset in zip(rows, (-0.1, 0.1, 2.25, 2.26, 3600.0)):
+            row.observed = t0 + offset
+        records = [SendRecord(0, t0, t0, True, None, "c0")]
+        for name, lag in (("complete", None), ("timeout", {"first_missing_seqno": 5})):
+            with self.subTest(name=name):
+                out = self.out / name
+                run(make(out), 1, 1, records, rows, 1, t0, t0 + 1.25, lag=lag)
+                stage = out / "stage-quantum-1"
+                with (stage / "blocks.csv").open() as f:
+                    self.assertEqual(len(list(csv.DictReader(f))), 5)
+                with (stage / "timeline.csv").open() as f:
+                    timeline = list(csv.DictReader(f))
+                self.assertEqual([row["tx_observed"] for row in timeline], ["2", "0", "2", "0"])
+                self.assertEqual([row["messages_sent"] for row in timeline], ["1", "0", "0", "0"])
+
+    def test_incomplete_scan_keeps_observations_and_independent_accounting(self):
+        t0 = 1000.0
+        records = [SendRecord(i, t0 + i, t0 + i, True, None, "c0") for i in range(8)]
+        rows = blocks(t0, 2, n=4)
+        lag = {"first_missing_seqno": 4, "last_scanned_seqno": 3}
+        r = run(make(self.out), 1.0, 8, records, rows, 8, t0, t0 + 8, lag=lag)
+        self.assertEqual(r["scanner_lag"], lag)
+        self.assertEqual(
+            (r["messages_sent"], r["transfers_executed"], r["executed_fraction"]), (8, 8, 1)
+        )
+        self.assertEqual((r["blocks"], r["steady_blocks"]), (4, 1))
+        self.assertIn("block scanner lagged the chain", r["non_chain_bottlenecks"])
+        for key in (
+            "steady_transfer_tps",
+            "steady_total_tx_tps",
+            "steady_blocks_per_second",
+            "mean_block_interval_s",
+            "max_tx_per_block",
+            "inclusion_latency_s",
+            "below_offered_rate",
+            "saturated",
+        ):
+            self.assertIsNone(r[key], key)
+        stage = self.out / "stage-quantum-1"
+        with (stage / "blocks.csv").open() as f:
+            self.assertEqual([int(row["seqno"]) for row in csv.DictReader(f)], [0, 1, 2, 3])
+        with (stage / "timeline.csv").open() as f:
+            timeline = list(csv.DictReader(f))
+        self.assertEqual([row["tx_observed"] for row in timeline[:3]], ["12", "4", ""])
+        self.assertEqual(timeline[2][f"{bench.LOAD_CLASS}_tx"], "")
+        self.assertEqual(timeline[2]["messages_sent"], "1")
+
+    def test_incomplete_scan_with_no_rows_preserves_proven_delivery_shortfall(self):
+        t0 = 1000.0
+        records = [SendRecord(0, t0, t0, True, None, "c0")]
+        lag = {"first_missing_seqno": 12, "last_scanned_seqno": 11}
+        r = run(make(self.out), 1.0, 1, records, [], 0, t0, t0 + 1, lag=lag)
+        self.assertTrue(r["below_offered_rate"])
+        self.assertIsNone(r["saturated"])
+        with (self.out / "stage-quantum-1" / "timeline.csv").open() as f:
+            self.assertEqual([row["tx_observed"] for row in csv.DictReader(f)], ["", "", ""])
 
 
 class CollationStatsTests(unittest.TestCase):
