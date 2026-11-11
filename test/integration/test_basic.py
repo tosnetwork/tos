@@ -41,7 +41,7 @@ def require(condition: bool, message: str) -> None:
 SHARD_CLIENT_STATE_CAPABILITY = 8  # liteserver capability: getMasterchainInfoExt mode 1
 
 
-async def check_shard_client_state(client, node: FullNode, install: Install) -> dict:
+async def check_shard_client_state(client, node: FullNode, install: Install) -> dict[str, object]:
     """getMasterchainInfoExt mode 1 names a masterchain block from the shard client's state.
 
     The head advertised by default (mode 0) can name shard blocks the shard client has not applied
