@@ -320,22 +320,30 @@ void LiteQuery::perform_getVersion() {
 
 void LiteQuery::perform_getMasterchainInfo(int mode) {
   LOG(DEBUG) << "started a getMasterchainInfo(" << mode << ") liteserver query";
-  if (mode > 0) {
+  bool is_legacy = mode == -1;
+  int ext_mode = is_legacy ? 0 : mode;
+  if (ext_mode & ~get_masterchain_info_ext_shard_client_state) {
     fatal_error("unsupported getMasterchainInfo mode");
     return;
   }
-  td::actor::send_closure_later(manager_, &tos::validator::ValidatorManager::get_last_liteserver_state_block,
-                                [Self = actor_id(this), return_state = bool(acc_state_promise_),
-                                 mode](td::Result<std::pair<Ref<tos::validator::MasterchainState>, BlockIdExt>> res) {
-                                  if (res.is_error()) {
-                                    td::actor::send_closure(Self, &LiteQuery::abort_query, res.move_as_error());
-                                  } else {
-                                    auto pair = res.move_as_ok();
-                                    auto func = return_state ? &LiteQuery::gotMasterchainInfoForAccountState
-                                                             : &LiteQuery::continue_getMasterchainInfo;
-                                    td::actor::send_closure_later(Self, func, std::move(pair.first), pair.second, mode);
-                                  }
-                                });
+  // Mode 1 answers from the shard client's state: every shard block it names has been
+  // applied here, so a client can read it back without racing the shard client.
+  auto get_state = (ext_mode & get_masterchain_info_ext_shard_client_state)
+                       ? &tos::validator::ValidatorManager::get_shard_client_state_block
+                       : &tos::validator::ValidatorManager::get_last_liteserver_state_block;
+  td::actor::send_closure_later(
+      manager_, get_state,
+      [Self = actor_id(this), return_state = bool(acc_state_promise_), ext_mode,
+       is_legacy](td::Result<std::pair<Ref<tos::validator::MasterchainState>, BlockIdExt>> res) {
+        if (res.is_error()) {
+          td::actor::send_closure(Self, &LiteQuery::abort_query, res.move_as_error());
+        } else {
+          auto pair = res.move_as_ok();
+          auto func =
+              return_state ? &LiteQuery::gotMasterchainInfoForAccountState : &LiteQuery::continue_getMasterchainInfo;
+          td::actor::send_closure_later(Self, func, std::move(pair.first), pair.second, is_legacy ? -1 : ext_mode);
+        }
+      });
 }
 
 void LiteQuery::gotMasterchainInfoForAccountState(Ref<tos::validator::MasterchainState> mc_state, BlockIdExt blkid,

@@ -2462,6 +2462,16 @@ void ValidatorManagerImpl::get_last_liteserver_state_block(
   }
 }
 
+void ValidatorManagerImpl::get_shard_client_state_block(
+    td::Promise<std::pair<td::Ref<MasterchainState>, BlockIdExt>> promise) {
+  if (shard_client_state_.is_null() || !shard_client_handle_) {
+    promise.set_error(td::Status::Error(tos::ErrorCode::notready, "shard client state is not ready"));
+  } else {
+    promise.set_result(
+        std::pair<td::Ref<MasterchainState>, BlockIdExt>{shard_client_state_, shard_client_handle_->id()});
+  }
+}
+
 void ValidatorManagerImpl::get_node_consensus_status(td::Promise<NodeConsensusStatus> promise) {
   // Everything below is read in this single actor turn, so the applied and served points are
   // one consistent snapshot (served seqno <= applied seqno always holds -> no phantom negative

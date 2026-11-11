@@ -6280,6 +6280,19 @@ td::Status ToslibClient::do_request(const toslib_api::blocks_getMasterchainInfo&
   return td::Status::OK();
 }
 
+td::Status ToslibClient::do_request(const toslib_api::blocks_getMasterchainInfoExt& masterchain_info,
+                                    td::Promise<object_ptr<toslib_api::blocks_masterchainInfoExt>>&& promise) {
+  client_.send_query(tos::lite_api::liteServer_getMasterchainInfoExt(masterchain_info.mode_),
+                     promise.wrap([](lite_api_ptr<tos::lite_api::liteServer_masterchainInfoExt>&& masterchain_info) {
+                       return toslib_api::make_object<toslib_api::blocks_masterchainInfoExt>(
+                           masterchain_info->mode_, masterchain_info->version_, masterchain_info->capabilities_,
+                           to_toslib_api(*masterchain_info->last_), masterchain_info->last_utime_,
+                           masterchain_info->now_, masterchain_info->state_root_hash_.as_slice().str(),
+                           to_toslib_api(*masterchain_info->init_));
+                     }));
+  return td::Status::OK();
+}
+
 td::Status ToslibClient::do_request(const toslib_api::blocks_getShards& request,
                                     td::Promise<object_ptr<toslib_api::blocks_shards>>&& promise) {
   if (!request.id_) {

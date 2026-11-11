@@ -424,6 +424,8 @@ class ToslibClient : public td::actor::Actor {
                         QueryTraceContext trace_context = {}
 #endif
   );
+  td::Status do_request(const toslib_api::blocks_getMasterchainInfoExt& masterchain_info,
+                        td::Promise<object_ptr<toslib_api::blocks_masterchainInfoExt>>&& promise);
   td::Status do_request(const toslib_api::blocks_getShards& request,
                         td::Promise<object_ptr<toslib_api::blocks_shards>>&& promise);
   td::Status do_request(const toslib_api::blocks_lookupBlock& block_header,
