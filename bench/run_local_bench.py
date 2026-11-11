@@ -418,10 +418,6 @@ class Bench:
         sign_seconds = time.time() - t_sign
         log.info("quantum @ %g/s: %d transfers pre-signed in %.1fs", rate, count, sign_seconds)
 
-        scanner = chain.Scanner(self.scan, self.classes)
-        scanner.track = {address.hash_part for address in used}
-        await scanner.start_position()
-        scan_task = asyncio.create_task(scanner.run())
         senders = min(
             a.max_senders, max(len(self.configs), math.ceil(rate * 1.5 / chain.SOURCE_SEND_RATE))
         )
@@ -438,24 +434,35 @@ class Bench:
                     f"{chain.SOURCE_SEND_RATE:g} externals/s per connection)"
                 )
             senders = cap
-        t0, records = await asyncio.to_thread(
-            sender.distributed_send,
-            ROOT,
-            a.build,
-            self.configs,
-            bocs,
-            rate,
-            senders,
-            chain.SOURCE_SEND_RATE,
-            SENDER_STARTUP_SECONDS,
-        )
-        t_sent = time.time()
-        await asyncio.sleep(a.drain)
-        metrics_after = await asyncio.to_thread(scrape_metrics) if METRIC_PORTS else {}
-        scanner.stop()
+        scanner = chain.Scanner(self.scan, self.classes)
+        scanner.track = {address.hash_part for address in used}
+        await scanner.start_position()
+        scan_task = asyncio.create_task(scanner.run())
+        try:
+            t0, records = await asyncio.to_thread(
+                sender.distributed_send,
+                ROOT,
+                a.build,
+                self.configs,
+                bocs,
+                rate,
+                senders,
+                chain.SOURCE_SEND_RATE,
+                SENDER_STARTUP_SECONDS,
+            )
+            t_sent = time.time()
+            await asyncio.sleep(a.drain)
+            metrics_after = await asyncio.to_thread(scrape_metrics) if METRIC_PORTS else {}
+            scanner.stop()
+            # Reconcile at the end of the drain even if the observer is still
+            # waiting for a block on its separate scan connection.
+            end = await self.counters(used)
+            sinks_after = await chain.read_balances(self.pool, self.sinks)
+        except BaseException:
+            scan_task.cancel()
+            await asyncio.gather(scan_task, return_exceptions=True)
+            raise
         await scan_task
-        end = await self.counters(used)
-        sinks_after = await chain.read_balances(self.pool, self.sinks)
         # A consumed nonce means the wallet accepted and paid for the request, not that the
         # transfer went out (an unaffordable send action is skipped under send mode 3).
         # Delivered transfers are what reached the sinks: every transfer carries the same
@@ -521,16 +528,18 @@ class Bench:
         steady_transfers = sum(b.by_class.get(LOAD_CLASS, 0) for b in window) / span
         send_lag = [r.sent - r.scheduled for r in records]
         # Inclusion latency: pair each wallet's sends with its observed executions in order.
-        sends_by_wallet: dict[bytes, list[float]] = {}
-        for r in records:
-            sends_by_wallet.setdefault(
-                self.load_addresses[r.index % len(self.load_addresses)].hash_part, []
-            ).append(r.sent)
-        latencies = sorted(
-            seen - s
-            for key, sent in sends_by_wallet.items()
-            for s, seen in zip(sent, scanner.first_seen.get(key, []))
-        )
+        latencies = []
+        if scanner.lag is None:
+            sends_by_wallet: dict[bytes, list[float]] = {}
+            for r in records:
+                sends_by_wallet.setdefault(
+                    self.load_addresses[r.index % len(self.load_addresses)].hash_part, []
+                ).append(r.sent)
+            latencies = sorted(
+                seen - s
+                for key, sent in sends_by_wallet.items()
+                for s, seen in zip(sent, scanner.first_seen.get(key, []))
+            )
 
         def pct(p):
             return (
@@ -543,6 +552,7 @@ class Bench:
         result = {
             "workload": "quantum",
             "offered_rate": rate,
+            "scanner_lag": scanner.lag,
             "transfers_planned": count,
             "messages_sent": len(records),
             "messages_accepted_by_node": accepted,
@@ -596,7 +606,13 @@ class Bench:
         # more than five seconds after its generation second.
         late = [b.seqno for b in window if b.observed - b.gen_utime > 5]
         result["observer_late_blocks"] = len(late)
-        if late:
+        # A retry can consume the steady window and finish in the drain,
+        # leaving no late block timestamp inside the window itself.
+        retry_in_window = any(
+            b.lag_started_at is not None and max(lo, b.lag_started_at) <= min(hi, b.observed)
+            for b in blocks
+        )
+        if late or retry_in_window or scanner.lag is not None:
             bottlenecks.append("block scanner lagged the chain")
         # Per-connection ingress accounting: the most sends any one connection made
         # in a 10 s window, and how many connections saw an admission refusal.
@@ -635,6 +651,22 @@ class Bench:
         result["below_offered_rate"] = below
         result["non_chain_bottlenecks"] = bottlenecks
         result["saturated"] = below and (not bottlenecks or backlog > 0)
+        if scanner.lag is not None:
+            # A prefix gives exact observed counts but cannot establish whole-stage
+            # rates, distribution tails, maxima or a chain saturation verdict.
+            for key in (
+                "steady_transfer_tps",
+                "steady_total_tx_tps",
+                "inclusion_latency_s",
+                "max_tx_per_block",
+                "steady_blocks_per_second",
+                "mean_block_interval_s",
+                "saturated",
+            ):
+                result[key] = None
+            result["below_offered_rate"] = (
+                True if fraction is not None and fraction < 0.95 else None
+            )
         stage_dir = a.out / f"stage-quantum-{rate:g}"
         stage_dir.mkdir(parents=True, exist_ok=False)
         classes = sorted({c for b in blocks for c in b.by_class})
@@ -662,12 +694,21 @@ class Bench:
                 i = min(seconds - 1, max(0, int(r.sent - t0)))
                 sent[i] += 1
                 refused_s[i] += 0 if r.ok else 1
+            last_observed_second = -1
             for b in blocks:
-                i = min(seconds - 1, max(0, int(b.observed - t0)))
+                i = math.floor(b.observed - t0)
+                last_observed_second = max(last_observed_second, i)
+                if not t0 <= b.observed <= t_sent + a.drain:
+                    continue
                 tx[i] += b.total
                 wtx[i] += b.by_class.get(LOAD_CLASS, 0)
             for i in range(seconds):
-                w.writerow([i, sent[i], refused_s[i], tx[i], wtx[i]])
+                counts = (
+                    (None, None)
+                    if scanner.lag is not None and i > last_observed_second
+                    else (tx[i], wtx[i])
+                )
+                w.writerow([i, sent[i], refused_s[i], *counts])
         log.info(
             "stage result: %s",
             json.dumps(
@@ -679,6 +720,7 @@ class Bench:
                         "transfers_planned",
                         "steady_transfer_tps",
                         "steady_total_tx_tps",
+                        "scanner_lag",
                         "saturated",
                         "non_chain_bottlenecks",
                     )
@@ -1091,6 +1133,7 @@ async def main(a: argparse.Namespace) -> int:
                                     "offered_rate",
                                     "steady_transfer_tps",
                                     "executed_fraction",
+                                    "scanner_lag",
                                     "valid",
                                     "saturated",
                                 )

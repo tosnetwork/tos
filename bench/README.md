@@ -83,6 +83,22 @@ material derived from it).
    `transfers_executed`; nonce changes count accepted requests. The stage
    records undelivered transfers in `transfers_unaccounted`.
 
+The scanner reads consecutive blocks from one liteserver. When that server
+reports that its shard client has yet to apply a requested block, the scanner
+retries the same block. It timestamps each block once its transactions are
+available. A gap can wait up to 30 seconds from the first lag response,
+including time spent in subsequent reads. At the end of the drain, the
+scanner takes one final advertised head as its cutoff. All remaining blocks
+share a single retry grace period from that point. A recovered wait that
+overlaps the steady measurement window is recorded as an observer bottleneck.
+
+If the gap persists, the stage records `scanner_lag` with the last scanned
+height, first missing height, advertised shard head, timeout and server error.
+The next rate can still run. The stage keeps the scanned prefix, sender
+records and independent balance and nonce measurements. Whole-stage scan
+rates, inclusion latency and the saturation verdict are null. A healthy
+stage reports `scanner_lag: null`.
+
 Local nodes write stderr directly into their per-node log files under
 `network/`. Signing and wallet preparation leave the event loop available to
 serve other nodes. With `--metrics-base-port`, the stage's `node_metrics_delta`
@@ -116,10 +132,12 @@ either way.
   `steady_transfer_tps`, `steady_total_tx_tps`, `completed_transfer_rate`,
   measured gas per transfer (`gas_sample`), inclusion latency
   percentiles, block counts, refusals and their reasons, and pre-signing time.
-* `stage-<workload>-<rate>/blocks.csv`: every basechain block with its
+* `stage-<workload>-<rate>/blocks.csv`: each scanned basechain block with its
   transaction count per account class.
 * `stage-<workload>-<rate>/timeline.csv`: per-second sends, refusals and
-  observed transactions.
+  transactions observed within the send and drain interval. After a scan
+  timeout, empty observation cells mark seconds beyond the scanned prefix.
+  Blocks first observed outside this interval remain in `blocks.csv`.
 * `bench.log`, `contracts/` (compiled code with hashes) and `network/` (node
   logs and configuration).
 

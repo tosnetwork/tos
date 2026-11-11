@@ -18,7 +18,7 @@ from contract import WalletV5State
 from pytosiq_core import Address, Cell, MessageAny
 from tosapi import toslib_api
 
-from toslib import ToslibClient
+from toslib import ToslibClient, ToslibError
 
 BASECHAIN_SHARD = -(2**63)
 # Each liteserver connection admits 64 queries per second with 32 in flight;
@@ -137,6 +137,7 @@ class BlockRow:
     total: int
     by_class: dict[str, int]
     block: object = None  # the block id, kept so a stage can measure sampled blocks
+    lag_started_at: float | None = None
 
 
 @dataclass
@@ -147,7 +148,9 @@ class Scanner:
     last_seqno: int | None = None
     first_seen: dict[bytes, list[float]] = field(default_factory=dict)
     track: set[bytes] = field(default_factory=set)
+    lag: dict[str, int | float | str | None] | None = None
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
+    _stopped_at: float | None = None
 
     async def _shard_head(self) -> toslib_api.Tos_blockIdExt:
         info = await self.client.call("get_masterchain_info")
@@ -157,10 +160,11 @@ class Scanner:
             raise RuntimeError("the bench expects one unsplit basechain shard")
         return heads[0]
 
-    async def _scan_block(self, seqno: int, observed: float) -> None:
+    async def _scan_block(self, seqno: int, lag_started_at: float | None) -> None:
         block = await self.client.call("lookup_block", 0, BASECHAIN_SHARD, seqno, cost=3)
         header = await self.client.call("get_block_header", block)
         txs = await self.client.call("get_block_transactions", block, cost=2)
+        observed = time.time()
         by_class: dict[str, int] = {}
         for tx in txs:
             key = account_key(tx.account)
@@ -169,29 +173,96 @@ class Scanner:
             if key in self.track:
                 self.first_seen.setdefault(key, []).append(observed)
         self.rows.append(
-            BlockRow(seqno, int(header.gen_utime), observed, len(txs), by_class, block)
+            BlockRow(
+                seqno, int(header.gen_utime), observed, len(txs), by_class, block, lag_started_at
+            )
         )
 
     async def start_position(self) -> None:
         self.last_seqno = (await self._shard_head()).seqno
 
-    async def run(self, poll: float = 0.2) -> None:
+    async def _scan_with_retry(
+        self, seqno: int, head: int, poll: float, lag_timeout: float
+    ) -> bool:
+        # Healthy paginated reads have their own transport timeouts. Start this
+        # deadline only when the node identifies a gap in its applied shard.
+        deadline = asyncio.timeout(None)
+        last_error = ""
+        lag_started_at = None
+        try:
+            async with deadline:
+                while True:
+                    try:
+                        await self._scan_block(seqno, lag_started_at)
+                        return True
+                    except ToslibError as error:
+                        message = str(error)
+                        if not (
+                            message.startswith("LITE_SERVER_NOTREADY:")
+                            and "(possibly out of sync: shard_client_seqno=" in message
+                        ):
+                            raise
+                        last_error = message
+                    if deadline.when() is None:
+                        lag_started_at = time.time()
+                        now = asyncio.get_running_loop().time()
+                        start = self._stopped_at if self._stopped_at is not None else now
+                        deadline.reschedule(start + lag_timeout)
+                    await asyncio.sleep(poll)
+        except TimeoutError:
+            if not deadline.expired():
+                raise
+        self.lag = {
+            "last_scanned_seqno": self.last_seqno,
+            "first_missing_seqno": seqno,
+            "advertised_head_seqno": head,
+            "timeout_s": lag_timeout,
+            "error": last_error,
+        }
+        return False
+
+    async def _head_at_stop(self) -> toslib_api.Tos_blockIdExt:
+        await self._stop.wait()
+        return await self._shard_head()
+
+    async def run(self, poll: float = 0.2, lag_timeout: float = 30.0) -> None:
         if self.last_seqno is None:
             await self.start_position()
-        while not self._stop.is_set():
-            head = await self._shard_head()
-            observed = time.time()
-            assert self.last_seqno is not None
-            for seqno in range(self.last_seqno + 1, head.seqno + 1):
-                await self._scan_block(seqno, observed)
-            self.last_seqno = max(self.last_seqno, head.seqno)
-            try:
-                await asyncio.wait_for(self._stop.wait(), poll)
-            except TimeoutError:
-                pass
+        # Snapshot the advertised head when the stage ends, even if the scan
+        # connection is waiting for an older block. Never chase later heads.
+        final_head = asyncio.create_task(self._head_at_stop())
+        try:
+            while True:
+                stopping = self._stop.is_set()
+                head = await final_head if stopping else await self._shard_head()
+                assert self.last_seqno is not None
+                for seqno in range(self.last_seqno + 1, head.seqno + 1):
+                    if not await self._scan_with_retry(seqno, head.seqno, poll, lag_timeout):
+                        if final_head.done():
+                            # Keep a newer cutoff already returned by the node, or
+                            # propagate its RPC error even if the block also timed out.
+                            assert self.lag is not None
+                            self.lag["advertised_head_seqno"] = max(
+                                head.seqno, final_head.result().seqno
+                            )
+                        return
+                    self.last_seqno = seqno
+                if stopping:
+                    return
+                try:
+                    await asyncio.wait_for(self._stop.wait(), poll)
+                except TimeoutError:
+                    pass
+        finally:
+            final_head.cancel()
+            await asyncio.gather(final_head, return_exceptions=True)
 
     def stop(self) -> None:
-        self._stop.set()
+        if not self._stop.is_set():
+            # All remaining blocks of the advertised batch share one grace
+            # period for lag after the stage ends.
+            self._stopped_at = asyncio.get_running_loop().time()
+            self._stop.set()
 
 
 @dataclass
