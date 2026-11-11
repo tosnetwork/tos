@@ -121,6 +121,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   friend class ExtMessagePriorityTestHarness;
   friend class StartupCatchupManagerProbe;
   friend class CandidateBroadcastGuardProbe;
+  friend class ShardClientStateManagerProbe;
 
  private:
   // WAITERS
