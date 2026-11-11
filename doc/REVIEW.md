@@ -210,7 +210,8 @@ alongside that required inventory.
   (account loading, state init, storage phase, proof construction)?
 - **RB-7** Does an optional or diagnostic feature (indexer, metrics, health instrumentation)
   add cost on the block-application or consensus path, even when disabled? Is it off the
-  critical path and bounded when enabled?
+  critical path and bounded when enabled? Can the scheduler and shutdown path still make
+  progress if the log consumer stops reading, and can evidence collectors detect or prevent loss?
 - **RB-8** Do caps fail safe? When a cap is hit, is the input refused, dropped or evicted
   according to the documented protocol, with counters or logging at a bounded rate? Is
   dropped or evicted input never falsely reported as delivered?

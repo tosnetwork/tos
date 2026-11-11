@@ -25,6 +25,7 @@
 #include "td/utils/port/stacktrace.h"
 
 #if TD_PORT_POSIX
+#include <pthread.h>
 #include <signal.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -33,6 +34,8 @@
 #include <csignal>
 #endif
 
+#include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -317,25 +320,61 @@ static void block_stdin() {
 }
 
 #if TD_PORT_POSIX
-[[maybe_unused]] static void init_alarm_signal() {
-  struct sigaction act;
+static void init_alarm_signal() {
+  struct sigaction act{};
   act.sa_handler = [](int) {
-    signal_safe_write("Signal handler timeout\n");
-    block_stdin();
+    // The interrupted diagnostic or cleanup may already be waiting on stderr.
     _Exit(EXIT_FAILURE);
   };
   sigemptyset(&act.sa_mask);
   act.sa_flags = SA_RESETHAND | SA_ONSTACK;
   sigaction(SIGALRM, &act, nullptr);
   alarm(3);
+  sigset_t unblocked;
+  sigemptyset(&unblocked);
+  sigaddset(&unblocked, SIGALRM);
+  pthread_sigmask(SIG_UNBLOCK, &unblocked, nullptr);
 }
 #endif
+
+// At most one failing thread owns this record. A signal arriving during the
+// copy sees a zero length, never half a message or a pointer into a logger.
+#ifndef TOS_DISABLE_BACKTRACE
+static char failure_message[8192];
+static std::atomic_flag failure_message_claimed = ATOMIC_FLAG_INIT;
+static std::atomic<unsigned> failure_message_size{0};
+static_assert(decltype(failure_message_size)::is_always_lock_free);
+#endif
+
+void set_failure_signal_message(Slice message) {
+#if TD_PORT_POSIX
+  init_alarm_signal();
+#endif
+#ifndef TOS_DISABLE_BACKTRACE
+  if (!message.empty() && !failure_message_claimed.test_and_set(std::memory_order_relaxed)) {
+    auto size = std::min(message.size(), sizeof(failure_message));
+    std::memcpy(failure_message, message.data(), size);
+    failure_message_size.store(static_cast<unsigned>(size), std::memory_order_release);
+  }
+#else
+  signal_safe_write(message, false);
+#endif
+}
 
 [[maybe_unused]] static void default_failure_signal_handler(int sig) {
 #if TD_PORT_POSIX
   init_alarm_signal();
 #endif
 
+#ifndef TOS_DISABLE_BACKTRACE
+  if (auto size = failure_message_size.load(std::memory_order_acquire)) {
+    signal_safe_write("FATAL_ERROR: ", false);
+    signal_safe_write(Slice(failure_message, size), false);
+    if (failure_message[size - 1] != '\n') {
+      signal_safe_write("\n", false);
+    }
+  }
+#endif
   Stacktrace::init();
   signal_safe_write_signal_number(sig);
 
@@ -344,9 +383,6 @@ static void block_stdin() {
   options.use_libbacktrace = true;
   Stacktrace::print_to_stderr(options);
 
-#if TD_PORT_POSIX
-  alarm(0);
-#endif
   block_stdin();
   _Exit(EXIT_FAILURE);
 }

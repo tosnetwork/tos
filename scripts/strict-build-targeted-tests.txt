@@ -8,6 +8,7 @@ test-tol
 test-celldb-actor-restart
 test-toslib-offline
 test-tdactor
+validator-stderr-logging
 test-inmemory-celldb-dec
 archive-prune
 archive-prune-held-reader-shutdown

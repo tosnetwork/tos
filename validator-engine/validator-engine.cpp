@@ -46,6 +46,7 @@
 #include "td/actor/MultiPromise.h"
 #include "td/actor/PromiseFuture.h"
 #include "td/actor/actor.h"
+#include "td/utils/AsyncStderrLog.h"
 #include "td/utils/OptionParser.h"
 #include "td/utils/Random.h"
 #include "td/utils/Status.h"
@@ -1031,6 +1032,16 @@ td::Result<bool> Config::config_del_gc(tos::PublicKeyHash key) {
 }
 
 namespace {
+// Installed before the scheduler starts and destroyed after its threads join.
+std::optional<td::AsyncStderrLog> validator_stderr;
+
+[[noreturn]] void exit_validator(int code) {
+  if (validator_stderr) {
+    validator_stderr->flush();
+  }
+  std::_Exit(code);
+}
+
 // A 32-byte identity in the form the operator tools print it.
 std::string pq_identity_hex(const td::Bits256 &value) {
   return tos::pq::identity_hex(std::string_view(reinterpret_cast<const char *>(value.data()), 32));
@@ -1460,7 +1471,7 @@ void ValidatorEngine::schedule_shutdown(double at) {
     tos::delay_action(
         []() {
           LOG(WARNING) << "Shutting down as scheduled";
-          std::_Exit(0);
+          exit_validator(0);
         },
         ts);
   }
@@ -2188,11 +2199,11 @@ void ValidatorEngine::load_config(td::Promise<> promise) {
         [name = local_config_, new_name = config_file_, promise = std::move(promise)](td::Result<> R) {
           if (R.is_error()) {
             LOG(ERROR) << "failed to parse local config '" << name << "': " << R.move_as_error();
-            std::_Exit(2);
+            exit_validator(2);
           } else {
             LOG(ERROR) << "created config file '" << new_name << "'";
             LOG(ERROR) << "check it manually before continue";
-            std::_Exit(0);
+            exit_validator(0);
           }
         });
 
@@ -2338,7 +2349,7 @@ void ValidatorEngine::check_full_node_master_and_slave_config() {
     auto S = tos::validator::fullnode::FullNodeMasterLimiter::check_trusted(full_node_master_trusted_);
     if (S.is_error()) {
       LOG(ERROR) << "refusing to start the full-node master: " << S;
-      std::_Exit(2);
+      exit_validator(2);
     }
   }
   if (config_.full_node_slaves.empty()) {
@@ -2349,13 +2360,13 @@ void ValidatorEngine::check_full_node_master_and_slave_config() {
   auto S = tos::validator::fullnode::check_full_node_slave_id(full_node_id);
   if (S.is_error()) {
     LOG(ERROR) << "refusing to start the full-node slave: " << S;
-    std::_Exit(2);
+    exit_validator(2);
   }
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), full_node_id](td::Result<tos::PrivateKey> R) {
     auto key = tos::validator::fullnode::full_node_slave_sign_in_key(full_node_id, std::move(R));
     if (key.is_error()) {
       LOG(ERROR) << "refusing to start the full-node slave: " << key.move_as_error();
-      std::_Exit(2);
+      exit_validator(2);
     }
     td::actor::send_closure(SelfId, &ValidatorEngine::loaded_full_node_slave_key, key.move_as_ok());
   });
@@ -2694,7 +2705,7 @@ void ValidatorEngine::start_full_node() {
     // anything else, so there is no anonymous fallback.
     if (full_node_slave_key_.empty()) {
       LOG(ERROR) << "refusing to start the full-node slave: its sign-in key was not loaded";
-      std::_Exit(2);
+      exit_validator(2);
     }
     std::vector<std::pair<tos::adnl::AdnlNodeIdFull, td::IPAddress>> vec;
     for (auto &x : config_.full_node_slaves) {
@@ -2855,7 +2866,7 @@ void ValidatorEngine::start_full_node_masters() {
     auto R = tos::validator::fullnode::FullNodeMasterLimiter::create(full_node_master_trusted_, clock);
     if (R.is_error()) {
       LOG(ERROR) << "refusing to start the full-node master: " << R.move_as_error();
-      std::_Exit(2);
+      exit_validator(2);
     }
     full_node_master_limiter_ = std::shared_ptr<tos::validator::fullnode::FullNodeMasterLimiter>(R.move_as_ok());
     LOG(INFO) << "full-node master serves " << full_node_master_trusted_.size()
@@ -6352,7 +6363,7 @@ void ValidatorEngine::run() {
     auto lock_R = td::FileFd::open(lock_path, td::FileFd::Read | td::FileFd::Write | td::FileFd::Create, 0600);
     if (lock_R.is_error()) {
       LOG(ERROR) << "cannot open the configuration lock " << lock_path << ": " << lock_R.move_as_error();
-      std::_Exit(2);
+      exit_validator(2);
     }
     auto lock = lock_R.move_as_ok();
     auto S = lock.lock(td::FileFd::LockFlags::Write, lock_path, 1);
@@ -6361,7 +6372,7 @@ void ValidatorEngine::run() {
                  << " is held by another process: a node already running on this database, or "
                     "tos-pq-consensus-key bind-node editing its configuration: "
                  << S;
-      std::_Exit(2);
+      exit_validator(2);
     }
     config_lock_ = std::move(lock);
   }
@@ -6371,7 +6382,7 @@ void ValidatorEngine::run() {
   auto Sr = load_global_config();
   if (Sr.is_error()) {
     LOG(ERROR) << "failed to load global config'" << global_config_ << "': " << Sr;
-    std::_Exit(2);
+    exit_validator(2);
   }
 
   keyring_ = tos::keyring::Keyring::create(db_root_ + "/keyring");
@@ -6380,7 +6391,7 @@ void ValidatorEngine::run() {
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<> R) {
     if (R.is_error()) {
       LOG(ERROR) << "failed to parse config: " << R.move_as_error();
-      std::_Exit(2);
+      exit_validator(2);
     } else {
       td::actor::send_closure(SelfId, &ValidatorEngine::start);
     }
@@ -6589,11 +6600,12 @@ int main(int argc, char *argv[]) {
 
   td::set_default_failure_signal_handler().ensure();
 
-  td::actor::ActorOwn<ValidatorEngine> x;
   td::unique_ptr<td::LogInterface> logger_;
   SCOPE_EXIT {
     td::log_interface = td::default_log_interface;
+    validator_stderr.reset();
   };
+  td::actor::ActorOwn<ValidatorEngine> x;
 
   LOG_STATUS(td::change_maximize_rlimit(td::RlimitType::nofile, 1572864));
 
@@ -7517,7 +7529,7 @@ int main(int argc, char *argv[]) {
     }
     logger_ = r_logger.move_as_ok();
     td::log_interface = logger_.get();
-    td::set_log_fatal_error_callback([](td::CSlice s) { std::cerr << "FATAL_ERROR: " << s.c_str() << std::endl; });
+    td::set_log_fatal_error_callback([](td::CSlice s) { td::set_failure_signal_message(s); });
   } else if (log_rotation_set) {
     LOG(ERROR) << "--log-rotate-mb and --log-keep-files need -l/--logname";
     std::_Exit(2);
@@ -7555,6 +7567,12 @@ int main(int argc, char *argv[]) {
     }
     tos::validator::measurement::install_sink(
         tos::validator::measurement::create_jsonl_file_sink(measurement_jsonl, measurement_node_id).move_as_ok());
+  }
+
+  const char *sync_stderr = std::getenv("TOS_SYNCHRONOUS_STDERR");
+  if (!logger_ && (sync_stderr == nullptr || td::Slice(sync_stderr) != "1")) {
+    validator_stderr.emplace(STDERR_FILENO);
+    td::log_interface = &*validator_stderr;
   }
 
   // H-03 startup invariant: log the effective persistent-state budget

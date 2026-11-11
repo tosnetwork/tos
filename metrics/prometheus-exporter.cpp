@@ -1,6 +1,7 @@
 #include <algorithm>
 
 #include "td/actor/coro_utils.h"
+#include "td/utils/AsyncStderrLog.h"
 #include "td/utils/StorageHealth.h"
 
 #include "chain-progress-metrics.h"
@@ -239,6 +240,16 @@ void PrometheusExporter::collection_completed(td::Result<metrics::MetricSet> res
   const auto sampled_at = now;
   const auto wall = td::Timestamp::now().at_unix();
   auto set = result.move_as_ok();
+  auto log = td::AsyncStderrLog::stats();
+  set.families.push_back(metrics::MetricFamily::make_scalar(
+      prefix_ + "_stderr_log_dropped_total", "counter", static_cast<double>(log.dropped),
+      "Diagnostic records refused by the validator stderr queue, including ERROR."));
+  set.families.push_back(metrics::MetricFamily::make_scalar(
+      prefix_ + "_stderr_log_dropped_errors_total", "counter", static_cast<double>(log.dropped_errors),
+      "ERROR diagnostic records refused by the validator stderr queue."));
+  set.families.push_back(metrics::MetricFamily::make_scalar(prefix_ + "_stderr_log_write_errors_total", "counter",
+                                                            static_cast<double>(log.write_errors),
+                                                            "Accepted stderr diagnostic records whose write failed."));
   set.families.push_back(metrics::MetricFamily::make_scalar(prefix_ + "_exporter_snapshot_generation", "gauge",
                                                             static_cast<double>(admission_.generation() + 1)));
   set.families.push_back(
