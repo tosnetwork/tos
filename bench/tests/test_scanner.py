@@ -36,6 +36,7 @@ class ScanNode:
         self.completed_at = {}
         self.advertised_head = 13
         self.head_reads = []
+        self.head_modes = []
         client = create_autospec(chain.PacedClient, instance=True)
         client.call.side_effect = self.call
         self.scanner = chain.Scanner(client, {ACCOUNT: "wallet"})
@@ -43,8 +44,11 @@ class ScanNode:
         self.scanner.track.add(ACCOUNT)
 
     async def call(self, method, *args, cost=1):
-        if method == "get_masterchain_info":
-            return SimpleNamespace(last=SimpleNamespace(seqno=201))
+        if method == "get_masterchain_info_ext":
+            self.head_modes.append(args[0])
+            if args != (0,):
+                raise AssertionError("legacy liteserver does not support shard-client mode")
+            return SimpleNamespace(mode=0, capabilities=7, last=SimpleNamespace(seqno=201))
         if method == "get_shards":
             self.head_reads.append(self.advertised_head)
             head = SimpleNamespace(
@@ -67,6 +71,61 @@ class ScanNode:
 
 
 class ScannerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_start_and_stop_report_the_applied_head(self):
+        advertised, applied = object(), object()
+        shard = SimpleNamespace(workchain=0, shard=chain.BASECHAIN_SHARD, seqno=12)
+        applied_info = SimpleNamespace(mode=1, capabilities=15, last=applied)
+        shard_info = SimpleNamespace(shards=[shard])
+        client = create_autospec(chain.PacedClient, instance=True)
+        client.call.side_effect = [
+            SimpleNamespace(mode=0, capabilities=15, last=advertised),
+            applied_info,
+            shard_info,
+            applied_info,
+            shard_info,
+        ]
+        scanner = chain.Scanner(client, {})
+        self.assertIsNone(scanner.head_source)
+        await scanner.start_position()
+        scanner.stop()
+        await scanner.run()
+        self.assertEqual(scanner.last_seqno, 12)
+        self.assertEqual(scanner.head_source, "shard_client")
+        self.assertEqual(
+            [call.args for call in client.call.await_args_list],
+            [
+                ("get_masterchain_info_ext", 0),
+                ("get_masterchain_info_ext", 1),
+                ("get_shards", applied),
+                ("get_masterchain_info_ext", 1),
+                ("get_shards", applied),
+            ],
+        )
+
+    async def test_applied_head_error_does_not_fall_back_to_default(self):
+        error = rpc_error("LITE_SERVER_NOTREADY: shard client state is not ready")
+        client = create_autospec(chain.PacedClient, instance=True)
+        client.call.side_effect = [SimpleNamespace(mode=0, capabilities=15, last=object()), error]
+        scanner = chain.Scanner(client, {})
+        with self.assertRaises(ToslibError) as raised:
+            await scanner.start_position()
+        self.assertIs(raised.exception, error)
+        self.assertIsNone(scanner.last_seqno)
+        self.assertIsNone(scanner.head_source)
+        self.assertEqual(
+            [call.args for call in client.call.await_args_list],
+            [("get_masterchain_info_ext", 0), ("get_masterchain_info_ext", 1)],
+        )
+
+    async def test_advertised_reply_to_applied_head_request_is_rejected(self):
+        advertised = SimpleNamespace(mode=0, capabilities=15, last=object())
+        client = create_autospec(chain.PacedClient, instance=True)
+        client.call.side_effect = [advertised, advertised]
+        scanner = chain.Scanner(client, {})
+        with self.assertRaisesRegex(RuntimeError, "head mode 0, requested 1"):
+            await scanner.start_position()
+        self.assertIsNone(scanner.head_source)
+
     async def test_retry_at_each_block_read_resumes_in_order_without_double_counting(self):
         for failing in ("lookup_block", "get_block_header", "get_block_transactions"):
             with self.subTest(failing=failing):
@@ -193,6 +252,8 @@ class ScannerTests(unittest.IsolatedAsyncioTestCase):
         node = ScanNode(read)
         await asyncio.wait_for(node.scanner.run(poll=0.001, lag_timeout=0.1), timeout=1)
         self.assertEqual(node.head_reads, [13, 15])
+        self.assertEqual(node.head_modes, [0, 0])
+        self.assertEqual(node.scanner.head_source, "advertised")
         self.assertEqual([row.seqno for row in node.scanner.rows], [11, 12, 13, 14, 15])
         self.assertEqual(node.scanner.last_seqno, 15)
         self.assertIsNone(node.scanner.lag)

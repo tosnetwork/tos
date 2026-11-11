@@ -12,7 +12,7 @@ import base64
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from contract import WalletV5State
 from pytosiq_core import Address, Cell, MessageAny
@@ -21,6 +21,7 @@ from tosapi import toslib_api
 from toslib import ToslibClient, ToslibError
 
 BASECHAIN_SHARD = -(2**63)
+SHARD_CLIENT_STATE_CAPABILITY = 8
 # Each liteserver connection admits 64 queries per second with 32 in flight;
 # stay under both so the bench measures the chain, not its own refusals.
 CONNECTION_QPS = 48
@@ -151,9 +152,20 @@ class Scanner:
     lag: dict[str, int | float | str | None] | None = None
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     _stopped_at: float | None = None
+    head_source: Literal["shard_client", "advertised"] | None = field(default=None, init=False)
 
     async def _shard_head(self) -> toslib_api.Tos_blockIdExt:
-        info = await self.client.call("get_masterchain_info")
+        # Mode 0 also advertises capabilities. Older nodes keep their default
+        # head and bounded block-read retries. On supporting nodes, use the
+        # shard client's applied head for every scan boundary on this connection.
+        mode = 1 if self.head_source == "shard_client" else 0
+        info = await self.client.call("get_masterchain_info_ext", mode)
+        if mode == 0 and info.capabilities & SHARD_CLIENT_STATE_CAPABILITY:
+            mode = 1
+            info = await self.client.call("get_masterchain_info_ext", mode)
+        if info.mode != mode:
+            raise RuntimeError(f"liteserver returned head mode {info.mode}, requested {mode}")
+        self.head_source = "shard_client" if mode == 1 else "advertised"
         shards = await self.client.call("get_shards", info.last)
         heads = [s for s in shards.shards if s.workchain == 0]
         if len(heads) != 1 or heads[0].shard != BASECHAIN_SHARD:
