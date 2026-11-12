@@ -7,17 +7,22 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("run_shard_bench", ROOT / "bench/shard/run_shard_bench.py")
+spec = importlib.util.spec_from_file_location(
+    "run_shard_bench", ROOT / "bench/shard/run_shard_bench.py"
+)
+assert spec is not None and spec.loader is not None
 bench = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bench)
 
 ROOT_SHARD = -(1 << 63)  # 0x8000000000000000 as a signed int64
-LEFT = (1 << 62)  # 0x4000000000000000
+LEFT = 1 << 62  # 0x4000000000000000
 RIGHT = -(1 << 62)  # 0xc000000000000000 as a signed int64
 
 
 def ref(shard, seqno):
-    return SimpleNamespace(workchain=0, shard=shard, seqno=seqno, root_hash=bytes([seqno % 256]) * 32)
+    return SimpleNamespace(
+        workchain=0, shard=shard, seqno=seqno, root_hash=bytes([seqno % 256]) * 32
+    )
 
 
 class FakeChain:
@@ -36,7 +41,9 @@ class FakeChain:
         if method == "get_block_header":
             block = args[0]
             self.reads.append((block.shard, block.seqno))
-            return SimpleNamespace(gen_utime=1000 + block.seqno, prev_blocks=self.graph[(block.shard, block.seqno)])
+            return SimpleNamespace(
+                gen_utime=1000 + block.seqno, prev_blocks=self.graph[(block.shard, block.seqno)]
+            )
         raise AssertionError(method)
 
 

@@ -17,7 +17,10 @@ def test_defaults_reproduce_the_fixed_layout_genesis():
 
 def test_the_canonical_genesis_values():
     config = NetworkConfig(
-        split=0, max_split=2, split_merge_timings=(100, 100, 30, 1000), persistent_state_split_depth=4
+        split=0,
+        max_split=2,
+        split_merge_timings=(100, 100, 30, 1000),
+        persistent_state_split_depth=4,
     )
     assert _basechain_split_fift(config) == {
         "max_split": 2,

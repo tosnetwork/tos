@@ -411,7 +411,9 @@ class LayoutWatch:
         while not self._stop.is_set():
             reading = await basechain_tops(self.rpc)
             if reading is not None and (not self.rows or self.rows[-1]["shards"] != reading[1]):
-                self.rows.append({"time": time.time(), "mc_seqno": reading[0], "shards": reading[1]})
+                self.rows.append(
+                    {"time": time.time(), "mc_seqno": reading[0], "shards": reading[1]}
+                )
             try:
                 await asyncio.wait_for(self._stop.wait(), self.poll)
             except TimeoutError:

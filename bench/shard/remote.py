@@ -1458,7 +1458,9 @@ async def run_locked(
     record["organic"] = {
         "layout": [r | {"t": round(r["time"] - t_start, 1)} for r in watch.rows],
         "peak_shards": watch.peak,
-        "first_split_after_start_s": round(split_rows[0]["time"] - t_start, 1) if split_rows else None,
+        "first_split_after_start_s": round(split_rows[0]["time"] - t_start, 1)
+        if split_rows
+        else None,
         "merge_wait_s": a.merge_wait,
         "merged": merge is not None,
         "merge_after_deadline_s": None if merge is None else round(merge["time"] - t_deadline, 1),

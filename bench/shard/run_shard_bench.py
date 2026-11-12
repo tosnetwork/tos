@@ -156,7 +156,9 @@ def parse_args() -> argparse.Namespace:
     if not a.split <= a.max_split <= 4:
         p.error("--max-split must be in [--split, 4]")
     if a.merge_wait < 0 or (a.merge_wait and a.max_split == a.split):
-        p.error("--merge-wait needs a non-negative value and an organic run (--max-split > --split)")
+        p.error(
+            "--merge-wait needs a non-negative value and an organic run (--max-split > --split)"
+        )
     if not 1 <= a.chains <= hopbench.MAX_CHAINS:
         p.error("--chains must be in [1, 255]")
     if not 0 <= a.forks <= 12:
@@ -245,7 +247,9 @@ class ShardScanner:
             if key in self.seen or (last is not None and block.seqno <= last):
                 continue
             if len(found) >= self.MAX_WALK_BLOCKS:
-                raise RuntimeError(f"shard walk from {hopbench.shard_label(shard)} found no frontier")
+                raise RuntimeError(
+                    f"shard walk from {hopbench.shard_label(shard)} found no frontier"
+                )
             header = await self._header(block)
             self.seen.add(key)
             found.append(
@@ -256,8 +260,13 @@ class ShardScanner:
             stack.extend(p for p in header.prev_blocks if p.workchain == 0)
         self.blocks.extend(found)
         for b in found:
-            self.last[b.shard] = max(self.last.get(b.shard, b.seqno), b.seqno)
-        self.last[shard] = max(self.last.get(shard, head.seqno), head.seqno)
+            self._advance(b.shard, int(b.seqno))
+        self._advance(shard, int(head.seqno))
+
+    def _advance(self, shard: int, seqno: int) -> None:
+        current = self.last.get(shard)
+        if current is None or seqno > current:
+            self.last[shard] = seqno
 
     async def run(self, poll: float = 0.3) -> None:
         if not self.last:
@@ -294,7 +303,11 @@ async def wait_merge(scanner: ShardScanner, split: int, timeout: float) -> float
     while time.time() < deadline:
         heads = await scanner.heads()
         split_seen = any(len(labels) > want for _, labels in scanner.shard_sets)
-        if split_seen and len(heads) == want and all(hopbench.shard_depth(s) == split for s in heads):
+        if (
+            split_seen
+            and len(heads) == want
+            and all(hopbench.shard_depth(s) == split for s in heads)
+        ):
             return time.time()
         await asyncio.sleep(2)
     return None
@@ -311,8 +324,10 @@ def organic_summary(
     """The layout history of an organic run, relative to the load start, and the split/merge times."""
     want = 1 << split
     history = [{"t": round(t - load_start, 1), "shards": labels} for t, labels in shard_sets]
-    first_split = next((h["t"] for h in history if len(h["shards"]) > want), None)
-    peak = max((len(h["shards"]) for h in history), default=want)
+    first_split = next(
+        (round(t - load_start, 1) for t, labels in shard_sets if len(labels) > want), None
+    )
+    peak = max((len(labels) for _, labels in shard_sets), default=want)
     return {
         "history": history,
         "first_split_after_load_start_s": first_split,
