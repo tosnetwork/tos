@@ -1050,7 +1050,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--deploy-wait", type=float, default=900)
     p.add_argument("--drain-wait", type=float, default=900)
     p.add_argument("--poll", type=float, default=2.0)
+    p.add_argument(
+        "--merge-wait",
+        type=float,
+        default=0.0,
+        help="seconds after the deadline to wait for the basechain to merge back to one shard "
+        "before the closing boundary (0: do not wait)",
+    )
     a = p.parse_args(argv)
+    if a.merge_wait < 0:
+        p.error("--merge-wait must not be negative")
     if not 0 < a.rpc_share <= 1:
         p.error("--rpc-share must be in (0, 1]")
     if a.duration < 1:
@@ -1418,14 +1427,39 @@ async def run_locked(
     if started.state != "settled":
         return stop("INCONCLUSIVE", f"the start is {started.state}: {started.reason}", INCONCLUSIVE)
     record["start_wallet_fee"] = started.fee
+    # The basechain layout from the start on, so a split that is over before the merge
+    # wait begins is still seen; the T2 window records the same changes by mc block.
+    poll = max(a.poll, 5.0)
+    watch = t2collect.LayoutWatch(remote.rpc, poll)
+    watch_task = asyncio.create_task(watch.run())
+    t_start = time.time()
     past = await remote.wait_past(deadline + 5, a.drain_wait)
     if past is None:
+        watch.stop()
+        await watch_task
         return stop(
             "INCONCLUSIVE",
             f"chain time did not pass the deadline {deadline} + 5 within the wait "
             f"--drain-wait {a.drain_wait} s allows",
             INCONCLUSIVE,
         )
+    t_past = time.time()
+    merge = None
+    if a.merge_wait:
+        merge = await t2collect.wait_merged(remote.rpc, a.merge_wait, poll, watch.peak > 1)
+    watch.stop()
+    await watch_task
+    split_rows = [r for r in watch.rows if r["shards"] > 1]
+    record["organic"] = {
+        "layout": [r | {"t": round(r["time"] - t_start, 1)} for r in watch.rows],
+        "peak_shards": watch.peak,
+        "first_split_after_start_s": round(split_rows[0]["time"] - t_start, 1) if split_rows else None,
+        "merge_wait_s": a.merge_wait,
+        "merged": merge is not None,
+        "merge_after_deadline_s": None if merge is None else round(merge["time"] - t_past, 1),
+        "merge_mc_seqno": None if merge is None else merge["mc_seqno"],
+    }
+    log.info("organic layout: %s", json.dumps(record["organic"]))
     closing = await t2collect.wait_empty_queue(remote.rpc, a.drain_wait, a.poll)
     log.info("closing boundary: %s", closing)
     result = await t2collect.check_window(
