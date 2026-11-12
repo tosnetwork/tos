@@ -84,4 +84,4 @@ is a regression.
 
 | Harness | Family | Fixtures | Context source |
 |---|---|---|---|
-| `vm` | `vm-endstate` | see the family file | `test/rescue-fee-gate/vm_endstate_scenarios.py`, migrated by `migrate/vm_endstate.py` |
+| `vm` | `vm-endstate` | 128 | `test/rescue-fee-gate/vm_endstate_scenarios.py`, migrated by `migrate/vm_endstate.py`; filled effects equal `test-vm-endstate` output and `vm-endstate-expected.tsv` row for row |
