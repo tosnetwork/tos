@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conformance/fixture-v1",
+  "title": "Conformance fixture, version 1",
+  "description": "One JSON object per line in a family file <harness>/fixtures/<family>.jsonl. A fixture is metadata + context (input) + effects (expected output, filled by the C++ reference). See test/conformance/README.md.",
+  "type": "object",
+  "required": ["metadata", "context", "effects"],
+  "additionalProperties": false,
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": ["harness", "harness_version", "fixture_id", "family", "source", "reference_commit"],
+      "additionalProperties": false,
+      "properties": {
+        "harness": {"enum": ["vm", "txn"]},
+        "harness_version": {"const": 1},
+        "fixture_id": {"type": "string", "pattern": "^[A-Za-z0-9._:/+-]{1,200}$"},
+        "family": {"type": "string", "pattern": "^[a-z0-9-]{1,64}$"},
+        "source": {"type": "string", "pattern": "^(authored|fuzz|replay|migrated:[a-z0-9_./-]+)$"},
+        "reference_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "note": {"type": "string"}
+      }
+    },
+    "context": {"oneOf": [{"$ref": "#/$defs/vm_context"}, {"$ref": "#/$defs/txn_context"}]},
+    "effects": {"oneOf": [{"$ref": "#/$defs/vm_effects"}, {"$ref": "#/$defs/txn_effects"}]}
+  },
+  "$defs": {
+    "boc": {"type": "string", "description": "Base64 (standard alphabet) bag of cells with one root", "pattern": "^[A-Za-z0-9+/]+={0,2}$"},
+    "hash": {"type": "string", "description": "Cell representation hash, uppercase hex as printed by the C++ node", "pattern": "^[0-9A-F]{64}$"},
+    "stack_item": {
+      "description": "Input stack value. int values are decimal strings so 257-bit integers survive JSON.",
+      "oneOf": [
+        {"type": "object", "required": ["type"], "additionalProperties": false, "properties": {"type": {"const": "null"}}},
+        {"type": "object", "required": ["type"], "additionalProperties": false, "properties": {"type": {"const": "nan"}}},
+        {"type": "object", "required": ["type", "value"], "additionalProperties": false, "properties": {"type": {"const": "int"}, "value": {"type": "string", "pattern": "^-?[0-9]{1,80}$"}}},
+        {"type": "object", "required": ["type", "boc"], "additionalProperties": false, "properties": {"type": {"enum": ["cell", "slice"]}, "boc": {"$ref": "#/$defs/boc"}}},
+        {"type": "object", "required": ["type", "items"], "additionalProperties": false, "properties": {"type": {"const": "tuple"}, "items": {"type": "array", "maxItems": 255, "items": {"$ref": "#/$defs/stack_item"}}}}
+      ]
+    },
+    "vm_context": {
+      "type": "object",
+      "required": ["code", "global_version", "gas", "stack"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {"$ref": "#/$defs/boc"},
+        "data": {"$ref": "#/$defs/boc", "description": "Initial c4; absent means the empty cell default of the VM"},
+        "c7": {"$ref": "#/$defs/stack_item", "description": "Initial c7, a tuple; absent means the VM default"},
+        "stack": {"type": "array", "description": "Initial stack, bottom first", "maxItems": 255, "items": {"$ref": "#/$defs/stack_item"}},
+        "global_version": {"type": "integer", "minimum": 0, "maximum": 255},
+        "flags": {"type": "integer", "minimum": 0, "maximum": 255, "description": "VmState flags, default 0"},
+        "gas": {
+          "type": "object", "required": ["limit", "max"], "additionalProperties": false,
+          "properties": {"limit": {"type": "integer", "minimum": 0}, "max": {"type": "integer", "minimum": 0}, "credit": {"type": "integer", "minimum": 0}}
+        },
+        "libraries": {"type": "array", "maxItems": 4, "items": {"$ref": "#/$defs/boc"}, "description": "Library collection dictionary roots"}
+      }
+    },
+    "vm_effects": {
+      "type": "object",
+      "required": ["exit_code", "gas_used", "steps", "committed", "c4_hash", "c5_hash", "stack"],
+      "additionalProperties": false,
+      "properties": {
+        "exit_code": {"type": "integer", "description": "External exit code; out of gas is -14"},
+        "gas_used": {"type": "integer"},
+        "steps": {"type": "integer"},
+        "committed": {"type": "boolean"},
+        "c4_hash": {"oneOf": [{"$ref": "#/$defs/hash"}, {"type": "null"}]},
+        "c5_hash": {"oneOf": [{"$ref": "#/$defs/hash"}, {"type": "null"}]},
+        "stack": {"type": "array", "description": "Final stack bottom first, canonical text per item (README)", "items": {"type": "string"}}
+      }
+    },
+    "txn_context": {
+      "type": "object",
+      "required": ["config", "shard_account", "now", "lt", "rand_seed"],
+      "additionalProperties": false,
+      "properties": {
+        "config": {"$ref": "#/$defs/boc", "description": "ConfigParams BOC as accepted by transaction_emulator_create"},
+        "shard_account": {"$ref": "#/$defs/boc", "description": "Complete original ShardAccount"},
+        "message": {"$ref": "#/$defs/boc", "description": "Inbound message; exactly one of message and tick_tock"},
+        "tick_tock": {"enum": ["tick", "tock"]},
+        "now": {"type": "integer", "minimum": 1, "maximum": 4294967295},
+        "lt": {"type": "integer", "minimum": 1},
+        "rand_seed": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "libraries": {"$ref": "#/$defs/boc"},
+        "prev_blocks": {"$ref": "#/$defs/boc"}
+      }
+    },
+    "txn_effects": {
+      "oneOf": [
+        {"type": "object", "required": ["outcome", "transaction_hash", "account_hash", "shard_account_hash"], "additionalProperties": false,
+         "properties": {"outcome": {"const": "accepted"}, "transaction_hash": {"$ref": "#/$defs/hash"}, "account_hash": {"$ref": "#/$defs/hash"}, "shard_account_hash": {"$ref": "#/$defs/hash"}}},
+        {"type": "object", "required": ["outcome", "vm_exit_code"], "additionalProperties": false,
+         "properties": {"outcome": {"const": "rejected"}, "vm_exit_code": {"type": "integer"}}},
+        {"type": "object", "required": ["outcome"], "additionalProperties": false,
+         "properties": {"outcome": {"const": "error"}}}
+      ]
+    }
+  }
+}
