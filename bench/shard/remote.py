@@ -1058,8 +1058,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "before the closing boundary (0: do not wait)",
     )
     a = p.parse_args(argv)
-    if a.merge_wait < 0:
-        p.error("--merge-wait must not be negative")
+    if not (math.isfinite(a.merge_wait) and a.merge_wait >= 0):
+        p.error("--merge-wait must be a finite, non-negative number of seconds")
     if not 0 < a.rpc_share <= 1:
         p.error("--rpc-share must be in (0, 1]")
     if a.duration < 1:
@@ -1415,6 +1415,9 @@ async def run_locked(
             INCONCLUSIVE,
         )
     deadline = await remote.now() + a.duration
+    # The deadline in local time: the merge allowance and the reported merge time are
+    # measured from it, not from when the wait for chain time happens to return.
+    t_deadline = time.time() + a.duration
     record["deadline"] = deadline
     try:
         started = await bench.send(
@@ -1443,10 +1446,10 @@ async def run_locked(
             f"--drain-wait {a.drain_wait} s allows",
             INCONCLUSIVE,
         )
-    t_past = time.time()
     merge = None
     if a.merge_wait:
-        merge = await t2collect.wait_merged(remote.rpc, a.merge_wait, poll, watch.peak > 1)
+        allowance = max(0.0, t_deadline + a.merge_wait - time.time())
+        merge = await t2collect.wait_merged(remote.rpc, allowance, poll, watch.peak > 1)
     watch.stop()
     await watch_task
     split_rows = [r for r in watch.rows if r["shards"] > 1]
@@ -1456,7 +1459,7 @@ async def run_locked(
         "first_split_after_start_s": round(split_rows[0]["time"] - t_start, 1) if split_rows else None,
         "merge_wait_s": a.merge_wait,
         "merged": merge is not None,
-        "merge_after_deadline_s": None if merge is None else round(merge["time"] - t_past, 1),
+        "merge_after_deadline_s": None if merge is None else round(merge["time"] - t_deadline, 1),
         "merge_mc_seqno": None if merge is None else merge["mc_seqno"],
     }
     log.info("organic layout: %s", json.dumps(record["organic"]))

@@ -433,7 +433,15 @@ async def wait_merged(
     deadline = loop.time() + timeout
     peak = 1
     while True:
-        reading = await basechain_tops(rpc)
+        left = deadline - loop.time()
+        if left <= 0:
+            return None
+        try:
+            reading = await asyncio.wait_for(basechain_tops(rpc), left)
+        except TimeoutError:
+            return None
+        if loop.time() > deadline:
+            return None  # a reading that completed after the allowance proves nothing
         if reading is not None:
             seqno, count = reading
             peak = max(peak, count)
@@ -442,7 +450,7 @@ async def wait_merged(
                 return {"mc_seqno": seqno, "time": time.time(), "peak_shards_seen": peak}
         if loop.time() >= deadline:
             return None
-        await asyncio.sleep(poll)
+        await asyncio.sleep(min(poll, max(0.0, deadline - loop.time())))
 
 
 async def wait_empty_queue(rpc: PacedRpc, timeout: float, poll: float = 2.0) -> QueueBoundary:

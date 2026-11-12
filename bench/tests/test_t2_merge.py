@@ -65,6 +65,52 @@ class WaitMergedTest(unittest.TestCase):
         self.assertIsNotNone(merged)
 
 
+class SlowRpc(FakeRpc):
+    """Answers only after a real delay, longer than the allowance under test."""
+
+    def __init__(self, counts, delay):
+        super().__init__(counts)
+        self.delay = delay
+
+    async def call(self, method, params=None):
+        await asyncio.sleep(self.delay)
+        return await super().call(method, params)
+
+
+class LateReadingTest(unittest.TestCase):
+    def test_a_reading_that_ends_after_the_allowance_is_not_a_merge(self):
+        # Real sleeps: the RPC takes 60 ms, the allowance is 10 ms.
+        merged = asyncio.run(t2collect.wait_merged(SlowRpc([1], 0.03), 0.01, split_seen=True))
+        self.assertIsNone(merged)
+
+    def test_a_zero_allowance_reads_nothing(self):
+        rpc = FakeRpc([1])
+        self.assertIsNone(asyncio.run(t2collect.wait_merged(rpc, 0.0, split_seen=True)))
+        self.assertIsNone(rpc.current)
+
+
+class MergeWaitArgumentTest(unittest.TestCase):
+    BASE = [
+        "--remote", "--rpc", "http://127.0.0.1:1/jsonRPC", "--out", "/nonexistent/x",
+        "--key-file", "/nonexistent/k", "--signer", "/nonexistent/s", "--auth-tag", "00" * 32,
+        "--accounts", "2", "--chains", "1", "--forks", "0", "--hops", "1",
+        "--account-funding", "0.01", "--load-funding", "0.01", "--max-cost", "1",
+        "--max-messages", "10",
+    ]
+
+    def test_non_finite_or_negative_merge_waits_are_refused(self):
+        from shard import remote
+
+        for value in ("nan", "inf", "-1"):
+            with self.subTest(value=value), self.assertRaises(SystemExit):
+                remote.parse_args(self.BASE + ["--merge-wait", value])
+
+    def test_a_finite_merge_wait_is_accepted(self):
+        from shard import remote
+
+        self.assertEqual(remote.parse_args(self.BASE + ["--merge-wait", "900"]).merge_wait, 900.0)
+
+
 class LayoutWatchTest(unittest.TestCase):
     def test_records_each_layout_change_once(self):
         async def go():
