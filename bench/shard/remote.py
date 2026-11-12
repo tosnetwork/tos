@@ -1415,9 +1415,11 @@ async def run_locked(
             INCONCLUSIVE,
         )
     deadline = await remote.now() + a.duration
-    # The deadline in local time: the merge allowance and the reported merge time are
-    # measured from it, not from when the wait for chain time happens to return.
-    t_deadline = time.time() + a.duration
+    # The merge allowance and the reported merge time are measured from the deadline
+    # itself. Chain time is UTC unix seconds, so the deadline is also a local wall-clock
+    # instant (validators and this host keep NTP time); deriving it from the local time
+    # of the read instead would add the age of the sampled head.
+    t_deadline = float(deadline)
     record["deadline"] = deadline
     try:
         started = await bench.send(
