@@ -74,7 +74,7 @@ disk ≈ B × (state-ttl + archive-ttl)      blocks (archive packages)
      + celldb                               live state, grows with accounts/storage
      + N_snap × S_snap                      persistent snapshots (2 on a validator; §1)
      + files + consensus + state            short-lived engine stores (bounded)
-     + 6 × S_snap                           spool reserve while syncing from a snapshot
+     + 9 × S_snap + max(1 GiB, 0.3 × S_snap) free at import (resync gate, see below)
      + logs (≈2 GiB cap) + journal (≤4 GiB)
      + OS and tooling
 ```
@@ -82,8 +82,21 @@ disk ≈ B × (state-ttl + archive-ttl)      blocks (archive packages)
 Where:
 - `B` is the block byte rate, which depends on load;
 - `S_snap` is the serialized state size;
-- the spool reserve follows the 600 % default in
-  [persistent-state-spool-budget.md](persistent-state-spool-budget.md).
+- the import term is the free space that a snapshot import requires before it
+  starts. Below it, `CellDbIn::import_persistent_state_streaming` refuses the
+  snapshot (`validator/db/celldb.cpp`, `check_persistent_state_spool_free_space`).
+  The requirement is `persistent_state_import_required_free_bytes` in
+  `validator/state-download-buffer.cpp`, made of three parts:
+  - the spool reservation, 600 % of the snapshot file
+    ([persistent-state-spool-budget.md](persistent-state-spool-budget.md));
+  - plus half of it, for the CellDb copy of the new cells;
+  - plus `max(1 GiB, reservation / 20)` for the node's other writers.
+
+  With `S_snap` the snapshot file size, that is
+  `6 S + 3 S + max(1 GiB, 0.3 S) = 9 × S_snap + max(1 GiB, 0.3 × S_snap)`.
+  At today's 0.29 GiB snapshot it is about 3.6 GiB. It is checked against the
+  free space of the database filesystem at import time, on top of everything the
+  node already holds.
 
 ## 3. Theory against the four validators
 
@@ -137,7 +150,8 @@ Measured inputs:
 | 8 days (engine defaults) | 29 GiB | ≈ 38 GiB |
 | 30 days | 110 GiB | ≈ 119 GiB |
 
-Add the OS and the spool reserve.
+Add the OS and the free space a resync needs (`9 × S_snap + max(1 GiB, 0.3 × S_snap)`,
+about 3.6 GiB today).
 
 These figures are for a light load. The block term scales with block bytes:
 - historical single-host measurements under transfer/privacy load recorded about
@@ -166,8 +180,10 @@ copy of it. At mainnet scale, `celldb + N_snap × S_snap` may dominate.
    - **Dated check:** mc 2,641,972 (b=1) has a TTL until 2026-11-17 08:41 UTC. The handle rule predicts it is deleted shortly after the snapshot for window 13692 is written. That window opens 2026-11-14 06:30 UTC, and the snapshot follows the next key block plus up to 6 h. The tiered TTL alone would keep it for three more days.
 2. **The block rate under real load** is the largest unknown. Measure archive
    bytes per day at the real-TPS test and replace `B` above.
-3. **Spool reserve** applies only while a node syncs from a snapshot. Keep it
-   free on every validator, because any node may need to resync.
+3. **Resync headroom** applies only while a node imports a snapshot. The import
+   refuses to start below `9 × S_snap + max(1 GiB, 0.3 × S_snap)` free on the
+   database filesystem. Keep that much free on every validator, because any
+   node may need to resync. It grows with the state, not with retention.
 
 ## 6. Recommendation
 
