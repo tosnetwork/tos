@@ -20,6 +20,12 @@ validators.
   | Production template (`tos-ops production/systemd/tos-validator.service`) | `--state-ttl 86400 --archive-ttl 86400` | about 2 days |
   | Engine defaults (no flags) | 1 day + 7 days | about 8 days |
 
+  Upstream TON's validator settings are `state-ttl 86400`, `archive-ttl 86400`
+  (mytonctrl validator mode and the upstream docker image), the same as the
+  production template. tos-ops #88 aligns the testnet validator (and the full
+  node, to mytonctrl's 30-day liteserver archive). The measurements below were
+  taken before that change, with the testnet's `state-ttl 3600`.
+
 - **The node prunes by itself.** No operator action is needed for:
   - blocks;
   - old states;
