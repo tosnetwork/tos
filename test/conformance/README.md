@@ -85,3 +85,14 @@ is a regression.
 | Harness | Family | Fixtures | Context source |
 |---|---|---|---|
 | `vm` | `vm-endstate` | 128 | `test/rescue-fee-gate/vm_endstate_scenarios.py`, migrated by `migrate/vm_endstate.py`; filled effects equal `test-vm-endstate` output and `vm-endstate-expected.tsv` row for row |
+
+## Chain replay
+
+`migrate/rel02.py chain <test-epoch-replay> <target> test/rel02/corpus` exports every transaction of the
+REL-02 corpus as a `txn` context (576: 172 ordinary, 202 tick, 202 tock) and requires the target to reproduce
+each on-chain transaction hash and new account hash. The chain is the oracle, so these contexts are not
+frozen as fixtures: the corpus already in the tree is the input, and history recorded on the network has to
+keep replaying after any change. ctest runs it against the reference as `conformance-rel02-chain`.
+
+Frozen `txn` fixtures for authored scenarios need a shared store for configurations and large accounts
+(each REL-02 context repeats one of nine configurations); that is the next schema version.
