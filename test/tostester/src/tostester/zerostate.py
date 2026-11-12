@@ -80,6 +80,14 @@ class NetworkConfig:
     global_id: int = 3
     monitor_min_split: int = 0
     split: int = 0
+    # Basechain ConfigParam 12 beyond the forced depth. The defaults keep the historical
+    # local genesis byte-for-byte: max_split None means max_split = split (no organic
+    # split), timings (delay, interval, min interval, max delay) of 20/20/10/1000 s and
+    # persistent_state_split_depth 0. The canonical genesis (crypto/smartcont/
+    # gen-zerostate.fif) uses max_split 2, 100/100/30/1000 s and depth 4.
+    max_split: int | None = None
+    split_merge_timings: tuple[int, int, int, int] = (20, 20, 10, 1000)
+    persistent_state_split_depth: int = 0
     global_version: int = 16
     # Mandatory public namespace for every version-16 Genesis. No implicit tag;
     # the test harness also accepts an explicitly supplied environment value.
@@ -255,7 +263,7 @@ wc_master setworkchain
 {basechain_state}
 
 {{ <b x{{a7}} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{{e000}} s,
-  3 roll 256 u, rot 256 u, 0 32 u, x{{1}} s, -1 32 i, 0 64 u, x{{0}} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
+  3 roll 256 u, rot 256 u, 0 32 u, x{{1}} s, -1 32 i, 0 64 u, x{{0}} s, {split_merge_delay} 32 u, {split_merge_interval} 32 u, {min_split_merge_interval} 32 u, {max_split_merge_delay} 32 u, {persistent_state_split_depth} 8 u, b>
   dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
   <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
   workchain-dict !
@@ -264,7 +272,7 @@ wc_master setworkchain
 dup dup 31 boc+>B dup "basestate0.boc" B>file
 Bhashu dup =: basestate0_fhash 256 u>B "basestate0.fhash" B>file
 hashu dup =: basestate0_rhash 256 u>B "basestate0.rhash" B>file
-basestate0_rhash basestate0_fhash {genesis_now} {monitor_min_split} {split} dup 0 add-std-workchain-v2
+basestate0_rhash basestate0_fhash {genesis_now} {monitor_min_split} {split} {max_split} 0 add-std-workchain-v2
 
 config.workchains!
 
@@ -650,6 +658,39 @@ triple untriple make-block-limits 22 config!
 triple untriple make-block-limits 23 config!"""
 
 
+def _basechain_split_fift(config: "NetworkConfig") -> dict[str, int]:
+    """The basechain descriptor's split fields, checked; the defaults reproduce the old genesis."""
+
+    def small(name: str, value: object, top: int) -> int:
+        if type(value) is not int or not 0 <= value <= top:
+            raise ValueError(f"{name} must be an integer in [0, {top}], not {value!r}")
+        return value
+
+    split = small("split", config.split, 60)
+    max_split = small("max_split", split if config.max_split is None else config.max_split, 60)
+    if max_split < split:
+        raise ValueError(f"max_split {max_split} is below split {split}")
+    small("monitor_min_split", config.monitor_min_split, split)
+    timings = config.split_merge_timings
+    if not (isinstance(timings, tuple) and len(timings) == 4):
+        raise ValueError("split_merge_timings must be (delay, interval, min interval, max delay)")
+    delay, interval, min_interval, max_delay = (
+        small(f"split_merge_timings[{i}]", v, (1 << 32) - 1) for i, v in enumerate(timings)
+    )
+    if min(delay, interval, min_interval, max_delay) == 0:
+        raise ValueError("split/merge timings must be positive")
+    return {
+        "max_split": max_split,
+        "split_merge_delay": delay,
+        "split_merge_interval": interval,
+        "min_split_merge_interval": min_interval,
+        "max_split_merge_delay": max_delay,
+        "persistent_state_split_depth": small(
+            "persistent_state_split_depth", config.persistent_state_split_depth, 63
+        ),
+    }
+
+
 def _block_limits_fift(config: "NetworkConfig") -> str:
     if config.production_block_limits:
         if config.block_limit_mul != 1:
@@ -982,6 +1023,7 @@ def create_zerostate(
             genesis_now="now" if fixed_time is None else str(fixed_time),
             monitor_min_split=config.monitor_min_split,
             split=config.split,
+            **_basechain_split_fift(config),
             global_id=config.global_id,
             global_version=config.global_version,
             auth_policy_param=auth_policy_param,
