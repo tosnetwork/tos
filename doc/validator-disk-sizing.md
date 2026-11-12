@@ -27,7 +27,8 @@ validators.
   - the engine's own log files.
 - **Outside the TTLs:**
   - the live state (celldb), which grows with accounts and storage, not with time;
-  - persistent-state snapshots, kept by a separate tiered rule;
+  - persistent-state snapshots. A validator keeps only its two newest, plus any
+    whose key block is still inside the block window (§1);
   - system logs;
   - any deployment tooling kept on the host.
 - **At the measured load:**
@@ -46,21 +47,26 @@ validators.
 | Blocks in archive packages | Deleted once older than `gc_mc_time − archive-ttl`, where the GC masterchain block lags the head by about `state-ttl`. So a block lives about `state-ttl + archive-ttl`. | `validator/manager.cpp` (`Db::run_gc(..., archive_ttl)`); the engine's `--archive-ttl` help text |
 | Old states | GC'd once older than `state-ttl` | `validator/manager.cpp` (`state_ttl()` check) |
 | Persistent-state snapshots | Made for the first key block in each 2^17 s (36.4 h) window. A snapshot made at time `ts` is kept until `ts + (2^18 << b)` s, where `b` is the number of trailing zero bits of `ts / 2^17`. Half the snapshots are kept 3.03 days, a quarter 6.07 days, an eighth 12.1 days, and so on. They are written after a random delay of 0–6 h. | `validator/interfaces/validator-manager.h` (`is_persistent_state`, `persistent_state_ttl`); `validator/state-serializer.cpp` (`need_serialize`, the delay) |
-| Snapshot GC | A snapshot is removed when its TTL has passed, or when its masterchain block handle cannot be resolved | `validator/db/archive-manager.cpp` (`got_gc_masterchain_handle`) |
+| Snapshot GC | Only a snapshot with snapshots of at least two newer masterchain seqnos after it is considered. It is then removed when its TTL has passed, **or when its masterchain block can no longer be found by seqno**. That lookup searches the ordinary archive packages only, not the key-block packages, so it fails once the block's package is pruned, `state-ttl + archive-ttl` after the block. | `validator/db/archive-manager.cpp` (`persistent_state_gc`, `got_gc_masterchain_handle`, `get_block_by_seqno`) |
 | Key-block proofs | `key-proof-ttl` defaults to 10 years | `validator/validator.h` |
 | Engine logs | `--log-rotate-mb 15 --log-keep-files 5` per log thread. `--session-logs` rotates at 256 MiB and keeps one `.old`. | the testnet unit; measured |
 | System journal | journald default cap (10 % of the filesystem, at most 4 GiB) | host default |
 
-**Theoretical snapshot count.** With a snapshot every 36.4 h, the number kept at
-any time is about `2 + log2(network age / 36.4 h)`. Each one is a full serialized
-state, so the count reaches about 10 after a year.
+**Effective snapshot count.** The tiered TTL alone would keep about
+`2 + log2(network age / 36.4 h)` snapshots, about 10 after a year. The handle rule
+caps that on any node whose block window is shorter than the TTLs. Such a node
+keeps the two newest snapshots, plus those whose key block is younger than
+`state-ttl + archive-ttl`:
+- a validator with a 1–2 day window keeps 2, briefly 3;
+- a node with an 8-day window keeps those made in the last 8 days that are still within their TTL;
+- the tiered TTL fully applies only where the block window covers it (archive nodes).
 
 ## 2. Estimation model
 
 ```
 disk ≈ B × (state-ttl + archive-ttl)      blocks (archive packages)
      + celldb                               live state, grows with accounts/storage
-     + N_snap × S_snap                      persistent snapshots (tiered TTL)
+     + N_snap × S_snap                      persistent snapshots (2 on a validator; §1)
      + files + consensus + state            short-lived engine stores (bounded)
      + 6 × S_snap                           spool reserve while syncing from a snapshot
      + logs (≈2 GiB cap) + journal (≤4 GiB)
@@ -85,7 +91,7 @@ are per node; the four agree closely.
 | Archive packages | ≈ 3.65 GiB/day × 25.8 h ≈ 3.9 GiB | 3.92–3.96 GiB | **holds** |
 | Key-block data outside the window | small, kept | 24–34 MiB of key packages since genesis; 20–29 MiB of key-block entries in ordinary packages | **holds** (negligible) |
 | Snapshot write delay | 0–6 h after the key block | mc 2,641,972: key block 16.5 h old, files 13.2–15.6 h old. mc 2,310,070: about 54 h old, files 47–53 h old | **holds** |
-| Snapshots present now | windows 13690 (b=1, kept 6.07 d), 13689 (b=0, kept 3.03 d), 13688 (b=3, kept 24.3 d), 13684 (b=2, kept 12.1 d) | 13690 and 13689 only (mc 2,641,972: 288 MiB; mc 2,310,070: 252 MiB), identical on all four | **does not hold.** The two long-TTL snapshots are absent on all four nodes. See §5. |
+| Snapshots present now | windows 13690 (b=1, kept 6.07 d), 13689 (b=0, kept 3.03 d), 13688 (b=3, kept 24.3 d), 13684 (b=2, kept 12.1 d) | 13690 and 13689 only (mc 2,641,972: 288 MiB; mc 2,310,070: 252 MiB), identical on all four | **does not hold for the tiered TTL alone.** The two long-TTL snapshots are absent on all four nodes. The handle rule explains it (§5): 13688's and 13684's key blocks left the 25 h window long ago, and each had two newer snapshots after it. **Holds with the handle rule:** exactly the two newest remain. |
 | `consensus/` (simplex store) is bounded | no file older than the TTLs | 0.62 GiB on each node, 285 files, oldest 1.1 h | **holds** |
 | `files/` (blocks not yet packaged) is bounded | no large file older than the TTLs | 0.76–0.78 GiB; ≤ 67 KB older than 26 h | **holds** |
 | `celldb` is flat at steady state | no growth in time | 0.89–0.94 GiB. The 72 h run's 10-minute series shows 0.85–0.98 GiB over 6.8 h with no trend. | **holds**. It tracks state size: the serialized state grew 252 → 288 MiB between the two snapshots (≈ 37 h). |
@@ -138,21 +144,20 @@ copy of it. At mainnet scale, `celldb + N_snap × S_snap` may dominate.
 
 ## 5. Open points
 
-1. **Missing long-TTL snapshots.**
-   - The tiered rule predicts snapshots for windows 13688 and 13684, which were
-     made about 90 h and 236 h ago and are still within their 24.3-day and
-     12.1-day TTLs.
-   - None of the four nodes has them.
-   - The engine logs that would show their serialization or removal have
-     already rotated.
-   - A JSON-RPC `lookupBlock` no longer finds mc 2,310,070, but that snapshot is
-     still on disk. So the snapshot GC does not delete a snapshot just because
-     this lookup fails.
-   - **Check:** mc 2,641,972 (b=1) should stay until about 2026-11-17 08:41 UTC.
-     If it disappears soon after its block leaves the archive window (about
-     2026-11-12 08:51 UTC), snapshots are being removed earlier than their TTL.
-   - Until this is settled, size for the tiered rule's upper count, not the two
-     snapshots measured.
+1. **Missing long-TTL snapshots: explained.**
+   - **Why only two remain:**
+     - `got_gc_masterchain_handle` deletes a snapshot whose masterchain block handle cannot be found by seqno, whatever its TTL.
+     - `get_block_by_seqno` looks in the ordinary packages only (`get_file_desc_by_seqno(..., false)`).
+     - On the testnet, a key block's ordinary package is pruned about 25.8 h after the block.
+     - The only guard keeps the two newest snapshots (`persistent_state_gc`: "do not delete the most recent fully serialized state").
+     - So a validator keeps exactly the two newest snapshots.
+   - **Evidence:** JSON-RPC `lookupBlock` for mc 2,310,070 returns this same function's error ("seqno not in db"). Its snapshot is still on disk only because it is one of the two newest.
+   - **Upstream:** the behaviour is identical. The delete-on-missing-handle path dates from upstream's 2019 database rewrite, and the two-newest guard was added upstream in 2024. TOS's version differs only by an index check (§8).
+   - **Not a defect for validators:**
+     - a node that syncs needs the newest snapshot, and the two newest are always kept;
+     - for disk, it means snapshots do not pile up on validators.
+     - Making the tiered TTL bind on a validator would mean resolving the block from the key-block packages. That would diverge from upstream and add disk for no current consumer. Keep long snapshot history on archive nodes instead.
+   - **Dated check:** mc 2,641,972 (b=1) has a TTL until 2026-11-17 08:41 UTC. The handle rule predicts it is deleted shortly after the snapshot for window 13692 is written. That window opens 2026-11-14 06:30 UTC, and the snapshot follows the next key block plus up to 6 h. The tiered TTL alone would keep it for three more days.
 2. **The block rate under real load** is the largest unknown. Measure archive
    bytes per day at the real-TPS test and replace `B` above.
 3. **Spool reserve** applies only while a node syncs from a snapshot. Keep it
@@ -202,5 +207,6 @@ retention rules this note depends on are the same:
 | Serializer with a block the database no longer knows | escapes to the latest key block only when the handle has a timestamp | the same escape, plus one after a day without progress when the handle has no timestamp (a liveness fix) | none in normal operation |
 | Engine log size | no built-in limit; the engine reopens its log on SIGHUP, so an external logrotate must cap it | built-in `--log-rotate-mb` / `--log-keep-files` | TOS logs are capped without logrotate; an upstream host needs logrotate |
 
-So the measured behaviour, including the open point in §5, follows logic shared
-with upstream; it is not a TOS-specific change.
+So the measured behaviour, including the two-snapshot cap explained in §5, follows
+logic shared with upstream (including `get_block_by_seqno`, which searches the
+ordinary packages only in both); it is not a TOS-specific change.
