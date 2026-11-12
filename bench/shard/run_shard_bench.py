@@ -197,6 +197,7 @@ class ShardScanner:
     def __init__(self, pool: chain.ClientPool):
         self.pool = pool
         self.last: dict[int, int] = {}
+        self.seen: set[tuple[int, int]] = set()
         self.blocks: list[hopbench.ScannedBlock] = []
         self.shard_sets: list[tuple[float, list[str]]] = []
         self._stop = asyncio.Event()
@@ -225,23 +226,38 @@ class ShardScanner:
                 await asyncio.sleep(0.25)
         raise AssertionError("unreachable")
 
+    MAX_WALK_BLOCKS = 100_000  # one poll's walk; a larger one means the frontier was lost
+
     async def _walk(self, shard: int, head) -> None:
-        stop_at = self.last.get(shard)
+        """Every block from `head` back to the scanned frontier, across split and merge.
+
+        A predecessor may be in another shard: a child's first block points at its parent
+        (split), a merged block at both children. Each one is followed until it reaches a
+        block at or below the last scanned seqno of its own shard, so the children's first
+        blocks and the parent's last blocks since the previous poll are all recorded once.
+        """
         found = []
-        block = head
-        while stop_at is None or block.seqno > stop_at:
+        stack = [head]
+        while stack:
+            block = stack.pop()
+            key = (block.shard, block.seqno)
+            last = self.last.get(block.shard)
+            if key in self.seen or (last is not None and block.seqno <= last):
+                continue
+            if len(found) >= self.MAX_WALK_BLOCKS:
+                raise RuntimeError(f"shard walk from {hopbench.shard_label(shard)} found no frontier")
             header = await self._header(block)
+            self.seen.add(key)
             found.append(
                 hopbench.ScannedBlock(
-                    shard, block.seqno, int(header.gen_utime), bytes(block.root_hash)
+                    block.shard, block.seqno, int(header.gen_utime), bytes(block.root_hash)
                 )
             )
-            prev = [p for p in header.prev_blocks if p.workchain == 0 and p.shard == shard]
-            if stop_at is None or not prev:
-                break  # a shard first seen now, or the start of a split
-            block = prev[0]
+            stack.extend(p for p in header.prev_blocks if p.workchain == 0)
         self.blocks.extend(found)
-        self.last[shard] = max(head.seqno, stop_at or 0)
+        for b in found:
+            self.last[b.shard] = max(self.last.get(b.shard, b.seqno), b.seqno)
+        self.last[shard] = max(self.last.get(shard, head.seqno), head.seqno)
 
     async def run(self, poll: float = 0.3) -> None:
         if not self.last:
@@ -252,7 +268,10 @@ class ShardScanner:
             if labels != self.shard_sets[-1][1]:
                 self.shard_sets.append((time.time(), labels))
                 log.warning("basechain shard set changed: %s", labels)
-            await asyncio.gather(*(self._walk(shard, head) for shard, head in heads.items()))
+            # One shard at a time: after a split both children walk back into the same
+            # parent blocks, and `seen` keeps each of them once.
+            for shard, head in heads.items():
+                await self._walk(shard, head)
             try:
                 await asyncio.wait_for(self._stop.wait(), poll)
             except TimeoutError:
