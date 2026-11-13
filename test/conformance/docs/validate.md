@@ -69,6 +69,8 @@ keep collated data, so the exporter supplies what a collator attaches:
 | `epoch6-slice` | 246 | epoch-6 masterchain 1..100 and 250,001..250,020 with every shard block referencing them; all accepted |
 | `rel02-negative` | 28 | authored defects of corpus blocks mc 117,752, basechain 118,284 and mc 151,331 (one with an outbound message); `runner/test_validate.py` checks each outcome and class |
 
+The three families take 14.8 MB, 11.8 MB of it in the blob files (mostly Merkle proofs of states).
+
 The defects: another previous state (same header block id, another root hash); another previous block;
 the referenced masterchain state withheld; `ValueFlow` fees + 1; a transaction's fees + 1; an account block
 removed; a transaction repeated at the next logical time; `gen_utime` one hour earlier (header, new state
@@ -102,5 +104,9 @@ python3 test/conformance/migrate/validate_families.py families build/test/confor
 - The wall-clock bound (`gen_utime` more than 30 s in the future of the local clock): a local predicate,
   never reached by history.
 - `wait_verify_shard_blocks` is answered by the interface default (accepted).
-- A neighbour state substituted by its predecessor with an identical (empty) outbound queue is accepted:
-  the manager is trusted to serve the state of the block it is asked for, and the queues did not differ.
+- Neighbour outbound queues are served from the neighbours' archived states; no defect alters a
+  neighbour queue (a substituted state is refused by the node's own state loader, which checks the
+  block id in the state header, before `ValidateQuery` sees it).
+- The transaction re-execution comparison is reached by every accepted block, but no defect makes a
+  re-executed transaction differ while every earlier check still passes (`transaction_fees_plus_one`
+  is caught by the account's transaction chain and last-transaction checks first).
