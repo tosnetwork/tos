@@ -8,6 +8,8 @@
         C++ result file (``name<TAB>transaction hash<TAB>account hash``, ``#`` comment lines). Writes
         all.jsonl / native.jsonl / unique.jsonl / summary.json like txnfam_convert.py; native.jsonl
         holds the frozen C++ hashes (the ShardAccount hash is not part of those files).
+    txnfam_rtos.py fixtures <work dir> <family.jsonl>
+        The same comparison for the frozen fixtures of the family.
     txnfam_rtos.py check <work dir> <target>
         Run every context through ``<target> txn``; the effect must carry the frozen C++ outcome and
         hashes. Exit 1 on any difference.
@@ -253,6 +255,19 @@ def command_check(work: Path, target: str) -> int:
     return 1 if differences else 0
 
 
+def command_fixtures(work: Path, fixture_file: Path) -> int:
+    """Frozen fixture effects against the frozen C++ results of the same rows."""
+    native = {n["fixture_id"]: n["effects"] for n in read_jsonl(work / "native.jsonl")}
+    fixtures = read_jsonl(fixture_file)
+    differences = sum(
+        1 for f in fixtures if not agrees(native[f["metadata"]["fixture_id"]], f["effects"])
+    )
+    print(
+        f"compared {len(fixtures)} fixtures with the frozen C++ results, {differences} differences"
+    )
+    return 1 if differences else 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -270,7 +285,12 @@ def main(argv: list[str]) -> int:
     check = sub.add_parser("check")
     check.add_argument("work", type=Path)
     check.add_argument("target")
+    fixtures = sub.add_parser("fixtures")
+    fixtures.add_argument("work", type=Path)
+    fixtures.add_argument("fixture_file", type=Path)
     args = parser.parse_args(argv)
+    if args.command == "fixtures":
+        return command_fixtures(args.work, args.fixture_file)
     if args.command == "contexts":
         return command_contexts(args.export, args.frozen, args.work, args.family, args.tick_rule)
     return command_check(args.work, args.target)

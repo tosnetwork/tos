@@ -38,6 +38,22 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT / "test/executor-parity"), str(ROOT / "test/auth-extensions")]
 # Sibling and test-helper modules are loaded by name: they live outside the type checker's import roots.
 from_boc = importlib.import_module("root_cells").from_boc
+read_dict = importlib.import_module("cells").read_dict
+_VERSIONS: dict[str, int | None] = {}
+
+
+def global_version(config_b64: str) -> int | None:
+    """ConfigParam 8 global version of a configuration dictionary (None when absent)."""
+    if config_b64 not in _VERSIONS:
+        entries = read_dict(from_boc(base64.b64decode(config_b64), allow_library=True), 32)
+        version = None
+        if 8 in entries and entries[8].refs:
+            bits = entries[8].refs[0].bits
+            if bits[:8] == f"{0xC4:08b}":
+                version = int(bits[8:40], 2)
+        _VERSIONS[config_b64] = version
+    return _VERSIONS[config_b64]
+
 
 Json = dict[str, Any]
 LT_ALIGN = 1_000_000
@@ -144,6 +160,7 @@ def command_contexts(capture: Path, work: Path, family: str) -> int:
     problems: list[Json] = []
     defaults: dict[str, int] = {}
     outcomes: dict[str, int] = {}
+    versions: dict[str, int] = {}
     number = 0
     for record in records(capture):
         if record.get("kind") != "call":
@@ -162,7 +179,11 @@ def command_contexts(capture: Path, work: Path, family: str) -> int:
             defaults[name] = defaults.get(name, 0) + 1
         effect = native_effect(record["response"])
         outcomes[effect["outcome"]] = outcomes.get(effect["outcome"], 0) + 1
-        note = "native call " + " < ".join(reversed(record["caller"][-3:]))
+        version = global_version(ctx["config"])
+        versions[str(version)] = versions.get(str(version), 0) + 1
+        note = f"global version {version}; native call " + " < ".join(
+            reversed(record["caller"][-3:])
+        )
         entry = {"fixture_id": fixture_id, "note": note, "context": ctx}
         every.append(entry)
         native.append({"fixture_id": fixture_id, "effects": effect})
@@ -180,6 +201,7 @@ def command_contexts(capture: Path, work: Path, family: str) -> int:
         "converted": len(every),
         "unique": len(unique),
         "outcomes": outcomes,
+        "versions": versions,
         "defaults_applied": defaults,
         "not_convertible": skipped,
         "capture_problems": problems,
@@ -188,7 +210,7 @@ def command_contexts(capture: Path, work: Path, family: str) -> int:
     print(
         f"{family}: {number} native calls, {len(every)} converted ({len(unique)} unique), "
         f"{len(skipped)} not convertible, {len(problems)} capture problems, outcomes {outcomes}, "
-        f"defaults {defaults}"
+        f"versions {versions}, defaults {defaults}"
     )
     return 1 if problems else 0
 

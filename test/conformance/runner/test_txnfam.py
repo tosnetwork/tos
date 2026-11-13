@@ -47,7 +47,7 @@ def shard_account(marker: int, last_lt: int = 5_000_123) -> Any:
     return Cell().uint(marker, 256).uint(last_lt, 64).ref(account)
 
 
-CONFIG = Cell().uint(0xC0FF, 16)
+CONFIG = make_dict({8: Cell().ref(Cell().uint(0xC4, 8).uint(16, 32).uint(0, 64))}, 32)
 MESSAGE = Cell().uint(4, 4).uint(7, 8)
 
 
@@ -240,7 +240,7 @@ class ArtifactTests(Workspace):
 
     def test_matching_record_passes_and_names_the_fixture(self) -> None:
         self.assertEqual(self.roots(self.effect["transaction_hash"]), 0)
-        note = convert.read_jsonl(self.dir / "work" / "unique.jsonl")[0]["note"]
+        note = convert.read_jsonl(self.dir / "work" / "create.jsonl")[0]["note"]
         self.assertTrue(note.startswith("x-roots.tsv:1:case"), note)
 
     def test_red_control_wrong_record_hash_fails(self) -> None:
@@ -250,7 +250,7 @@ class ArtifactTests(Workspace):
         self.assertEqual(self.roots(self.effect["transaction_hash"], now=1), 1)
 
 
-CONFIG_DICT = make_dict({8: Cell().ref(Cell().uint(0xC4, 8).uint(16, 32).uint(0, 64))}, 32)
+CONFIG_DICT = CONFIG
 
 
 class RtosTests(unittest.TestCase):

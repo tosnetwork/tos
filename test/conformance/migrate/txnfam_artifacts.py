@@ -16,8 +16,9 @@ writes, independently of the call recorder:
 
 Every record must match a converted context (same ShardAccount, message or tick/tock, configuration
 when the record names one, now and lt when it gives them), and the harness effect of that context
-must carry the record's outcome and hashes. A record without a match is a difference. The record's
-name is added to the note of the matched contexts in unique.jsonl.
+must carry the record's outcome and hashes. A record without a match is a difference. unique.jsonl
+is copied to create.jsonl (the input for ``conformance.py create``) with the record's name added to the
+note of each matched context.
 """
 
 from __future__ import annotations
@@ -327,8 +328,8 @@ def main(argv: list[str]) -> int:
     for entry in unique:
         if entry["fixture_id"] in names:
             label = sorted(set(names[entry["fixture_id"]]))[0]
-            entry["note"] = f"{label}; {entry['note'].split('; ')[-1]}"
-    write_jsonl(work / "unique.jsonl", unique)
+            entry["note"] = f"{label}; {entry['note']}"
+    write_jsonl(work / "create.jsonl", unique)
     covered = len(names)
     summary = {
         "records": len(found),
