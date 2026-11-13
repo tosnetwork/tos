@@ -69,13 +69,16 @@ through `send_broadcast_ex` (or `send_broadcast_fec_ex` with `fec`, `send_broadc
 delivered in order until the members are idle. The members' applications accept every broadcast they are
 asked to check.
 
-The overlay reads the wall clock for broadcast dates, their 20-second acceptance window and certificate
-expiry. The reference library is linked with `--wrap=_ZN2td6Clocks6systemEv` (`CMakeLists.txt`,
-`parts/fuzz.cmake`), and `ref/net-node.cpp` defines the wrapper: while an `overlay_broadcast` context
-runs it returns the context's `now`, otherwise the real clock. So the dates, the bytes each broadcast
-signs, its signature and its id are functions of the context, and the frozen effects carry them
-byte-exact: an emitted broadcast is its full TL object including the signature, and an id the receiver
-recomputes is checked through the signature it verifies.
+`now` is an explicit input of every `overlay_broadcast` context: while the context runs, the reference
+reads it instead of the wall clock wherever the node's code asks for the time (`td::Clocks::system`),
+which the overlay does for broadcast dates, their 20-second acceptance window and certificate expiry.
+Another implementation must take the same value from the context. The reference library is linked with
+`--wrap=_ZN2td6Clocks6systemEv` (`CMakeLists.txt`, `parts/fuzz.cmake`; only `libconformance-ref` and the
+fuzz twin and mutant libraries, never a node binary), and `ref/net-node.cpp` defines the wrapper: while
+an `overlay_broadcast` context runs it returns the context's `now`, otherwise the real clock. So the
+dates, the bytes each broadcast signs, its signature and its id are functions of the context, and the
+frozen effects carry them byte-exact: an emitted broadcast is its full TL object including the signature,
+and an id the receiver recomputes is checked through the signature it verifies.
 
 Bounds, from what the node itself fixes rather than the context: with more than one neighbour the
 simple, FEC and Plumtree paths choose neighbours at random, so those modes take exactly two members
