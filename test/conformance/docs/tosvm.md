@@ -86,7 +86,7 @@ Fields: stack 7,330, gas_used 5,089, exit_code 4,202, committed/c4/c5 3,418, ste
 differ in several). These are divergences of the tosctl VM from the C++ VM, not fixture defects; the lane
 is red until they are fixed in the tosctl VM. The REL-02 chain lane (txn) is 576/576.
 
-By global version (the network runs 16; STATUS 13.219: the tosctl VM only has to equal the C++ VM at 16):
+By global version (the network runs 16, and the tosctl VM only has to equal the C++ VM at 16):
 
 | Version | Mismatched | Families |
 |---|---|---|

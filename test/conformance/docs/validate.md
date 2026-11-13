@@ -42,7 +42,10 @@ fixed table in `validate-offline.cpp`: `input_unavailable`, `candidate_id_mismat
 `prev_block_mismatch`, `creator_mismatch`, `validator_set_mismatch`, `prev_state_mismatch`,
 `new_state_mismatch`, `limit_exceeded`, `utime_lt_invalid`, `value_flow_invalid`,
 `account_update_invalid`, `transaction_invalid`, `message_invalid`, `pruned_input`; any other message is
-`unclassified`, so a new failure path is visible. Only the class is compared.
+`unclassified`, so a new failure path is visible. Only the class is compared. Rules are tried in order;
+`pruned_input` (a read of a cell missing from a supplied Merkle proof, reported as "prunned branch")
+comes first because the validation wraps that text in messages a content rule would match. No frozen
+fixture reaches `pruned_input` or `validator_set_mismatch` yet.
 
 ### Contexts from archived history
 

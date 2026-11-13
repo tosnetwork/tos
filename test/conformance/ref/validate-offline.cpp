@@ -757,6 +757,10 @@ struct Pattern {
 // First match wins, so specific texts come before general ones. A message no entry matches is
 // "unclassified": a new failure path shows up as that class until it is given its own.
 const Pattern kPatterns[] = {
+    // A cell the validation read is not in a supplied (partial) state. First: the validation wraps the
+    // virtualization error's text in messages that would otherwise match a content class below.
+    {"prunned branch", "pruned_input"},
+    {"virtualization error", "pruned_input"},
     // The manager had no answer: a missing input, not a verdict on the block.
     {"offline validation input not served", "input_unavailable"},
     // The candidate and the parameters it is validated with.
@@ -791,8 +795,6 @@ const Pattern kPatterns[] = {
     {"OutMsg", "message_invalid"},
     {"InMsg", "message_invalid"},
     {"message", "message_invalid"},
-    // A cell the validation read is not in a supplied (partial) state.
-    {"virtualization error", "pruned_input"},
 };
 
 }  // namespace

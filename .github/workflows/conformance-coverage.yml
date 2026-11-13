@@ -8,6 +8,7 @@ on:
     paths:
       - "crypto/vm/**"
       - "crypto/block/**"
+      - "crypto/pq/**"
       - "emulator/**"
       - "validator/**"
       - "adnl/**"
@@ -17,6 +18,8 @@ on:
       - "fec/**"
       - "tdfec/**"
       - "test/conformance/**"
+      - "test/rel02/**"
+      - ".github/actions/native-cache/**"
       - ".github/workflows/conformance-coverage.yml"
 
 permissions:

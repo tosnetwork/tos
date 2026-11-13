@@ -36,8 +36,6 @@
  "crypto/pq/pq-consensus.cpp": 66.67,
  "crypto/pq/pq-consensus.h": 23.08,
  "crypto/pq/pq-elector.h": 100.0,
- "crypto/pq/slhdsa-sha256-shani.cpp": 100.0,
- "crypto/pq/slhdsa-sha256.c": 78.23,
  "crypto/pq/slhdsa128s.cpp": 71.43,
  "crypto/vm/Hasher.cpp": 83.51,
  "crypto/vm/Hasher.h": 100.0,

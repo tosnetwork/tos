@@ -48,6 +48,9 @@ COMPONENTS = [
     "tdfec/",
 ]
 SLACK = 0.5
+# Files whose executed lines depend on the CPU the measurement runs on (a backend chosen by CPUID at run
+# time), not on the vectors: never floored, so a runner without the feature cannot fail the gate.
+RUNTIME_DISPATCHED = frozenset({"crypto/pq/slhdsa-sha256.c", "crypto/pq/slhdsa-sha256-shani.cpp"})
 
 
 def tool(*names: str) -> str:
@@ -189,13 +192,17 @@ def check(report_path: Path, base: Path) -> int:
     components = cast(dict[str, float], report["components"])
     if not floors:
         problems.append("empty baseline of component floors")
+    for component in sorted(RUNTIME_DISPATCHED & floors.keys()):
+        problems.append(f"floor on a runtime-dispatched file: {component}")
     for component, floor in sorted(floors.items()):
+        if component in RUNTIME_DISPATCHED:
+            continue
         now = components.get(component)
         if now is None:
             problems.append(f"file with a line-coverage floor is no longer measured: {component}")
         elif now + SLACK < floor:
             problems.append(f"line coverage of {component}: {now} below baseline {floor}")
-    unfloored = sorted(f for f in components if f not in floors)
+    unfloored = sorted(f for f in components if f not in floors and f not in RUNTIME_DISPATCHED)
     newly = [n for n in sorted({**unreachable, **gaps}) if handlers.get(n)]
     for name, reason in sorted(gaps.items()):
         if not handlers.get(name):
@@ -227,9 +234,12 @@ def baseline(report_path: Path, base: Path) -> None:
         "# VM instruction handlers the conformance vectors must execute (handlers.py check).\n"
         + "".join(f"{n}\n" for n in covered)
     )
-    (base / "components.json").write_text(
-        json.dumps(report["components"], indent=1, sort_keys=True) + "\n"
-    )
+    floors = {
+        f: v
+        for f, v in cast(dict[str, float], report["components"]).items()
+        if f not in RUNTIME_DISPATCHED
+    }
+    (base / "components.json").write_text(json.dumps(floors, indent=1, sort_keys=True) + "\n")
     print(f"baseline: {len(covered)} covered handlers, components {report['components']}")
 
 

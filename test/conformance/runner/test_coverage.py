@@ -103,6 +103,17 @@ class GateTests(unittest.TestCase):
             h.file_lines(summary), {"crypto/vm/vm.cpp": (2000, 900), "crypto/vm/tiny.cpp": (10, 3)}
         )
 
+    def test_runtime_dispatched_files_are_never_floored(self) -> None:
+        name = sorted(h.RUNTIME_DISPATCHED)[0]
+        extra = {name: 0.0}
+        self.assertEqual(h.check(self.report(self.good(), extra=extra), self.base), 0)
+        h.baseline(self.report(self.good(), extra=extra), self.base)
+        self.assertNotIn(name, json.loads((self.base / "components.json").read_text()))
+        (self.base / "components.json").write_text(
+            json.dumps({"crypto/vm/vm.cpp": 60.0, name: 100.0})
+        )
+        self.assertEqual(h.check(self.report(self.good(), extra=extra), self.base), 1)
+
     def test_listed_handler_needs_a_reason(self) -> None:
         (self.base / "vm-handlers-gaps.txt").write_text("a.cpp:exec_deep\n")
         self.assertEqual(h.check(self.report(self.good()), self.base), 1)

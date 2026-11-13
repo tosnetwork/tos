@@ -66,7 +66,7 @@ td::Result<std::string> op_verify(td::JsonObject &ctx);
 td::Result<std::string> op_encrypt(td::JsonObject &ctx);
 td::Result<std::string> op_decrypt(td::JsonObject &ctx);
 td::Result<std::string> op_shared_secret(td::JsonObject &ctx);
-td::Result<std::string> op_adnl_id_text(td::JsonObject &ctx);
+td::Result<std::string> op_adnl_id(td::JsonObject &ctx);
 
 td::Result<std::string> op_adnl_address_list(td::JsonObject &ctx);
 td::Result<std::string> op_adnl_message(td::JsonObject &ctx);
