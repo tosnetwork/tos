@@ -43,8 +43,15 @@ treats it as equal to anything.
 
 | Harness | Context | Effects | C++ behind it |
 |---|---|---|---|
-| `vm` | code, optional c4 data, optional c7, initial stack, global version, flags, gas limit/max/credit, library collections | exit code, gas used, steps, committed flag, committed c4/c5 hashes, final stack | `vm::VmState` |
+| `vm` | code, optional c4 data, optional c7, initial stack, global version, flags, gas limit/max/credit, library collections, chksig_always_succeed, max_library_loads | exit code, gas used, steps, committed flag, committed c4/c5 hashes, final stack | `vm::VmState` |
 | `txn` | config, original ShardAccount, inbound message or tick/tock, now, lt, rand seed, libraries, previous blocks | `accepted` with transaction, account and ShardAccount hashes; `rejected` with the VM exit code; `error` | `transaction_emulator_*` (libemulator) |
+| `codec` | TL-B type (or raw BOC, VarUInteger, config) + bytes and decoding options | `accepted` with root hashes, re-serialization digest, facts; `rejected` with the first refusing stage | `block::gen`/`block::tlb`, BOC codec ([docs/codec.md](docs/codec.md)) |
+| `tl` | schema, object or function, bytes | constructor and canonical bytes, or a rejection reason | generated TL codecs ([docs/codec.md](docs/codec.md)) |
+| `fee` | storage, gas-purchase or forward-fee inputs with explicit prices | the computed values | `block::` fee functions ([docs/codec.md](docs/codec.md)) |
+| `crypto` | scheme, operation, inputs (27 operations: signature checks, hashes, quorum, session identity, PQ encodings) | verdict, bytes, integer, boolean or record | node crypto and consensus-identity code ([docs/crypto.md](docs/crypto.md)) |
+| `get_method` | masterchain state, account, time, lt, seed, method id, stack, gas | exit code, gas, final stack, missing library; or why nothing ran | the liteserver getter path ([docs/get_method.md](docs/get_method.md)) |
+| `block` | block, previous state, master context for shard blocks | block and new state hashes, ordered transaction and account hashes; or a rejection class | Merkle update application and re-execution ([docs/block.md](docs/block.md)) |
+| `consensus` | op: quorum, weights, protocol version, validator set, session, vote, finality, proof decoding, key-block context, proof links | derived values and verdicts with stable refusal classes | validator-session and PQ finality code ([docs/consensus.md](docs/consensus.md)) |
 
 The `vm` final stack is a list, bottom first, of canonical item texts: `null`, decimal integers, `NaN`,
 `cell:<hash>`, `slice:<cell hash>:<bit from>-<bit to>:<ref from>-<ref to>`,
@@ -118,6 +125,20 @@ is a regression.
 | Harness | Family | Fixtures | Context source |
 |---|---|---|---|
 | `vm` | `vm-endstate` | 128 | `test/rescue-fee-gate/vm_endstate_scenarios.py`, migrated by `migrate/vm_endstate.py`; filled effects equal `test-vm-endstate` output and `vm-endstate-expected.tsv` row for row |
+
+## Components
+
+| Component | What it adds | Notes |
+|---|---|---|
+| VM families | 27 migrated VM families plus the chksig and library-load-limit families | [docs/vmfam.md](docs/vmfam.md) |
+| Transaction families | 56 migrated transaction families, captured at the native call | [docs/txnfam.md](docs/txnfam.md) |
+| Archive replay | offline whole-history replay of archived networks from their zero states | [docs/archive.md](docs/archive.md), [docs/archive-manifest.json](docs/archive-manifest.json) |
+| Fuzzing and diagnosis | differential fuzzing (in-process and line protocol), test-build VM step trace (`TOS_VM_STEP_TRACE`, default OFF), `debug_mismatch.py`, `minimize.py` | [docs/fuzz.md](docs/fuzz.md) |
+| tosctl VM target | the tosctl Rust VM and executor behind the line protocol | [docs/tosvm.md](docs/tosvm.md) |
+| Network scenarios | Hive-style multi-node runs with per-node implementations | [docs/consensus.md](docs/consensus.md) |
+
+ctest labels: `conformance` (default; select with `-L '^conformance$'`), `history-replay` (retained archives),
+`rust-target` (needs cargo), `network-scenario` (starts validators; `CONFORMANCE_NETWORK=1`).
 
 ## Chain replay
 
