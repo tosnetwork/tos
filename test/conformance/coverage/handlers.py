@@ -37,6 +37,7 @@ COMPONENTS = [
     "crypto/block/block.cpp",
     "crypto/pq/",
     "emulator/",
+    "validator/impl/validate-query.cpp",
 ]
 SLACK = 0.5
 

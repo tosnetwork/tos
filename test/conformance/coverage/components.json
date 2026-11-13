@@ -4,5 +4,6 @@
  "crypto/block/transaction.cpp": 73.39,
  "crypto/pq/": 77.36,
  "crypto/vm/": 63.57,
- "emulator/": 84.21
+ "emulator/": 84.21,
+ "validator/impl/validate-query.cpp": 42.4
 }

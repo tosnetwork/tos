@@ -52,6 +52,7 @@ treats it as equal to anything.
 | `get_method` | masterchain state, account, time, lt, seed, method id, stack, gas | exit code, gas, final stack, missing library; or why nothing ran | the liteserver getter path ([docs/get_method.md](docs/get_method.md)) |
 | `block` | block, previous state, master context for shard blocks | block and new state hashes, ordered transaction and account hashes; or a rejection class | Merkle update application and re-execution ([docs/block.md](docs/block.md)) |
 | `consensus` | op: quorum, weights, protocol version, validator set, session, vote, finality, proof decoding, key-block context, proof links | derived values and verdicts with stable refusal classes | validator-session and PQ finality code ([docs/consensus.md](docs/consensus.md)) |
+| `validate` | candidate block id and bytes, collated data, producer, previous blocks, min/top masterchain, validator-set source, shard-signature skip, served states (complete or Merkle proofs) | `accepted` with `ok_from_utime_ms`; `rejected` or `error` with one of 15 fixed reason classes (or `unclassified`) | `ValidateQuery` on a test-only validator manager ([docs/validate.md](docs/validate.md)) |
 
 The `vm` final stack is a list, bottom first, of canonical item texts: `null`, decimal integers, `NaN`,
 `cell:<hash>`, `slice:<cell hash>:<bit from>-<bit to>:<ref from>-<ref to>`,
@@ -129,8 +130,9 @@ All vectors live in this tree, under `vectors/<harness>/fixtures/`:
 | `get_method` | 5 | 2,740 | 6.2 MB |
 | `tl` | 3 | 174 | 1.2 MB |
 | `txn` | 56 | 62,054 | 177.9 MB |
-| `vm` | 32 | 145,379 | 103.5 MB |
-| total | 150 | 231,912 | 315.5 MB |
+| `validate` | 3 | 638 | 14.8 MB |
+| `vm` | 34 | 163,788 | 118.1 MB |
+| total | 155 | 250,959 | 344.8 MB |
 
 Families whose name starts with `rtos-` (and the get_method families rebuilt from that implementation's
 test parameters) hold contexts converted from another implementation's tests; their effects come from the C++
@@ -142,6 +144,7 @@ reference like every other fixture. Per-component tables are in `docs/`.
 |---|---|---|
 | VM families | 27 migrated VM families plus the chksig and library-load-limit families | [docs/vmfam.md](docs/vmfam.md) |
 | Transaction families | 56 migrated transaction families, captured at the native call | [docs/txnfam.md](docs/txnfam.md) |
+| Block validation | the node's `ValidateQuery` offline: 610 archived blocks accepted, 28 authored defects rejected by class; a 2,000-masterchain-block epoch-6 slice (`history-replay`) | [docs/validate.md](docs/validate.md) |
 | Archive replay | offline whole-history replay of archived networks from their zero states | [docs/archive.md](docs/archive.md), [docs/archive-manifest.json](docs/archive-manifest.json) |
 | Fuzzing and diagnosis | differential fuzzing (in-process and line protocol), test-build VM step trace (`TOS_VM_STEP_TRACE`, default OFF), `debug_mismatch.py`, `minimize.py` | [docs/fuzz.md](docs/fuzz.md) |
 | tosctl VM target | the tosctl Rust VM and executor behind the line protocol | [docs/tosvm.md](docs/tosvm.md) |

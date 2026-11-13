@@ -9,6 +9,7 @@ on:
       - "crypto/vm/**"
       - "crypto/block/**"
       - "emulator/**"
+      - "validator/**"
       - "test/conformance/**"
       - ".github/workflows/conformance-coverage.yml"
 
