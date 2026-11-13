@@ -40,7 +40,7 @@ constexpr std::size_t kMaxInbound = 64;
 // Messages the members may emit before a context is cut off as not settling.
 constexpr std::size_t kMaxEmitted = 1024;
 constexpr int kMaxRounds = 20000;
-// Rounds without a new message, delivery or log line after which the members are taken to be idle.
+// Rounds without a new emitted message or delivery after which the members are taken to be idle.
 constexpr int kIdleRounds = 64;
 // The FEC sender emits four symbols at once and the rest on a 10 ms timer; below this size the first
 // four are all it sends (BroadcastFecActor: (size / 768 + 1) * 2 symbols), so the context does not depend
@@ -362,6 +362,10 @@ std::string member_text(const std::vector<Member> &members, const adnl::AdnlNode
 // its bytes), what each member's application received, and the overlay's drops with their classes.
 td::Result<std::string> op_overlay_broadcast(td::JsonObject &ctx) {
   TRY_RESULT(now, int32_field(ctx, "now"));
+  // The node converts the clock to an unsigned date; a time before 1970 has no defined conversion.
+  if (now < 1) {
+    return td::Status::Error("now: a positive unix time required");
+  }
   TRY_RESULT(name, hex_field(ctx, "name"));
   TRY_RESULT(members, members_field(ctx));
   TRY_RESULT(mode, ctx.get_required_string_field("mode"));
@@ -400,15 +404,23 @@ td::Result<std::string> op_overlay_broadcast(td::JsonObject &ctx) {
       return td::Status::Error(PSLICE() << "broadcast.data: at most " << overlay::Overlays::max_simple_broadcast_size()
                                         << " bytes for a simple broadcast");
     }
-    if (send_fec && (mode == "simple" || mode == "fec") && send_data.size() > kMaxFecData) {
-      return td::Status::Error(PSLICE() << "broadcast.data: at most " << kMaxFecData << " bytes for a FEC broadcast");
-    }
+  }
+  // The path the node takes for the send, as OverlayImpl dispatches it: a simple send is always the
+  // simple path; a FEC send is two-step only when two-step sending is on and BroadcastFlagNoTwostep is
+  // clear, and the old FEC path otherwise. The limits below follow that path, not the declared mode.
+  const bool twostep_path =
+      send && mode == "twostep" && send_fec && (send_flags & overlay::Overlays::BroadcastFlagNoTwostep()) == 0;
+  const bool old_fec_path = send && mode != "plumtree" && send_fec && !twostep_path;
+  if (old_fec_path && send_data.size() > kMaxFecData) {
+    return td::Status::Error(PSLICE() << "broadcast.data: at most " << kMaxFecData
+                                      << " bytes for a broadcast on the old FEC path");
   }
   TRY_RESULT(inbound, inbound_field(ctx, members.size()));
-  // With more than one neighbour the simple, FEC and Plumtree paths pick neighbours at random; two
-  // members leave each one exactly one. Two-step broadcasts go to every member in a fixed order.
-  if (mode != "twostep" && members.size() != kMinMembers) {
-    return td::Status::Error("members: exactly two for the simple, fec and plumtree modes");
+  // With more than one neighbour the simple, old FEC and Plumtree paths pick neighbours at random (also
+  // when relaying a received broadcast); two members leave each one exactly one. Only a two-step send,
+  // with nothing received, goes to every member in a fixed order.
+  if (members.size() != kMinMembers && !(twostep_path && inbound.empty())) {
+    return td::Status::Error("members: exactly two unless the context sends a two-step broadcast and receives nothing");
   }
 
   overlay::OverlayIdFull overlay_full{td::BufferSlice(name)};

@@ -49,7 +49,13 @@ NodeLog::~NodeLog() {
   SET_VERBOSITY_LEVEL(saved_level_);
 }
 
-void NodeLog::append(td::CSlice slice, int) {
+void NodeLog::append(td::CSlice slice, int log_level) {
+  // A fatal record is the node aborting (LOG(FATAL), a failed ensure()): the interface it goes to is what
+  // aborts, so it is handed to the interface this one replaced, never kept as a line.
+  if (log_level == VERBOSITY_NAME(FATAL)) {
+    saved_interface_->append(slice, log_level);
+    return;
+  }
   lines_.emplace_back(slice.str());
 }
 

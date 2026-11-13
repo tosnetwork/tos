@@ -152,6 +152,12 @@ def i32(value: object, where: str) -> None:
     t.integer(value, where, *I32)
 
 
+def positive_i32(value: object, where: str) -> None:
+    i32(value, where)
+    if isinstance(value, int) and value < 1:
+        raise t.FixtureError(f"{where}: a positive unix time")
+
+
 def u32(value: object, where: str) -> None:
     t.integer(value, where, *U32)
 
@@ -342,6 +348,7 @@ OP_FIELD_KINDS: dict[tuple[str, str], Callable[[object, str], None]] = {
     ("rldp2_send", "data"): lambda value, where: hex_bytes(value, where, 4 * MAX_BYTES),
     ("rldp2_budget", "data_size"): decimal,
     ("rldp2_budget", "symbol_size"): decimal,
+    ("overlay_broadcast", "now"): positive_i32,
     ("rldp2_budget", "symbols_count"): decimal,
 }
 

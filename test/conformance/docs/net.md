@@ -69,7 +69,8 @@ through `send_broadcast_ex` (or `send_broadcast_fec_ex` with `fec`, `send_broadc
 delivered in order until the members are idle. The members' applications accept every broadcast they are
 asked to check.
 
-`now` is an explicit input of every `overlay_broadcast` context: while the context runs, the reference
+`now` is an explicit input of every `overlay_broadcast` context (a positive unix time: the node turns
+the clock into an unsigned date, and a time before 1970 has no defined conversion): while the context runs, the reference
 reads it instead of the wall clock wherever the node's code asks for the time (`td::Clocks::system`),
 which the overlay does for broadcast dates, their 20-second acceptance window and certificate expiry.
 Another implementation must take the same value from the context. The reference library is linked with
@@ -81,9 +82,13 @@ frozen effects carry them byte-exact: an emitted broadcast is its full TL object
 and an id the receiver recomputes is checked through the signature it verifies.
 
 Bounds, from what the node itself fixes rather than the context: with more than one neighbour the
-simple, FEC and Plumtree paths choose neighbours at random, so those modes take exactly two members
-(two-step broadcasts go to every member in a fixed order: two to eight members); the FEC sender emits
-four symbols at once and the rest on a 10 ms timer, so an old-style FEC broadcast is at most 1535 bytes
+simple, old FEC and Plumtree paths choose neighbours at random (also when relaying a received
+broadcast), so a context takes exactly two members unless it sends a two-step broadcast and receives
+nothing (two-step broadcasts go to every member in a fixed order: two to eight members). The bounds
+follow the path the node takes, not the declared mode: a simple send is always the simple path, and a
+FEC send is two-step only in the two-step mode without `BroadcastFlagNoTwostep` (256), the old FEC path
+otherwise. The old FEC sender emits four symbols at once and the rest on a 10 ms timer, so a broadcast on
+that path is at most 1535 bytes
 (four symbols are all it sends); `send_broadcast_ex` aborts on a simple broadcast above 768 bytes (its
 callers pick the FEC path above that), so a larger one is a harness error. Plumtree with one neighbour
 pushes lazily (`overlay.broadcastPlumtreeIHave`); the receiver's repair request waits for a timer, so
