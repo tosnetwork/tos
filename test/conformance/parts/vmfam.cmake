@@ -7,7 +7,7 @@ add_test(NAME conformance-vmfam-tamper-seed
   COMMAND ${Python3_EXECUTABLE} -B ${CONFORMANCE_DIR}/migrate/vmfam.py tamper-control
     $<TARGET_FILE:conformance-ref-cli> ${CONFORMANCE_DIR}/vectors/vm/fixtures
     ${CMAKE_CURRENT_BINARY_DIR}/vmfam-tamper-seed
-    pq-v16-chksig-ignore pq-falcon512-chksig-ignore rtos-library-budget-limits rtos-pq-chksig)
+    pq-v16-chksig-ignore pq-falcon512-chksig-ignore)
 set_tests_properties(conformance-vmfam-tamper-seed PROPERTIES LABELS "conformance" TIMEOUT 600)
 # These families live in the external vectors repository (CONFORMANCE_VECTORS_DIR).
 if (NOT CONFORMANCE_VECTORS_DIR)
@@ -30,3 +30,8 @@ add_test(NAME conformance-vmfam-tamper
     $<TARGET_FILE:conformance-ref-cli> ${VMFAM_FIXTURES} ${CMAKE_CURRENT_BINARY_DIR}/vmfam-tamper
     vm-prefix pq-v16-parity rtos-opcode-gates)
 set_tests_properties(conformance-vmfam-tamper PROPERTIES LABELS "conformance" FIXTURES_REQUIRED conformance-vectors-checkout TIMEOUT 900)
+add_test(NAME conformance-vmfam-tamper-external
+  COMMAND ${Python3_EXECUTABLE} -B ${CONFORMANCE_DIR}/migrate/vmfam.py tamper-control
+    $<TARGET_FILE:conformance-ref-cli> ${VMFAM_FIXTURES} ${CMAKE_CURRENT_BINARY_DIR}/vmfam-tamper-external
+    rtos-library-budget-limits rtos-pq-chksig)
+set_tests_properties(conformance-vmfam-tamper-external PROPERTIES LABELS "conformance" FIXTURES_REQUIRED conformance-vectors-checkout TIMEOUT 600)
