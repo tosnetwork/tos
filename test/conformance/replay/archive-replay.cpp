@@ -410,7 +410,7 @@ struct ChainStats {
 struct Stats {
   ChainStats mc, shard;
   std::uint64_t tx_onchain = 0, tx_executed = 0, tx_matched = 0, tx_mismatched = 0, tx_refused = 0,
-                tx_skipped_after_mismatch = 0, tx_ordinary = 0, tx_tick = 0, tx_tock = 0;
+                tx_skipped_after_mismatch = 0, tx_not_executed = 0, tx_ordinary = 0, tx_tick = 0, tx_tock = 0;
   std::uint64_t account_state_checks = 0, shard_top_checks = 0, exported = 0;
   std::uint64_t mismatches = 0;  // mismatch events, the give-up counter
   std::map<std::string, std::uint64_t> refusal_reasons, mismatch_kinds;
@@ -822,6 +822,7 @@ void Replay::execute(const ParsedBlock& parsed, const Cell& old_state, const Cel
       return true;
     });
     std::size_t done = 0;
+    bool diverged = false;  // the account object is not usable after a divergence
     auto account_name = ab.account_addr.to_hex();
     try {
       block::Account account(workchain, key);
@@ -890,6 +891,7 @@ void Replay::execute(const ParsedBlock& parsed, const Cell& old_state, const Cel
           mismatch(record, "input_account",
                    "account " + account_name + " pre-state differs from transaction " + ctx.chain_tx, &parsed, old_hash,
                    full ? old_state : Cell{}, nullptr, "", "");
+          diverged = true;
           break;
         }
         build_context();
@@ -913,6 +915,7 @@ void Replay::execute(const ParsedBlock& parsed, const Cell& old_state, const Cel
           stats_.tx_mismatched++;
           mismatch(record, ok == nullptr ? "not_accepted" : "transaction", detail, &parsed, old_hash,
                    full ? old_state : Cell{}, &ctx, got_tx, got_account);
+          diverged = true;
           break;
         }
         stats_.tx_matched++;
@@ -921,7 +924,7 @@ void Replay::execute(const ParsedBlock& parsed, const Cell& old_state, const Cel
           export_tx(ctx);
         account = std::move(ok->account);
       }
-      if (done == originals.size() && after_accounts) {
+      if (!diverged && done == originals.size() && after_accounts) {
         // The last replayed account must be the one the new state stores.
         stats_.account_state_checks++;
         auto stored = after_accounts->lookup(key, 256);
@@ -1081,7 +1084,20 @@ void Replay::replay_block(const Entry& entry, std::uint32_t seqno, bool master) 
           refuse(record, view->config_error);
       }
     }
-    execute(parsed, exec_state, new_state, full, config, record);
+    // Every on-chain transaction ends matched, mismatched, refused, skipped after a divergence of its
+    // account, or (when the block stops early, e.g. on giving up) not executed.
+    auto accounted = [&] {
+      return stats_.tx_matched + stats_.tx_mismatched + stats_.tx_refused + stats_.tx_skipped_after_mismatch +
+             stats_.tx_not_executed;
+    };
+    auto onchain_before = stats_.tx_onchain, accounted_before = accounted();
+    try {
+      execute(parsed, exec_state, new_state, full, config, record);
+    } catch (...) {
+      stats_.tx_not_executed += (stats_.tx_onchain - onchain_before) - (accounted() - accounted_before);
+      throw;
+    }
+    stats_.tx_not_executed += (stats_.tx_onchain - onchain_before) - (accounted() - accounted_before);
     if (master)
       check_shard_top(parsed, new_state, record);
 
@@ -1157,7 +1173,8 @@ void Replay::finish(double seconds) {
     << ",\"transactions\":{\"onchain\":" << stats_.tx_onchain << ",\"executed\":" << stats_.tx_executed
     << ",\"matched\":" << stats_.tx_matched << ",\"mismatched\":" << stats_.tx_mismatched
     << ",\"refused\":" << stats_.tx_refused << ",\"skipped_after_mismatch\":" << stats_.tx_skipped_after_mismatch
-    << ",\"ordinary\":" << stats_.tx_ordinary << ",\"tick\":" << stats_.tx_tick << ",\"tock\":" << stats_.tx_tock
+    << ",\"not_executed\":" << stats_.tx_not_executed << ",\"ordinary\":" << stats_.tx_ordinary
+    << ",\"tick\":" << stats_.tx_tick << ",\"tock\":" << stats_.tx_tock
     << "},\"account_state_checks\":" << stats_.account_state_checks
     << ",\"shard_top_checks\":" << stats_.shard_top_checks << ",\"exported_contexts\":" << stats_.exported
     << ",\"mismatches\":" << stats_.mismatches << ",\"mismatch_kinds\":" << map_json(stats_.mismatch_kinds)
