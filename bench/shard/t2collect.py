@@ -218,7 +218,9 @@ async def read_masterchain(rpc: Reader, lo: int, hi: int, parallel: int = 4) -> 
         # getShards does not name the block it answers for, so a pooled read takes a
         # block's header and its shard tops from one node, and moves on as a pair.
         sources: list[Reader] = list(rpc.order()) if isinstance(rpc, ReaderPool) else [rpc]
-        for source in sources:
+        for index, source in enumerate(sources):
+            if index and isinstance(rpc, ReaderPool):
+                rpc.failovers += 1  # the pair moved to the next node; counted like call()
             try:
                 return await read_one(source, seqno)
             except (RpcError, RateLimited, OSError, TimeoutError):

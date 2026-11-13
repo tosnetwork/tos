@@ -670,6 +670,13 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
         "                self.live = (self.clock(), max(utime, floor, last))\n",
         "LiveDeadlines.test_a_reading_is_as_old_as_its_read_started",
     ),
+    (
+        "fork: a paired masterchain failover is not counted",
+        T2,
+        "                rpc.failovers += 1  # the pair moved to the next node; counted like call()\n",
+        "                pass\n",
+        "ForkedReads.test_a_masterchain_pair_that_fails_over_is_counted",
+    ),
 ]
 
 

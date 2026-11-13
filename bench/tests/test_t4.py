@@ -2414,6 +2414,21 @@ class ForkedReads(unittest.TestCase):
                 by_block.setdefault(seqno, set()).add(url)
         self.assertTrue(all(len(urls) == 1 for urls in by_block.values()), by_block)
         self.assertGreater(len(set().union(*by_block.values())), 1)  # still spread
+        self.assertEqual(pool.failovers, 0)
+
+    def test_a_masterchain_pair_that_fails_over_is_counted(self):
+        chain = FakeChain("0:" + "ee" * 32, {})
+        broken = CountingTransport(broken=True)
+        pool = ReaderPool(
+            [
+                PacedRpc("http://broken", 1.0, transport=broken),
+                PacedRpc("http://node", 1.0, transport=ChainTransport(chain)),
+            ]
+        )
+        mcs = asyncio.run(t2collect.read_masterchain(pool, chain.base, chain.base + 1, 2))
+        self.assertEqual([m.seqno for m in mcs], [chain.base, chain.base + 1])
+        self.assertEqual(broken.calls, 1)  # the pair that started on it moved on
+        self.assertEqual(pool.failovers, 1)
 
 
 if __name__ == "__main__":
