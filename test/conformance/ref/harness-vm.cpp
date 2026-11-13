@@ -9,15 +9,104 @@
 
 #include "common.h"
 
+#ifdef TOS_VM_STEP_TRACE
+#include "td/utils/crypto.h"
+#include "td/utils/misc.h"
+#endif
+
 namespace {
 
 constexpr std::size_t kMaxItems = 255;
 constexpr std::size_t kMaxLibraries = 4;
 
+#ifdef TOS_VM_STEP_TRACE
+// Diagnosis only: the steps and charged cell loads of one run, requested with the context flag "trace". The
+// trace is appended to the effects as "trace"; it is not an effect, fixtures cannot request it and the runner
+// never compares it. Cell and value digests are the first 16 hex digits of the full hash.
+class TraceRecorder final : public vm::StepTraceSink {
+ public:
+  static constexpr std::size_t kMaxEvents = 1u << 16;
+
+  void on_step(const vm::VmState &vm) override {
+    if (!admit()) {
+      return;
+    }
+    // Rendering the top value must not charge the run (a builder is rendered through a finalized copy).
+    vm::VmStateInterface::Guard guard{nullptr};
+    const auto &stack = vm.get_stack_const();
+    const auto code = vm.get_code();
+    std::string top = "-";
+    if (stack.depth() > 0) {
+      top = td::hex_encode(td::sha256(conformance::stack_entry_text(stack[0]))).substr(0, 16);
+    }
+    std::string where = "-";
+    if (code.not_null()) {
+      where = code->get_base_cell()->get_hash().to_hex().substr(0, 16) + ":" + std::to_string(code->cur_pos()) + ":" +
+              std::to_string(code->cur_ref());
+    }
+    append("{\"kind\":\"step\",\"step\":" + std::to_string(vm.get_steps_count()) + ",\"gas\":" +
+           std::to_string(vm.gas_consumed()) + ",\"depth\":" + std::to_string(vm.trace_stack_depth()) + ",\"top\":\"" +
+           top + "\",\"code\":\"" + where + "\"" + (vm.trace_is_child() ? ",\"child\":true" : "") + "}");
+  }
+
+  void on_cell_load(const vm::VmState &vm, const vm::CellHash &hash, bool first) override {
+    if (!admit()) {
+      return;
+    }
+    append("{\"kind\":\"load\",\"step\":" + std::to_string(vm.get_steps_count()) +
+           ",\"gas\":" + std::to_string(vm.gas_consumed()) + ",\"cell\":\"" + hash.to_hex().substr(0, 16) +
+           "\",\"first\":" + conformance::json_bool(first) + (vm.trace_is_child() ? ",\"child\":true" : "") + "}");
+  }
+
+  std::string json() const {
+    return "{\"events\":[" + events_ + "],\"truncated\":" + conformance::json_bool(truncated_) + "}";
+  }
+
+ private:
+  bool admit() {
+    if (count_ >= kMaxEvents) {
+      truncated_ = true;
+      return false;
+    }
+    ++count_;
+    return true;
+  }
+  void append(const std::string &event) {
+    events_ += (events_.empty() ? "" : ",") + event;
+  }
+
+  std::string events_;
+  std::size_t count_ = 0;
+  bool truncated_ = false;
+};
+
+// Installs a recorder as the thread's sink for one run and restores the previous sink.
+class TraceScope {
+ public:
+  explicit TraceScope(vm::StepTraceSink *sink) : saved_(vm::step_trace_sink()) {
+    vm::step_trace_sink() = sink;
+  }
+  ~TraceScope() {
+    vm::step_trace_sink() = saved_;
+  }
+  TraceScope(const TraceScope &) = delete;
+  TraceScope &operator=(const TraceScope &) = delete;
+
+ private:
+  vm::StepTraceSink *saved_;
+};
+#endif
+
 td::Result<std::string> run_vm(td::JsonObject &ctx) {
   TRY_RESULT(code, conformance::required_boc(ctx, "code"));
   TRY_RESULT(version, ctx.get_required_int_field("global_version"));
   TRY_RESULT(flags, ctx.get_optional_int_field("flags", 0));
+  TRY_RESULT(want_trace, ctx.get_optional_bool_field("trace", false));
+#ifndef TOS_VM_STEP_TRACE
+  if (want_trace) {
+    return td::Status::Error("trace requires a build with TOS_VM_STEP_TRACE");
+  }
+#endif
   if (version < 0 || version > 255 || flags < 0 || flags > 255) {
     return td::Status::Error("global_version and flags must be within 0..255");
   }
@@ -74,6 +163,10 @@ td::Result<std::string> run_vm(td::JsonObject &ctx) {
                  vm::VmLog{},
                  std::move(libraries),
                  std::move(c7)};
+#ifdef TOS_VM_STEP_TRACE
+  TraceRecorder recorder;
+  const TraceScope scope{want_trace ? &recorder : nullptr};
+#endif
   // run() returns out of gas as 13, so ~13 reports it as -14, as transactions do.
   const int exit_code = ~st.run();
   const bool committed = st.committed();
@@ -81,10 +174,18 @@ td::Result<std::string> run_vm(td::JsonObject &ctx) {
   auto committed_hash = [&](const td::Ref<vm::Cell> &cell) {
     return committed && cell.not_null() ? conformance::json_quote(conformance::hash_hex(cell)) : std::string("null");
   };
-  return "{\"exit_code\":" + std::to_string(exit_code) + ",\"gas_used\":" + std::to_string(st.gas_consumed()) +
-         ",\"steps\":" + std::to_string(st.get_steps_count()) + ",\"committed\":" + conformance::json_bool(committed) +
-         ",\"c4_hash\":" + committed_hash(state.c4) + ",\"c5_hash\":" + committed_hash(state.c5) +
-         ",\"stack\":" + conformance::stack_json(st.get_stack()) + "}";
+  std::string effects =
+      "{\"exit_code\":" + std::to_string(exit_code) + ",\"gas_used\":" + std::to_string(st.gas_consumed()) +
+      ",\"steps\":" + std::to_string(st.get_steps_count()) + ",\"committed\":" + conformance::json_bool(committed) +
+      ",\"c4_hash\":" + committed_hash(state.c4) + ",\"c5_hash\":" + committed_hash(state.c5) +
+      ",\"stack\":" + conformance::stack_json(st.get_stack()) + "}";
+#ifdef TOS_VM_STEP_TRACE
+  if (want_trace) {
+    effects.pop_back();
+    effects += ",\"trace\":" + recorder.json() + "}";
+  }
+#endif
+  return effects;
 }
 
 }  // namespace
