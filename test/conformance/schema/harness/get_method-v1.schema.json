@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conformance/harness/get_method-v1",
+  "title": "get_method harness: one read-only get-method as the liteserver runs runSmcMethod",
+  "$defs": {
+    "context": {
+      "type": "object",
+      "required": ["mc_state", "mc_block", "account", "now", "lt", "rand_seed", "method_id", "stack", "gas_limit"],
+      "additionalProperties": false,
+      "properties": {
+        "mc_state": {"$ref": "../common-v1.schema.json#/$defs/boc", "description": "Masterchain ShardStateUnsplit: configuration, libraries and previous-block context; may be partial"},
+        "mc_block": {"type": "object", "required": ["seqno", "root_hash", "file_hash"], "additionalProperties": false,
+          "description": "Identity of the masterchain block of mc_state; seqno must be the state's",
+          "properties": {
+            "seqno": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+            "root_hash": {"$ref": "../common-v1.schema.json#/$defs/hash"},
+            "file_hash": {"$ref": "../common-v1.schema.json#/$defs/hash"}
+          }},
+        "account": {"$ref": "../common-v1.schema.json#/$defs/boc", "description": "Account cell, decoded as the liteserver decodes it (code, data, libraries, balance, due payment, address)"},
+        "now": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "lt": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+        "rand_seed": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "method_id": {"type": "string", "pattern": "^(0|-?[1-9][0-9]{0,18})$", "description": "Signed 64-bit method id as decimal text"},
+        "stack": {"type": "array", "maxItems": 255, "items": {"$ref": "../common-v1.schema.json#/$defs/stack_item"}, "description": "Arguments, bottom first; the method id is pushed on top"},
+        "gas_limit": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807}
+      }
+    },
+    "effects": {
+      "oneOf": [
+        {"type": "object", "required": ["outcome", "exit_code", "gas_used", "stack", "missing_library"], "additionalProperties": false,
+         "properties": {
+           "outcome": {"const": "executed"},
+           "exit_code": {"type": "integer"},
+           "gas_used": {"type": "integer"},
+           "stack": {"$ref": "../common-v1.schema.json#/$defs/stack_text"},
+           "missing_library": {"oneOf": [{"type": "null"}, {"$ref": "../common-v1.schema.json#/$defs/hash"}]}
+         }},
+        {"type": "object", "required": ["outcome"], "additionalProperties": false, "description": "The account is missing, uninitialized, frozen or undecodable; nothing runs",
+         "properties": {"outcome": {"const": "no_state"}}},
+        {"type": "object", "required": ["outcome"], "additionalProperties": false, "description": "The masterchain state yields no configuration or no getter context; nothing runs",
+         "properties": {"outcome": {"const": "context_unavailable"}}}
+      ]
+    }
+  }
+}
