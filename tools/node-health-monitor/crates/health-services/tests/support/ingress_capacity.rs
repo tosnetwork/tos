@@ -105,9 +105,9 @@ async fn regular_capacity(configured_limit: Option<usize>, disconnect_first: boo
         Some(hooks.clone()),
     )));
     let mut setup = tokio::task::JoinSet::new();
-    for id in 0..limit {
+    for (id, gate) in hooks.0.iter().take(limit).enumerate() {
         let dir = t.0.clone();
-        let gate = hooks.0[id].clone();
+        let gate = gate.clone();
         setup.spawn(async move { (held_request(&dir, address, id, &gate).await, gate) });
     }
     let mut pending = Vec::new();
