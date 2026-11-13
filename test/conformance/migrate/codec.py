@@ -864,6 +864,28 @@ def fee_edges() -> Family:
                 },
             )
         )
+    # Prices that are not multiples of 2^16, so every rounding step (ceil of the 2^-16 sum, the IHR
+    # factor, the first and next parts) has a remainder to round.
+    for (bit_price, cell_price), (cells, bits) in itertools.product(
+        (("1", "0"), ("3", "7"), ("65535", "65537")),
+        (("0", "1"), ("0", "2"), ("0", "65535"), ("0", "65536"), ("0", "65537"), ("1", "131073")),
+    ):
+        add(
+            entry(
+                f"forward/rounding/{bit_price}-{cell_price}/{cells}-{bits}",
+                {
+                    "kind": "forward",
+                    "lump_price": "5",
+                    "bit_price": bit_price,
+                    "cell_price": cell_price,
+                    "ihr_factor": 98305,
+                    "first_frac": 21845,
+                    "next_frac": 21845,
+                    "cells": cells,
+                    "bits": bits,
+                },
+            )
+        )
     for balance in ("0", str((1 << 128) - 1), str(1 << 64), str((1 << 64) - 1)):
         add(
             entry(
