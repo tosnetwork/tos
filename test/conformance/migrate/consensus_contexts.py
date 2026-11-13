@@ -59,6 +59,10 @@ REAL_TARGETS: tuple[tuple[int, int], ...] = (
     (124029, 124028),
 )
 
+HEX_FAMILIES = frozenset({"vote", "finality", "session", "validator-set"})
+NO_BLOBS = 1 << 24
+DEFAULT_BLOB_THRESHOLD = 2048
+
 # A family is frozen in one file per context source (metadata.source is per file): the fixture id prefix
 # names the source.
 SOURCES = {"real": "replay", "authored": "authored", "rtos": "migrated:rtos"}
@@ -738,8 +742,13 @@ def add_session_variants(families: dict[str, Family], material: list[Json]) -> N
             {**base, "options": {**base["options"], "next_candidate_delay": 0.125}},
         )
     )
+    seen = {json.dumps(base, sort_keys=True)}
     for name, ctx in variants:
-        session.add(f"authored/{name}", ctx)
+        # A variant equal to the real context or to an earlier variant adds nothing.
+        key = json.dumps(ctx, sort_keys=True)
+        if key not in seen:
+            seen.add(key)
+            session.add(f"authored/{name}", ctx)
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -1033,16 +1042,14 @@ def command_check(directory: Path) -> list[str]:
         if decoded is None or decoded.get("signature_set") != eff.get("signature_set"):
             problems.append(f"{fixture_id}: decode_proof and key_block_context decode differently")
     sessions = {cast(str, r["metadata"]["fixture_id"]): r for r in by_family["session"]}
-    real_sessions = {k: v for k, v in sessions.items() if k.startswith("real/")}
-    variants = [
-        cast(str, v["effects"].get("session_id"))
-        for k, v in sessions.items()
-        if k.startswith("authored/")
-    ]
-    if len(set(variants)) != len(variants):
-        problems.append("session: two authored variants derive the same session id")
-    if any(v in variants for v in (r["effects"]["session_id"] for r in real_sessions.values())):
-        problems.append("session: an authored variant derives a real session id")
+    # Distinct session inputs must derive distinct sessions (each variant changes one committed input).
+    by_id: dict[str, set[str]] = {}
+    for record in sessions.values():
+        context = json.dumps(record["context"], sort_keys=True)
+        by_id.setdefault(cast(str, record["effects"].get("session_id")), set()).add(context)
+    for session_id, distinct in by_id.items():
+        if len(distinct) > 1:
+            problems.append(f"session: {len(distinct)} different contexts derive {session_id}")
     return problems
 
 
@@ -1059,6 +1066,10 @@ def command_create(reference: str, contexts: Path, vectors: Path) -> None:
         if kind == "rtos":
             source = f"{source}/{family.removesuffix('-rtos')}"
         out = vectors / "fixtures" / f"{family}.jsonl"
+        # create moves long base64 strings into the blob store, and a long hex string (a key or a
+        # signature) looks like one; families with hex fields therefore keep every value inline.
+        base = family.rsplit("-", 1)[0]
+        threshold = NO_BLOBS if base in HEX_FAMILIES else DEFAULT_BLOB_THRESHOLD
         subprocess.run(
             [
                 sys.executable,
@@ -1073,6 +1084,8 @@ def command_create(reference: str, contexts: Path, vectors: Path) -> None:
                 family,
                 "--source",
                 source,
+                "--blob-threshold",
+                str(threshold),
                 str(path),
                 str(out),
             ],
