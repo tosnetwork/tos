@@ -32,7 +32,7 @@ harness error, because `block::ValidatorSet` aborts on it.
 ### Families (`vectors/consensus/fixtures/`)
 
 A family is frozen in one file per context source, `<family>-real` (`replay`), `<family>-authored` and
-`<family>-rtos` (`migrated:rtos/<family>`); 270 fixtures in all.
+`<family>-rtos` (`migrated:rtos/<family>`); 268 fixtures in all.
 
 | Family | real | authored | rtos | Contexts |
 |---|---|---|---|---|
