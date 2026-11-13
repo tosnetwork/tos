@@ -80,6 +80,8 @@ FAMILY_SOURCES = {
     "fec-online": "authored",
     "fec-round-robin": "authored",
     "rldp2": "authored",
+    "overlay-broadcast": "authored",
+    "overlay-broadcast-inbound": "authored",
 }
 
 
@@ -2348,32 +2350,341 @@ def add_rldp2(fam: Family, ref: Reference) -> None:
 # Commands
 
 
-def command_contexts(reference: str, rtos: Path, out: Path) -> dict[str, int]:
+# ---------------------------------------------------------------------------------------------------------
+# overlay broadcasts: the node's overlay actors for a fixed-member overlay, its wall clock fixed at `now`
+
+BROADCAST_NOW = 1_700_000_000
+BROADCAST_NAME = b"conformance-broadcast"
+# AllowFec | Trusted: every member may send every kind of broadcast without a certificate.
+BROADCAST_RULE_FLAGS = 3
+
+
+def broadcast_members(count: int) -> list[bytes]:
+    return [pk_ed25519(seed_bytes(f"broadcast-member-{i}")) for i in range(count)]
+
+
+def broadcast_ctx(mode: str, members: int = 2, **fields: Any) -> Json:
+    ctx: Json = {
+        "op": "overlay_broadcast",
+        "now": BROADCAST_NOW,
+        "name": BROADCAST_NAME.hex(),
+        "members": [key.hex() for key in broadcast_members(members)],
+        "mode": mode,
+        "max_unauth_size": 1 << 20,
+        "flags": BROADCAST_RULE_FLAGS,
+        "authorized_keys": [],
+    }
+    ctx.update(fields)
+    return ctx
+
+
+def broadcast_send(data: bytes, flags: int = 0, fec: bool = False) -> Json:
+    return {"data": data.hex(), "flags": flags, "fec": fec}
+
+
+def overlay_message_prefix() -> bytes:
+    """overlay.message for the broadcast overlay: the bytes before every broadcast object."""
+    overlay_short = hashlib.sha256(pub_overlay_full(BROADCAST_NAME)).digest()
+    return ctor("overlay_message") + overlay_short
+
+
+def pub_overlay_full(name: bytes) -> bytes:
+    # OverlayIdFull's key is pub.overlay of the name (overlay/overlay-id.hpp).
+    return pub_overlay(name)
+
+
+def tl_bytes_at(data: bytes, at: int) -> tuple[bytes, int]:
+    """A TL bytes field at `at`: its value and the offset after its padding."""
+    if data[at] < 254:
+        length, start = data[at], at + 1
+    else:
+        length, start = int.from_bytes(data[at + 1 : at + 4], "little"), at + 4
+    end = start + length
+    return data[start:end], end + (-(end - at) % 4)
+
+
+class SimpleBroadcast:
+    """overlay.broadcast inside an overlay.message, with an empty certificate."""
+
+    def __init__(self, message: bytes) -> None:
+        if message[36:40] != ctor("overlay_broadcast") or message[76:80] != ctor(
+            "overlay_emptyCertificate"
+        ):
+            fail("not a simple broadcast with an empty certificate")
+        self.prefix = message[:36]
+        self.src = message[40:76]
+        self.flags = struct.unpack("<i", message[80:84])[0]
+        self.data, at = tl_bytes_at(message, 84)
+        self.date = struct.unpack("<i", message[at : at + 4])[0]
+        self.signature, end = tl_bytes_at(message, at + 4)
+        if end != len(message):
+            fail("trailing bytes after a simple broadcast")
+
+    def build(self) -> bytes:
+        return (
+            self.prefix
+            + ctor("overlay_broadcast")
+            + self.src
+            + ctor("overlay_emptyCertificate")
+            + i32(self.flags)
+            + tl_bytes(self.data)
+            + i32(self.date)
+            + tl_bytes(self.signature)
+        )
+
+    def to_sign(self) -> bytes:
+        """overlay.broadcast.toSign of the fields, as the authoring reads the scheme."""
+        source = b"\0" * 32 if self.flags & 1 else hashlib.sha256(self.src).digest()
+        broadcast_id = hashlib.sha256(
+            ctor("overlay_broadcast_id")
+            + source
+            + hashlib.sha256(self.data).digest()
+            + i32(self.flags)
+        ).digest()
+        return ctor("overlay_broadcast_toSign") + broadcast_id + i32(self.date)
+
+
+def emitted_to(answer: Json, kind: str, dst: int = 1) -> bytes:
+    for item in cast(list[Json], answer["emitted"]):
+        if item["type"] == kind and item["dst"] == dst:
+            return bytes.fromhex(cast(str, item["canonical"]))
+    fail(f"no {kind} to member {dst} in {answer}")
+    return b""
+
+
+def flip_last(data: bytes, back: int) -> bytes:
+    return flip(data, len(data) - back)
+
+
+def add_overlay_broadcasts(fam: Family, inbound: Family, ref: Reference) -> None:
+    """Broadcasts sent by member 0, and messages a member receives built from what the node sent.
+
+    Notes: `delivered_to` lists the members whose application must receive the broadcast (each once),
+    `messages_to` those that must receive it as a plain message, `data_sha256` the digest every delivery
+    must carry, `replay_of` the sender fixture whose emitted message an inbound one repeats unchanged.
+    """
+    members = broadcast_members(8)
+    member0 = ref.short_id(ref.public_key(members[0])).hex()
+    hello = b"hello, overlay"
+    every = list(range(8))
+
+    def sender(fixture_id: str, ctx: Json, data: bytes, delivered_to: list[int]) -> None:
+        extra: Json = {"delivered_to": delivered_to}
+        if delivered_to:
+            extra["data_sha256"] = hashlib.sha256(data).hexdigest()
+        fam.add(fixture_id, ctx, None, **extra)
+
+    def send_ctx(
+        mode: str,
+        data: bytes,
+        members_count: int = 2,
+        flags: int = 0,
+        fec: bool = False,
+        **rules: Any,
+    ) -> Json:
+        return broadcast_ctx(
+            mode,
+            members=members_count,
+            broadcast=broadcast_send(data, flags=flags, fec=fec),
+            **rules,
+        )
+
+    sender("simple/hello", send_ctx("simple", hello), hello, [0, 1])
+    # The privacy rules forbid AnySender for a key they do not authorize (OverlayPrivacyRules::check_rules).
+    sender("simple/any-sender", send_ctx("simple", hello, flags=1), hello, [])
+    any_authorized = send_ctx(
+        "simple", hello, flags=1, authorized_keys=[{"key": member0, "max_size": 1 << 20}]
+    )
+    sender("simple/any-sender-authorized", any_authorized, hello, [0, 1])
+    # Neither trusted nor authorized: the receiver asks its application, which accepts.
+    need_check = send_ctx("simple", hello)
+    need_check["flags"] = 0
+    sender("simple/need-check", need_check, hello, [0, 1])
+    sender("simple/768", send_ctx("simple", b"s" * 768), b"s" * 768, [0, 1])
+    sender("simple/empty", send_ctx("simple", b""), b"", [])
+    sender(
+        "simple/over-unauthorized-size",
+        send_ctx("simple", b"nine byte", max_unauth_size=8, flags=0),
+        b"nine byte",
+        [],
+    )
+    authorized = send_ctx(
+        "simple",
+        hello,
+        max_unauth_size=0,
+        authorized_keys=[{"key": member0, "max_size": 1 << 20}],
+    )
+    authorized["flags"] = 0
+    sender("simple/authorized-key", authorized, hello, [0, 1])
+    sender("fec/50", send_ctx("fec", b"f" * 50, fec=True), b"f" * 50, [0, 1])
+    sender("fec/1500", send_ctx("fec", b"g" * 1500, fec=True), b"g" * 1500, [0, 1])
+    no_fec = send_ctx("fec", b"f" * 50, fec=True)
+    no_fec["flags"] = 0
+    sender("fec/not-allowed", no_fec, b"f" * 50, [])
+    sender("twostep/simple", send_ctx("twostep", hello, fec=True), hello, [0, 1])
+    sender("twostep/fec-6", send_ctx("twostep", b"t" * 600, 6, fec=True), b"t" * 600, every[:6])
+    sender(
+        "twostep/fec-8-any-sender",
+        send_ctx("twostep", b"u" * 2000, 8, flags=1, fec=True),
+        b"u" * 2000,
+        every,
+    )
+    sender(
+        "twostep/below-fec-size",
+        send_ctx("twostep", b"t" * 512, 6, fec=True),
+        b"t" * 512,
+        every[:6],
+    )
+    sender("twostep/old-simple", send_ctx("twostep", hello), hello, [0, 1])
+    # Plumtree: with one neighbour the sender pushes lazily (IHave) and repairs on a timer.
+    sender("plumtree/simple", send_ctx("plumtree", hello), hello, [0])
+    sender("plumtree/fec", send_ctx("plumtree", b"p" * 6000, fec=True), b"p" * 6000, [0])
+    answers = {e["fixture_id"]: ref.one(cast(Json, e["context"])) for e in fam.entries}
+
+    stranger = hashlib.sha256(b"net-fixture:broadcast-stranger").hexdigest()
+
+    def receive(
+        fixture_id: str,
+        mode: str,
+        message: bytes,
+        delivered_to: list[int],
+        drops: list[str],
+        times: int = 1,
+        src: str | None = None,
+        messages_to: list[int] | None = None,
+        replay_of: str | None = None,
+        **fields: Any,
+    ) -> None:
+        ctx = broadcast_ctx(mode, **fields)
+        ctx["inbound"] = [
+            {"src": src or member0, "dst": 1, "message": message.hex()} for _ in range(times)
+        ]
+        extra: Json = {"delivered_to": delivered_to, "messages_to": messages_to or []}
+        if replay_of is not None:
+            extra["replay_of"] = replay_of
+        inbound.add(fixture_id, ctx, {"drops": drops}, **extra)
+
+    simple = emitted_to(answers["simple/hello"], "overlay.broadcast")
+    receive("simple/replay", "simple", simple, [0, 1], [], replay_of="simple/hello")
+    receive("simple/twice", "simple", simple, [0, 1], [], times=2, replay_of="simple/hello")
+    receive("simple/signature-flipped", "simple", flip_last(simple, 8), [], ["invalid_signature"])
+    data_flipped = SimpleBroadcast(simple)
+    data_flipped.data = flip(data_flipped.data, 0)
+    receive("simple/data-flipped", "simple", data_flipped.build(), [], ["invalid_signature"])
+    other_src = SimpleBroadcast(simple)
+    other_src.src = ref.public_key(members[1])
+    receive("simple/source-not-the-signer", "simple", other_src.build(), [], ["invalid_signature"])
+    receive(
+        "simple/from-non-member", "simple", simple, [], ["overlay_unknown_source"], src=stranger
+    )
+    # The receiver accepts dates within 20 s of its clock (OverlayImpl::check_date); a date outside is
+    # dropped without a log line.
+    for label, offset, accepted in (
+        ("19-s-old", -19, True),
+        ("21-s-old", -21, False),
+        ("20-s-new", 20, True),
+        ("21-s-new", 21, False),
+    ):
+        redated = SimpleBroadcast(simple)
+        redated.date = BROADCAST_NOW + offset
+        redated.signature = ref.sign(members[0], redated.to_sign())
+        receive(f"simple/date-{label}", "simple", redated.build(), [0, 1] if accepted else [], [])
+    any_sender = SimpleBroadcast(simple)
+    any_sender.flags = 1
+    any_sender.signature = ref.sign(members[0], any_sender.to_sign())
+    receive("simple/any-sender-resigned", "simple", any_sender.build(), [], [])
+    # The 768-byte bound applies to the sender only: a received one-byte-longer broadcast is accepted.
+    for size in (768, 769):
+        sized = SimpleBroadcast(simple)
+        sized.data = b"s" * size
+        sized.signature = ref.sign(members[0], sized.to_sign())
+        receive(f"simple/data-{size}-resigned", "simple", sized.build(), [0, 1], [])
+    # Not a broadcast object: the overlay hands it to the application as a message.
+    receive("simple/truncated", "simple", simple[:-4], [], [], messages_to=[1])
+    receive("simple/to-twostep-overlay", "twostep", simple, [0, 1], [])
+
+    fec = emitted_to(answers["fec/50"], "overlay.broadcastFec")
+    receive("fec/replay", "fec", fec, [0, 1], [], replay_of="fec/50")
+    receive("fec/signature-flipped", "fec", flip_last(fec, 8), [], ["invalid_signature"])
+    receive("fec/data-hash-flipped", "fec", flip(fec, 80), [], ["invalid_signature"])
+    receive("fec/to-overlay-without-fec", "fec", fec, [], [], flags=0)
+
+    twostep = emitted_to(answers["twostep/simple"], "overlay.broadcastTwostepSimple")
+    receive("twostep/replay", "twostep", twostep, [1], [], replay_of="twostep/simple")
+    receive(
+        "twostep/signature-flipped", "twostep", flip_last(twostep, 8), [], ["invalid_signature"]
+    )
+    receive("twostep/data-flipped", "twostep", flip(twostep, 120), [], ["invalid_signature"])
+    receive("twostep/to-simple-overlay", "simple", twostep, [], ["broadcast_disabled"])
+    receive(
+        "twostep/from-non-member", "twostep", twostep, [], ["overlay_unknown_source"], src=stranger
+    )
+
+    ihave = emitted_to(answers["plumtree/simple"], "overlay.broadcastPlumtreeIHave")
+    # An IHave only announces: the receiver asks for the broadcast after its repair timeout.
+    receive("plumtree/ihave-replay", "plumtree", ihave, [], [], replay_of="plumtree/simple")
+    receive("plumtree/ihave-signature-flipped", "plumtree", flip_last(ihave, 8), [], [])
+    receive("plumtree/ihave-to-simple-overlay", "simple", ihave, [], ["broadcast_disabled"])
+
+
+def command_contexts(
+    reference: str, rtos: Path | None, out: Path, only: set[str] | None = None
+) -> dict[str, int]:
+    """Writes the contexts of every family, or of the families in `only` (and those built with them)."""
     ref = Reference(reference)
     TL_IDS.update(load_tl_ids(TL_HEADER))
     families = {name: Family(name) for name in FAMILY_SOURCES}
-    add_keys(families["keys"], ref)
-    add_rfc8032(families["ed25519-rfc8032"])
-    add_adnl_id(families["adnl-id"], families["adnl-id-test-adnl"])
-    add_address_lists(families["adnl-address-list"], ref)
-    add_messages(families["adnl-message"])
-    add_packets(families["adnl-packet"], ref)
-    add_packet_flags(families["adnl-packet-flags"], ref)
-    add_datagrams(families["adnl-datagram"], ref)
-    add_channels(families["adnl-channel"], ref)
-    add_preauth(families["preauth"])
-    add_overlay_ids(families["overlay-id"])
-    add_overlay_nodes(families["overlay-node"], ref)
-    add_overlay_node_rtos(families["overlay-node-rtos"], ref, rtos)
-    add_overlay_certificates(families["overlay-certificate"], ref)
-    add_member_certificates(families["overlay-member-certificate"], ref)
-    add_overlay_policy(families["overlay-policy"])
-    add_fec_types(families["fec-type"])
-    add_fec_code(families["fec-raptorq"], ref, "raptorq")
-    add_fec_code(families["fec-raptorq-sweep"], ref, "raptorq", sweep=True)
-    add_fec_code(families["fec-online"], ref, "online")
-    add_fec_code(families["fec-round-robin"], ref, "round_robin")
-    add_rldp2(families["rldp2"], ref)
+    f = families
+    builders: list[tuple[tuple[str, ...], Any]] = [
+        (("keys",), lambda: add_keys(f["keys"], ref)),
+        (("ed25519-rfc8032",), lambda: add_rfc8032(f["ed25519-rfc8032"])),
+        (
+            ("adnl-id", "adnl-id-test-adnl"),
+            lambda: add_adnl_id(f["adnl-id"], f["adnl-id-test-adnl"]),
+        ),
+        (("adnl-address-list",), lambda: add_address_lists(f["adnl-address-list"], ref)),
+        (("adnl-message",), lambda: add_messages(f["adnl-message"])),
+        (("adnl-packet",), lambda: add_packets(f["adnl-packet"], ref)),
+        (("adnl-packet-flags",), lambda: add_packet_flags(f["adnl-packet-flags"], ref)),
+        (("adnl-datagram",), lambda: add_datagrams(f["adnl-datagram"], ref)),
+        (("adnl-channel",), lambda: add_channels(f["adnl-channel"], ref)),
+        (("preauth",), lambda: add_preauth(f["preauth"])),
+        (("overlay-id",), lambda: add_overlay_ids(f["overlay-id"])),
+        (("overlay-node",), lambda: add_overlay_nodes(f["overlay-node"], ref)),
+        (
+            ("overlay-node-rtos",),
+            lambda: add_overlay_node_rtos(f["overlay-node-rtos"], ref, rtos_path(rtos)),
+        ),
+        (("overlay-certificate",), lambda: add_overlay_certificates(f["overlay-certificate"], ref)),
+        (
+            ("overlay-member-certificate",),
+            lambda: add_member_certificates(f["overlay-member-certificate"], ref),
+        ),
+        (("overlay-policy",), lambda: add_overlay_policy(f["overlay-policy"])),
+        (("fec-type",), lambda: add_fec_types(f["fec-type"])),
+        (("fec-raptorq",), lambda: add_fec_code(f["fec-raptorq"], ref, "raptorq")),
+        (
+            ("fec-raptorq-sweep",),
+            lambda: add_fec_code(f["fec-raptorq-sweep"], ref, "raptorq", sweep=True),
+        ),
+        (("fec-online",), lambda: add_fec_code(f["fec-online"], ref, "online")),
+        (("fec-round-robin",), lambda: add_fec_code(f["fec-round-robin"], ref, "round_robin")),
+        (("rldp2",), lambda: add_rldp2(f["rldp2"], ref)),
+        (
+            ("overlay-broadcast", "overlay-broadcast-inbound"),
+            lambda: add_overlay_broadcasts(
+                f["overlay-broadcast"], f["overlay-broadcast-inbound"], ref
+            ),
+        ),
+    ]
+    if only is not None and not only <= set(FAMILY_SOURCES):
+        fail(f"unknown families {sorted(only - set(FAMILY_SOURCES))}")
+    for names, build in builders:
+        if only is None or set(names) & only:
+            build()
+        else:
+            for name in names:
+                del families[name]
     out.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
     for name, fam in families.items():
@@ -2389,10 +2700,21 @@ def command_contexts(reference: str, rtos: Path, out: Path) -> dict[str, int]:
     return counts
 
 
-def command_create(reference: str, contexts: Path, vectors: Path) -> None:
-    """Fill every contexts file through runner/conformance.py create, with its family and source."""
+def rtos_path(rtos: Path | None) -> Path:
+    if rtos is None:
+        fail("overlay-node-rtos needs --rtos")
+        return Path()
+    return rtos
+
+
+def command_create(
+    reference: str, contexts: Path, vectors: Path, only: set[str] | None = None
+) -> None:
+    """Fill every contexts file (or those of `only`) through runner/conformance.py create."""
     runner = Path(__file__).resolve().parent.parent / "runner" / "conformance.py"
     for family, source in FAMILY_SOURCES.items():
+        if only is not None and family not in only:
+            continue
         path = contexts / f"{family}.contexts.jsonl"
         if not path.is_file():
             fail(f"{path}: missing")
@@ -2446,6 +2768,36 @@ def load(directory: Path, family: str) -> dict[str, Json]:
         record = cast(Json, json.loads(line))
         records[cast(str, record["metadata"]["fixture_id"])] = record
     return records
+
+
+def broadcast_problems(senders: dict[str, Json], inbound: dict[str, Json]) -> list[str]:
+    """The delivery notes of the broadcast families, and inbound replays equal to what was sent."""
+    problems: list[str] = []
+    for name, records in (("overlay-broadcast", senders), ("overlay-broadcast-inbound", inbound)):
+        for fixture_id, record in records.items():
+            note = cast(Json, json.loads(record["metadata"].get("note", "{}")))
+            effects = cast(Json, record["effects"])
+            delivered = cast(list[Json], effects.get("delivered", []))
+            for kind, key in (("broadcast", "delivered_to"), ("message", "messages_to")):
+                if key not in note:
+                    continue
+                got = sorted(cast(int, d["member"]) for d in delivered if d["kind"] == kind)
+                if got != sorted(cast(list[int], note[key])):
+                    problems.append(
+                        f"{name}/{fixture_id}: {kind} delivered to {got}, not {note[key]}"
+                    )
+            if "data_sha256" in note and any(
+                d["data_sha256"] != note["data_sha256"]
+                for d in delivered
+                if d["kind"] == "broadcast"
+            ):
+                problems.append(f"{name}/{fixture_id}: a delivery is not the sent data")
+            if "replay_of" in note:
+                sent = senders[cast(str, note["replay_of"])]["effects"]["emitted"]
+                message = record["context"]["inbound"][0]["message"]
+                if message not in [m["canonical"] for m in sent if m["src"] == 0 and m["dst"] == 1]:
+                    problems.append(f"{name}/{fixture_id}: not a message {note['replay_of']} sent")
+    return problems
 
 
 def command_check(directory: Path) -> list[str]:
@@ -2513,6 +2865,7 @@ def command_check(directory: Path) -> list[str]:
         delivered = [r for e in record["effects"]["events"] for r in e["received"]]
         if len(delivered) != 1 or delivered[0]["data_sha256"] != note.get("data_sha256"):
             problems.append(f"rldp2/{fixture_id}: the transfer was not delivered intact")
+    problems += broadcast_problems(fams["overlay-broadcast"], fams["overlay-broadcast-inbound"])
     for fam_name in ("fec-raptorq", "fec-online", "fec-round-robin"):
         fam = fams[fam_name]
         for fixture_id, record in fam.items():
@@ -2539,20 +2892,30 @@ def main(argv: Iterable[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     make = sub.add_parser("contexts")
     make.add_argument("--reference", required=True)
-    make.add_argument("--rtos", required=True, type=Path)
+    make.add_argument("--rtos", type=Path, help="needed for overlay-node-rtos")
     make.add_argument("--out", required=True, type=Path)
+    make.add_argument("--only", action="append", help="build only these families")
     create = sub.add_parser("create")
     create.add_argument("--reference", required=True)
     create.add_argument("--contexts", required=True, type=Path)
     create.add_argument("vectors", type=Path)
+    create.add_argument("--only", action="append", help="fill only these families")
     check = sub.add_parser("check")
     check.add_argument("directory", type=Path)
     args = parser.parse_args(None if argv is None else list(argv))
     if args.command == "contexts":
-        print(json.dumps(command_contexts(args.reference, args.rtos, args.out), sort_keys=True))
+        only = set(cast(list[str], args.only)) if args.only else None
+        print(
+            json.dumps(command_contexts(args.reference, args.rtos, args.out, only), sort_keys=True)
+        )
         return 0
     if args.command == "create":
-        command_create(args.reference, args.contexts, args.vectors)
+        command_create(
+            args.reference,
+            args.contexts,
+            args.vectors,
+            set(cast(list[str], args.only)) if args.only else None,
+        )
         return 0
     problems = command_check(args.directory)
     for problem in problems:

@@ -81,7 +81,8 @@ function(conformance_fuzz_library name)
   # counts, but static: the shared emulator is replaced by emulator_static and emulator-extern.cpp above.
   target_link_libraries(${name} PRIVATE emulator_static git
     "$<FILTER:$<TARGET_PROPERTY:conformance-ref,LINK_LIBRARIES>,EXCLUDE,^(emulator|git)$>")
-  target_link_options(${name} PRIVATE -Wl,-Bsymbolic -Wl,--version-script=${CONFORMANCE_FUZZ_EXPORTS})
+  target_link_options(${name} PRIVATE -Wl,-Bsymbolic -Wl,--version-script=${CONFORMANCE_FUZZ_EXPORTS}
+    ${CONFORMANCE_CLOCK_WRAP})
   add_dependencies(${name} emulator)  # emulator_export.h
 endfunction()
 

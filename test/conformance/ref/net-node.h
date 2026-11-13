@@ -16,6 +16,20 @@
 
 namespace conformance::net {
 
+// The wall clock the node reads (td::Clocks::system: broadcast dates and their age checks, certificate
+// expiry) is fixed at `now` while one of these is alive, so a context's dates and signatures do not depend
+// on when it runs. The reference library is linked with the linker's --wrap for that function
+// (CMakeLists.txt); with no FixedClock alive the wrapper returns the real clock, so nothing else changes.
+class FixedClock {
+ public:
+  explicit FixedClock(double now);
+  ~FixedClock();
+  FixedClock(const FixedClock &) = delete;
+  FixedClock &operator=(const FixedClock &) = delete;
+  FixedClock(FixedClock &&) = delete;
+  FixedClock &operator=(FixedClock &&) = delete;
+};
+
 // The address every inbound datagram of a context comes from (TEST-NET-1, RFC 5737); it is what the
 // receiver's pre-authentication gate keys its budgets on.
 td::Result<td::IPAddress> datagram_source();
@@ -37,6 +51,9 @@ class NodeLog final : public td::LogInterface {
   // the first drop it reported.
   std::string first_after(td::Slice marker) const;
   bool contains(td::Slice text) const;
+  const std::vector<std::string> &lines() const {
+    return lines_;
+  }
 
  private:
   std::vector<std::string> lines_;

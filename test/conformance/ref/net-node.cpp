@@ -6,7 +6,30 @@
 
 #include "net-node.h"
 
+namespace {
+
+bool clock_fixed = false;
+double fixed_now = 0;
+
+}  // namespace
+
+// The linker resolves every reference to td::Clocks::system() in the reference library to this wrapper
+// (--wrap=_ZN2td6Clocks6systemEv); the real function stays reachable as __real_.
+extern "C" double __real__ZN2td6Clocks6systemEv();
+extern "C" double __wrap__ZN2td6Clocks6systemEv() {
+  return clock_fixed ? fixed_now : __real__ZN2td6Clocks6systemEv();
+}
+
 namespace conformance::net {
+
+FixedClock::FixedClock(double now) {
+  clock_fixed = true;
+  fixed_now = now;
+}
+
+FixedClock::~FixedClock() {
+  clock_fixed = false;
+}
 
 td::Result<td::IPAddress> datagram_source() {
   td::IPAddress addr;
@@ -16,7 +39,8 @@ td::Result<td::IPAddress> datagram_source() {
 
 NodeLog::NodeLog() : saved_interface_(td::log_interface), saved_level_(GET_VERBOSITY_LEVEL()) {
   td::log_interface = this;
-  // Every drop on the inbound ADNL path is logged at ADNL_DEBUG or a lower level.
+  // Every drop on the inbound ADNL and overlay paths is logged at ADNL_DEBUG (= OVERLAY_DEBUG) or a lower
+  // level.
   SET_VERBOSITY_LEVEL(tos::adnl::VERBOSITY_NAME(ADNL_DEBUG));
 }
 

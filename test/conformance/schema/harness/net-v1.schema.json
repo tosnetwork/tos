@@ -33,6 +33,7 @@
             "overlay_member_certificate",
             "overlay_member_flags",
             "overlay_privacy_rules",
+            "overlay_broadcast",
             "fec_type",
             "fec_encode",
             "fec_decode",
@@ -97,6 +98,29 @@
               }
             }
           }
+        },
+        "broadcast": {
+          "type": "object",
+          "required": [
+            "data",
+            "flags",
+            "fec"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "data": {
+              "$ref": "../common-v1.schema.json#/$defs/hex"
+            },
+            "flags": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "fec": {
+              "type": "boolean"
+            }
+          },
+          "description": "overlay_broadcast: the broadcast member 0 sends (send_broadcast_ex, or send_broadcast_fec_ex when fec)"
         },
         "budget": {
           "type": "object",
@@ -221,6 +245,36 @@
           "pattern": "^[0-9a-f]{64}$",
           "description": "32 bytes, lowercase hex"
         },
+        "inbound": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "src",
+              "dst",
+              "message"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "src": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "description": "32 bytes, lowercase hex"
+              },
+              "dst": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 7
+              },
+              "message": {
+                "$ref": "../common-v1.schema.json#/$defs/hex",
+                "description": "the ADNL custom message (overlay.message prefix and object)"
+              }
+            }
+          },
+          "description": "overlay_broadcast: messages handed to a member's overlay manager as from an ADNL id"
+        },
         "is_any_sender": {
           "type": "boolean"
         },
@@ -279,9 +333,28 @@
           "minimum": 0,
           "maximum": 4294967295
         },
+        "members": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 8,
+          "items": {
+            "$ref": "../common-v1.schema.json#/$defs/hex",
+            "description": "a boxed Ed25519 PrivateKey"
+          },
+          "description": "overlay_broadcast: the members of a fixed-member overlay, each run in-process; member 0 sends"
+        },
         "message": {
           "$ref": "../common-v1.schema.json#/$defs/hex",
           "description": "bytes signed or verified; for adnl_message a boxed adnl.Message"
+        },
+        "mode": {
+          "enum": [
+            "simple",
+            "fec",
+            "twostep",
+            "plumtree"
+          ],
+          "description": "overlay_broadcast: which broadcast kind the members' options enable"
         },
         "name": {
           "$ref": "../common-v1.schema.json#/$defs/hex",
@@ -1433,6 +1506,102 @@
           "type": "object",
           "required": [
             "outcome",
+            "delivered",
+            "drops",
+            "emitted"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "broadcast"
+            },
+            "emitted": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "src",
+                  "dst",
+                  "via",
+                  "type",
+                  "canonical"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "src": {
+                    "description": "member index, or the 32-byte hex id of a non-member"
+                  },
+                  "dst": {
+                    "description": "member index, or the 32-byte hex id of a non-member"
+                  },
+                  "via": {
+                    "enum": [
+                      "adnl",
+                      "sender"
+                    ]
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "canonical": {
+                    "$ref": "../common-v1.schema.json#/$defs/hex"
+                  }
+                }
+              },
+              "description": "every message a member emitted, in order, with its bytes"
+            },
+            "delivered": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "member",
+                  "kind",
+                  "from_key",
+                  "data_sha256",
+                  "extra"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "member": {
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "enum": [
+                      "broadcast",
+                      "message"
+                    ]
+                  },
+                  "from_key": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$",
+                    "description": "32 bytes, lowercase hex"
+                  },
+                  "data_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$",
+                    "description": "32 bytes, lowercase hex"
+                  },
+                  "extra": {
+                    "$ref": "../common-v1.schema.json#/$defs/hex"
+                  }
+                }
+              },
+              "description": "what each member's application received"
+            },
+            "drops": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reason"
+              },
+              "description": "the class of every broadcast or message the overlay logged as dropped"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
             "reason"
           ],
           "additionalProperties": false,
@@ -1472,6 +1641,8 @@
         "need_more_symbols",
         "not_ed25519",
         "overlay_node_invalid",
+        "overlay_unknown_source",
+        "broadcast_disabled",
         "overlay_signature_invalid",
         "packet_address_list_empty",
         "packet_bad_flags",

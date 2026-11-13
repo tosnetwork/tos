@@ -61,6 +61,8 @@ REASONS = frozenset(
         "process_budget",
         "local_budget",
         "overlay_node_invalid",
+        "overlay_unknown_source",
+        "broadcast_disabled",
         "fec_symbol_size_small",
         "fec_symbol_size_large",
         "fec_too_many_symbols",
@@ -108,6 +110,9 @@ OP_REQUIRED: dict[str, frozenset[str]] = {
             "is_any_sender",
         }
     ),
+    "overlay_broadcast": frozenset(
+        {"now", "name", "members", "mode", "max_unauth_size", "flags", "authorized_keys"}
+    ),
     "fec_type": frozenset({"fec_type"}),
     "fec_encode": frozenset({"algorithm", "data", "symbol_size", "symbol_ids"}),
     "fec_decode": frozenset({"algorithm", "data_size", "symbol_size", "symbols_count", "symbols"}),
@@ -119,6 +124,7 @@ OP_REQUIRED: dict[str, frozenset[str]] = {
 OP_OPTIONAL: dict[str, frozenset[str]] = {
     "adnl_id": frozenset({"id", "text"}),
     "adnl_channel": frozenset({"datagram", "send"}),
+    "overlay_broadcast": frozenset({"broadcast", "inbound"}),
     "fec_decode": frozenset({"regenerate"}),
     "rldp2_receive": frozenset({"budget", "default_mtu", "requests"}),
 }
@@ -233,6 +239,37 @@ def algorithm(value: object, where: str) -> None:
         raise t.FixtureError(f"{where}: raptorq, online or round_robin")
 
 
+def broadcast_members(value: object, where: str) -> None:
+    items = t.array(value, where, 8)
+    if len(items) < 2:
+        raise t.FixtureError(f"{where}: two to eight keys required")
+    for i, raw in enumerate(items):
+        hex_bytes(raw, f"{where}[{i}]", 4096)
+
+
+def broadcast_mode(value: object, where: str) -> None:
+    if value not in ("simple", "fec", "twostep", "plumtree"):
+        raise t.FixtureError(f"{where}: simple, fec, twostep or plumtree")
+
+
+def broadcast_spec(value: object, where: str) -> None:
+    item = t.obj(value, where)
+    t.keys(item, {"data", "flags", "fec"}, {"data", "flags", "fec"}, where)
+    hex_bytes(item["data"], f"{where}.data")
+    u32(item["flags"], f"{where}.flags")
+    boolean(item["fec"], f"{where}.fec")
+
+
+def inbound_messages(value: object, where: str) -> None:
+    for i, raw in enumerate(t.array(value, where, 64)):
+        at = f"{where}[{i}]"
+        item = t.obj(raw, at)
+        t.keys(item, {"src", "dst", "message"}, {"src", "dst", "message"}, at)
+        ident(item["src"], f"{at}.src")
+        t.integer(item["dst"], f"{at}.dst", 0, 7)
+        hex_bytes(item["message"], f"{at}.message")
+
+
 def text(value: object, where: str) -> None:
     t.any_text(value, where)
     if len(str(value)) > 256:
@@ -291,6 +328,10 @@ FIELD_CHECKS: dict[str, Callable[[object, str], None]] = {
     "default_mtu": decimal,
     "requests": requests,
     "transfer_id": ident,
+    "members": broadcast_members,
+    "mode": broadcast_mode,
+    "broadcast": broadcast_spec,
+    "inbound": inbound_messages,
 }
 
 # Fields whose type depends on the op: the member certificate's node is an id (the overlay node record is
@@ -371,6 +412,7 @@ EFFECT_SHAPES: dict[str | None, frozenset[str]] = {
     ),
     "transfers": frozenset({"outcome", "events", "inbound_transfers", "completed_transfers"}),
     "sent": frozenset({"outcome", "packets", "outbound_transfers"}),
+    "broadcast": frozenset({"outcome", "emitted", "delivered", "drops"}),
     "refused": frozenset({"outcome", "reason"}),
 }
 
@@ -388,6 +430,7 @@ EFFECT_HEX = frozenset(
         "to_sign",
         "sent",
         "issued_by",
+        "extra",
     }
 )
 EFFECT_IDS = frozenset(
@@ -409,13 +452,14 @@ EFFECT_IDS = frozenset(
         "data_sha256",
         "symbol_sha256",
         "sha256",
+        "from_key",
     }
 )
 VERDICT_WORDS = frozenset(
     {"valid", "admitted", "released", "ok", "allowed", "need_check", "forbidden"}
 )
 VERDICT_KEYS = frozenset({"reason", "signature_check", "check", "decoder"})
-VERDICT_LISTS = frozenset({"results", "added"})
+VERDICT_LISTS = frozenset({"results", "added", "drops"})
 
 
 def verdict(value: object, where: str) -> None:
