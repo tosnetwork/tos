@@ -120,9 +120,23 @@ def resolve(value: Any, blobs: Mapping[str, str]) -> Any:
     return value
 
 
+# Serialized bag-of-cells magic numbers (std, indexed, indexed with CRC32C).
+BOC_MAGICS = (bytes.fromhex("b5ee9c72"), bytes.fromhex("68ff65f3"), bytes.fromhex("acc3a728"))
+
+
+def is_boc_text(value: str) -> bool:
+    if not t.BOC_RE.match(value) or len(value) % 4:
+        return False
+    try:
+        head = base64.b64decode(value[:8], validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    return head[:4] in BOC_MAGICS
+
+
 def externalize(value: Any, blobs: dict[str, str], threshold: int) -> Any:
-    """Move every base64 BOC string longer than threshold into blobs, replacing it by a reference."""
-    if isinstance(value, str) and len(value) > threshold and t.BOC_RE.match(value):
+    """Move every base64 BOC longer than threshold into blobs, replacing it by a reference."""
+    if isinstance(value, str) and len(value) > threshold and is_boc_text(value):
         digest = blob_digest(value)
         blobs[digest] = value
         return {"blob": digest}

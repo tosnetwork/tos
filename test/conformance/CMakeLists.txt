@@ -18,6 +18,7 @@ target_link_libraries(conformance-ref PRIVATE emulator git)
 # libemulator.so; exported inline symbols of one copy would interpose on the other and the two would run
 # against different globals (seen as wrong gas on two REL-02 elector transactions).
 set_target_properties(conformance-ref PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+target_link_options(conformance-ref PRIVATE -Wl,--exclude-libs,ALL)
 add_executable(conformance-ref-cli ${CONFORMANCE_REF_DIR}/conformance-ref-cli.cpp)
 target_link_libraries(conformance-ref-cli PRIVATE conformance-ref)
 

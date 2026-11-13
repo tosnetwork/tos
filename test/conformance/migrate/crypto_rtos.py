@@ -36,7 +36,7 @@ from typing import Any, cast
 # Run as a script from its own directory, next to the shared helpers.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from crypto_common import (  # noqa: E402  # pyright: ignore[reportImplicitRelativeImport]
+from crypto_common import (  # noqa: E402
     Checker,
     Json,
     ctx,

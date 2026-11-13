@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import stat
@@ -257,7 +258,7 @@ class ValidateTests(Fixture):
 class BlobTests(Fixture):
     def big_contexts(self) -> None:
         # The same long code BOC in both contexts: stored once, referenced twice.
-        long_code = "A" * 4000
+        long_code = base64.b64encode(bytes.fromhex("b5ee9c72") + bytes(3000)).decode("ascii")
         answers = {long_code: vm_effects(10), CODE: vm_effects(11)}
         (self.dir / "answers.json").write_text(json.dumps(answers))
         lines = [
@@ -279,6 +280,15 @@ class BlobTests(Fixture):
         self.assertEqual(records[2]["context"]["code"], CODE)
         self.assertEqual(len(json.loads(self.blobs_file().read_text())), 1)
         self.assertTrue(c.command_run(self.target, [self.vectors]).ok())
+
+    def test_only_bocs_are_externalized(self) -> None:
+        blobs: dict[str, str] = {}
+        hex_text = "ab" * 3000  # long, in the base64 alphabet, but not a bag of cells
+        boc_text = base64.b64encode(bytes.fromhex("b5ee9c72") + bytes(3000)).decode("ascii")
+        out = c.externalize({"bytes": hex_text, "boc": boc_text}, blobs, 100)
+        self.assertEqual(out["bytes"], hex_text)
+        self.assertIn("blob", out["boc"])
+        self.assertEqual(len(blobs), 1)
 
     def test_unresolved_blob_is_rejected(self) -> None:
         self.big_contexts()
