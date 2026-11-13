@@ -227,6 +227,21 @@ class CrossCheckControlTests(unittest.TestCase):
         self.edit("fec-raptorq", "decode/s768-n769-source", change)
         self.assertTrue(nc.command_check(self.copy))
 
+    def test_broadcast_delivery_difference_fails(self) -> None:
+        def change(record: dict[str, Any]) -> None:
+            record["effects"]["delivered"] = record["effects"]["delivered"][:1]
+
+        self.edit("overlay-broadcast", "twostep/fec-6", change)
+        self.assertTrue(nc.command_check(self.copy))
+
+    def test_broadcast_replay_difference_fails(self) -> None:
+        def change(record: dict[str, Any]) -> None:
+            emitted = record["effects"]["emitted"][0]
+            emitted["canonical"] = emitted["canonical"][:-2] + "ff"
+
+        self.edit("overlay-broadcast", "simple/hello", change)
+        self.assertTrue(nc.command_check(self.copy))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -53,7 +53,7 @@ treats it as equal to anything.
 | `block` | block, previous state, master context for shard blocks | block and new state hashes, ordered transaction and account hashes; or a rejection class | Merkle update application and re-execution ([docs/block.md](docs/block.md)) |
 | `consensus` | op: quorum, weights, protocol version, validator set, session, vote, finality, proof decoding, key-block context, proof links | derived values and verdicts with stable refusal classes | validator-session and PQ finality code ([docs/consensus.md](docs/consensus.md)) |
 | `validate` | candidate block id and bytes, collated data, producer, previous blocks, min/top masterchain, validator-set source, shard-signature skip, served states (complete or Merkle proofs) | `accepted` with `ok_from_utime_ms`; `rejected` or `error` with one of 15 fixed reason classes (or `unclassified`) | `ValidateQuery` on a test-only validator manager ([docs/validate.md](docs/validate.md)) |
-| `net` | op: key, signature and encryption inputs; ADNL address lists, messages, packets, datagrams, channels; pre-authentication admission; overlay ids, nodes, certificates, flags, privacy rules; FEC parameters, encode and decode; RLDP2 transfers (28 operations) | extracted fields, canonical bytes, derived ids and verdicts; refusals with one of 43 fixed classes (or `unclassified`) | ADNL, key, overlay, FEC and RLDP2 code ([docs/net.md](docs/net.md)) |
+| `net` | op: key, signature and encryption inputs; ADNL address lists, messages, packets, datagrams, channels; pre-authentication admission; overlay ids, nodes, certificates, flags, privacy rules, broadcasts between in-process members; FEC parameters, encode and decode; RLDP2 transfers (29 operations) | extracted fields, canonical bytes, derived ids and verdicts, emitted messages and deliveries; refusals with one of 45 fixed classes (or `unclassified`) | ADNL, key, overlay, FEC and RLDP2 code ([docs/net.md](docs/net.md)) |
 
 The `vm` final stack is a list, bottom first, of canonical item texts: `null`, decimal integers, `NaN`,
 `cell:<hash>`, `slice:<cell hash>:<bit from>-<bit to>:<ref from>-<ref to>`,
@@ -138,12 +138,12 @@ All vectors live in this tree, under `vectors/<harness>/fixtures/`:
 | `crypto` | 20 | 9,508 | 10.0 MB |
 | `fee` | 3 | 6,723 | 3.6 MB |
 | `get_method` | 5 | 2,740 | 6.2 MB |
-| `net` | 23 | 1,245 | 5.2 MB |
+| `net` | 25 | 1,290 | 5.5 MB |
 | `tl` | 3 | 174 | 1.2 MB |
 | `txn` | 56 | 62,054 | 177.9 MB |
 | `validate` | 4 | 643 | 14.9 MB |
 | `vm` | 34 | 163,788 | 118.1 MB |
-| total | 179 | 252,209 | 350.1 MB |
+| total | 181 | 252,254 | 350.4 MB |
 
 Families whose name starts with `rtos-` (and the get_method families rebuilt from that implementation's
 test parameters) hold contexts converted from another implementation's tests; their effects come from the C++
@@ -155,7 +155,7 @@ reference like every other fixture. Per-component tables are in `docs/`.
 |---|---|---|
 | VM families | 27 migrated VM families plus the chksig and library-load-limit families | [docs/vmfam.md](docs/vmfam.md) |
 | Transaction families | 56 migrated transaction families, captured at the native call | [docs/txnfam.md](docs/txnfam.md) |
-| Network wire layer | ADNL keys, packets, datagrams and channels, overlay records and certificates, FEC codes and RLDP2 transfers through the node's own code; 23 families, known answers from RFC 8032, `test/test-adnl.cpp` and the RTOS overlay vectors | [docs/net.md](docs/net.md) |
+| Network wire layer | ADNL keys, packets, datagrams and channels, overlay records, certificates and broadcasts, FEC codes and RLDP2 transfers through the node's own code; 25 families, known answers from RFC 8032, `test/test-adnl.cpp` and the RTOS overlay vectors | [docs/net.md](docs/net.md) |
 | Block validation | the node's `ValidateQuery` offline: 610 archived blocks accepted, 33 authored defects rejected by class (every reason class reached); a 2,000-masterchain-block epoch-6 slice (`history-replay`) | [docs/validate.md](docs/validate.md) |
 | Archive replay | offline whole-history replay of archived networks from their zero states | [docs/archive.md](docs/archive.md), [docs/archive-manifest.json](docs/archive-manifest.json) |
 | Fuzzing and diagnosis | differential fuzzing (in-process and line protocol), test-build VM step trace (`TOS_VM_STEP_TRACE`, default OFF), `debug_mismatch.py`, `minimize.py` | [docs/fuzz.md](docs/fuzz.md) |

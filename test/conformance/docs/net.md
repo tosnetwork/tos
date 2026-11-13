@@ -43,6 +43,7 @@ harnesses.
 | `overlay_member_certificate` | `certificate`, `node`, `now` | fields, `to_sign`, the issuer's signature check, `expired` at `now` | `OverlayMemberCertificate(tl)`, `to_sign_data`, `is_expired(now)` (expiry at most 1000000000 or never, so the verdict cannot change with the clock) |
 | `overlay_member_flags` | `flags`, `plumtree_enabled`, `original_sender` | validity, receive predicates, `public_flags` | `OverlayMemberFlags` |
 | `overlay_privacy_rules` | unauthenticated size limit, flags, authorized keys, source, size, `is_fec`, `is_any_sender` | `allowed`/`need_check`/`forbidden`, largest broadcast | `OverlayPrivacyRules::check_rules`, `max_broadcast_size` |
+| `overlay_broadcast` | `now`, overlay `name`, `members` (Ed25519 keys), `mode` (`simple`, `fec`, `twostep`, `plumtree`), privacy rules; optional `broadcast` member 0 sends (`data`, `flags`, `fec`); optional `inbound` messages (`src` id, `dst` member, `message`) | every message the members emitted (source, destination, transport, TL type, bytes), what each member's application received (source key, data digest, extra), the drops the overlay logged | `OverlayManager` and one `OverlayImpl` per member, run in-process (see below) |
 | `fec_type` | `fec_type` (TL `fec.Type`) | parameters, whether its decoder can be created, canonical bytes | `fec::FecType::create`, `create_decoder` |
 | `fec_encode` | `algorithm` (raptorq, online, round_robin), `data`, `symbol_size`, `symbol_ids` | parameters, the symbols | `td::fec::*Encoder` |
 | `fec_decode` | `algorithm`, parameters, `symbols`, optional `regenerate` ids | per-symbol verdict, decoded data (digest; bytes up to 4 KiB) or the refusal, symbols of the returned encoder | `td::fec::*Decoder` (`add_symbol`, `try_decode`) |
@@ -54,6 +55,41 @@ harnesses.
 `rldp2_receive` leaves out `rldp2.confirm` acknowledgements: when they are due depends on the clock.
 `rldp2_send` reports one run only, which is a function of the data: every packet of a run is sent at one
 timestamp.
+
+## Overlay broadcasts
+
+`overlay_broadcast` (`ref/net-broadcast.cpp`) runs the node's `OverlayManager` and one `OverlayImpl` per
+member of a fixed-member overlay, all on one single-threaded scheduler with one keyring holding every
+member's key. The stand-ins are at the network edge only: an ADNL that records what an overlay sends and
+hands it to the overlay manager of its destination member through the subscription the manager made (as
+`AdnlLocalId::deliver` does), and the sender two-step and Plumtree broadcasts go through. Member 0 sends
+through `send_broadcast_ex` (or `send_broadcast_fec_ex` with `fec`, `send_broadcast_plumtree(_fec)` in
+`plumtree` mode, where the simple broadcast's id is the SHA-256 of its data, the caller's choice); the
+`inbound` messages are handed to their member as from the given ADNL id. Every emitted message is
+delivered in order until the members are idle. The members' applications accept every broadcast they are
+asked to check.
+
+The overlay reads the wall clock for broadcast dates, their 20-second acceptance window and certificate
+expiry. The reference library is linked with `--wrap=_ZN2td6Clocks6systemEv` (`CMakeLists.txt`,
+`parts/fuzz.cmake`), and `ref/net-node.cpp` defines the wrapper: while an `overlay_broadcast` context
+runs it returns the context's `now`, otherwise the real clock. So the dates, the bytes each broadcast
+signs, its signature and its id are functions of the context, and the frozen effects carry them
+byte-exact: an emitted broadcast is its full TL object including the signature, and an id the receiver
+recomputes is checked through the signature it verifies.
+
+Bounds, from what the node itself fixes rather than the context: with more than one neighbour the
+simple, FEC and Plumtree paths choose neighbours at random, so those modes take exactly two members
+(two-step broadcasts go to every member in a fixed order: two to eight members); the FEC sender emits
+four symbols at once and the rest on a 10 ms timer, so an old-style FEC broadcast is at most 1535 bytes
+(four symbols are all it sends); `send_broadcast_ex` aborts on a simple broadcast above 768 bytes (its
+callers pick the FEC path above that), so a larger one is a harness error. Plumtree with one neighbour
+pushes lazily (`overlay.broadcastPlumtreeIHave`); the receiver's repair request waits for a timer, so
+only the announcement is pinned.
+
+Drops: a broadcast the overlay refuses with an error is logged (`Failed to process broadcast ...`), as
+are messages from non-members of a private overlay; `drops` lists their classes in log order. Refusals
+the overlay reports as not ready are not logged at all (a date outside the window, a duplicate, a source
+the privacy rules forbid): those show as no delivery and no drop.
 
 ## Refusal classes
 
@@ -93,6 +129,8 @@ timestamp.
 | `process_budget` | `process decrypt budget exceeded` | `preauth/gate/process-budget` |
 | `local_budget` | `local decrypt budget exceeded` | `preauth/gate/local-budget` |
 | `overlay_node_invalid` | `invalid overlay node flags or certificate` | `overlay-node-rtos/flags-4` |
+| `overlay_unknown_source` | `in private overlay from unknown source` | `overlay-broadcast-inbound/simple/from-non-member` |
+| `broadcast_disabled` | `broadcasts are not enabled` | `overlay-broadcast-inbound/twostep/to-simple-overlay` |
 | `fec_symbol_size_small` | `symbol_size below floor` | `fec-type/raptorq-symbol-767` |
 | `fec_symbol_size_large` | `symbol_size is too big` | `fec-type/raptorq-symbol-2049` |
 | `fec_too_many_symbols` | `too many symbols`, `K is too big` | `fec-type/raptorq-k-56404` |
@@ -136,7 +174,7 @@ decoder size overflows` (the part size check before them already bounds the part
 
 ## Families (`vectors/net/fixtures/`)
 
-1,245 fixtures, 5.2 MB. Every context is built by `migrate/net_contexts.py contexts`; signatures,
+1,290 fixtures, 5.5 MB. Every context is built by `migrate/net_contexts.py contexts`; signatures,
 ciphertexts, channel datagrams, the bytes a packet signs and FEC symbols come from the reference itself,
 so a context is valid or invalid exactly where it is written to be. Randomness is a fixed seed: running
 `contexts` twice gives byte-identical files.
@@ -165,6 +203,8 @@ so a context is valid or invalid exactly where it is written to be. Randomness i
 | `fec-raptorq-sweep` | authored | 120 | 60 seeded sizes, symbol sizes and symbol subsets, encoded and decoded |
 | `fec-online` | authored | 58 | as `fec-raptorq`, with more symbols, since the online code needs more than K |
 | `fec-round-robin` | authored | 42 | as `fec-raptorq` |
+| `overlay-broadcast` | authored | 18 | member 0's simple broadcasts (768 bytes, empty, over the unauthenticated size, an authorized key, AnySender with and without authorization, a source the application checks), FEC broadcasts of 50 and 1500 bytes and without the FEC flag, two-step broadcasts to 2, 6 and 8 members (simple and FEC, 512 bytes just below the FEC threshold), an old broadcast in a two-step overlay, Plumtree simple and FEC announcements |
+| `overlay-broadcast-inbound` | authored | 27 | messages a member receives, built from what the node sent: simple broadcasts replayed (once and twice), with a flipped signature, data or source key, from a non-member, re-dated 19/20/21 seconds off and re-signed, re-signed as AnySender, with 768- and 769-byte data, truncated, into a two-step overlay; FEC parts replayed, with a flipped signature or data hash, to an overlay without the FEC flag; two-step broadcasts replayed, tampered, into a simple overlay, from a non-member; Plumtree announcements replayed, tampered, into a simple overlay |
 | `rldp2` | authored | 45 | FEC helper and budget arithmetic; the sender's first run for 1..7680 bytes; the receiver on in-order, reversed and repair-only symbols, duplicates after completion, two transfers, the default MTU and a raised one, request limits, other codes, symbol sizes, part indices, negative fields, short symbols, out-of-range ids, stray complete/confirm datagrams, garbage, an exhausted budget |
 
 Cross-checks (`migrate/net_contexts.py check`, ctest `conformance-net-crosscheck`): every expectation in
@@ -173,23 +213,31 @@ bytes, and the verdict each authored negative is written for); the RTOS toSign v
 toSign framing apart from the id it signs for; AES ciphertexts decrypt to what was encrypted; both ends of
 a channel agree on its ids and the packet one end receives is the one the other sent; decoding returns the
 encoded data and a decoder's encoder regenerates the encoder's symbols; each RLDP2 datagram built for the
-receiver is byte-identical to the one the node's sender emits, and the transfer arrives intact.
+receiver is byte-identical to the one the node's sender emits, and the transfer arrives intact; every
+broadcast reaches exactly the members its note names (once each) with the digest of the data sent, and
+an inbound replay is byte-identical to the message the sending fixture emitted.
 
 Regenerating (from a clean, committed reference build; `create` runs `runner/conformance.py create` per
 family with its source and keeps every hex field inline):
 
 ```
 python3 test/conformance/migrate/net_contexts.py contexts --reference build/test/conformance/conformance-ref-cli \
-    --rtos <RTOS checkout> --out <scratch>
+    --rtos <RTOS checkout> --out <scratch> [--only <family> ...]
 python3 test/conformance/migrate/net_contexts.py create --reference build/test/conformance/conformance-ref-cli \
-    --contexts <scratch> test/conformance/vectors/net
+    --contexts <scratch> test/conformance/vectors/net [--only <family> ...]
 python3 test/conformance/migrate/net_contexts.py check test/conformance/vectors/net
 ```
 
-The RTOS file is `adnl/src/overlay/testdata/tos-overlay-node-vectors.txt` of the RTOS repository.
+The RTOS file is `adnl/src/overlay/testdata/tos-overlay-node-vectors.txt` of the RTOS repository; only
+`overlay-node-rtos` needs it, and `--only` limits a run to the named families (the two broadcast families
+are built together).
 
 ## Behaviour the fixtures pin that a peer may not expect
 
+- The 768-byte bound of simple broadcasts holds for the sender only: a received simple broadcast of 769
+  bytes is accepted and relayed (`overlay-broadcast-inbound/simple/data-769-resigned`).
+- An overlay message that does not parse as a broadcast object is handed to the application as a plain
+  message (`overlay-broadcast-inbound/simple/truncated`).
 - Ed25519 and AES encryption authenticate nothing but the SHA-256 of the plaintext: an empty plaintext
   decrypts under any key (`keys/decrypt/ed25519-0-other-key`). The packet that follows is what a receiver
   then checks.
@@ -208,10 +256,9 @@ The RTOS file is `adnl/src/overlay/testdata/tos-overlay-node-vectors.txt` of the
 
 ## Not covered, and why
 
-- Broadcast ids and data-to-sign of simple, FEC, two-step and plumtree broadcasts: computed by
-  file-local functions inside the overlay actors (`compute_broadcast_id` and friends in
-  `overlay/broadcast-*.cpp`), reachable only through a running overlay with its keyring and ADNL. The
-  certificates and member records those broadcasts carry are covered.
+- Broadcasts between more than two members on the simple, FEC and Plumtree paths (random neighbour
+  choice), FEC broadcasts above four symbols and Plumtree repair (timers), the overlay's not-ready
+  refusals (not logged), certificate-carrying broadcasts in public overlays and the FEC short form.
 - The peer pair's acceptance of a checked packet (reinit dates, seqno windows, address-list updates),
   `adnl.message.part` reassembly and the split of large messages into parts: state of
   `AdnlPeerPairImpl`, an actor bound to a network manager and a DHT. Message part decoding is covered.
