@@ -39,12 +39,12 @@ python3 test/conformance/migrate/rel02.py chain build/emulator/test-epoch-replay
 python3 test/conformance/runner/tosvm_controls.py $T test/conformance/vectors
 ```
 
-`parts/tosvm.cmake` adds these as ctests labelled `conformance-tosvm` when cargo is found
+`parts/tosvm.cmake` adds these as ctests labelled `rust-target` when cargo is found
 (`conformance-tosvm-build`, `-vectors`, `-controls`, and `-rel02-chain` when `test-epoch-replay` is a
 target); the adapter is built into `build/test/conformance/tosvm-target`:
 
 ```
-cd build && ctest -L conformance-tosvm --output-on-failure
+cd build && ctest -L rust-target --output-on-failure
 ```
 
 `ctest -L` takes a regular expression, so `ctest -L conformance` selects these tests too; use
@@ -63,3 +63,25 @@ refused. Pointed at the C++ reference the second control fails, since the refere
 | REL-02 contexts, full effects against the C++ reference (including the ShardAccount hash) | 576 equal |
 
 There is no frozen `txn` family yet, so the `txn` harness is exercised by the chain lane only.
+
+## Result with the external vectors (2026-11-13)
+
+With `CONFORMANCE_VECTORS_DIR` set (vectors pin 71 files), `conformance-tosvm-vectors` runs 144,975 vm
+fixtures: 136,264 equal, 8,711 mismatched, 0 refused, 0 skipped. Every mismatch is in a family whose
+contexts were converted from the other implementation's tests; all tree-sourced families are equal:
+
+| Family | Mismatched |
+|---|---|
+| rtos-sendmsg | 5,346 |
+| rtos-opcode-stack | 1,334 |
+| rtos-bchk | 912 |
+| rtos-decode-matrix | 750 |
+| rtos-continuation-save | 143 |
+| rtos-opcode-gates | 112 |
+| rtos-poseidon2 | 75 |
+| rtos-decode-vectors | 38 |
+| rtos-lms-fee | 1 |
+
+Fields: stack 7,330, gas_used 5,089, exit_code 4,202, committed/c4/c5 3,418, steps 962 (a fixture can
+differ in several). These are divergences of the tosctl VM from the C++ VM, not fixture defects; the lane
+is red until they are fixed in the tosctl VM. The REL-02 chain lane (txn) is 576/576.
