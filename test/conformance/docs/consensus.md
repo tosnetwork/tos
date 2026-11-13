@@ -127,8 +127,8 @@ uv run python test/conformance/scenarios/run_scenarios.py --build-dir build --so
     --work-dir build/conformance-network --node cpp:build/validator-engine/validator-engine --nodes 4
 ```
 
-ctest: `conformance-network-scenarios`, label `conformance-network`. It starts validators only when
-`CONFORMANCE_NETWORK=1` is set (`CONFORMANCE_NETWORK=1 ctest -L conformance-network`); otherwise it reports
+ctest: `conformance-network-scenarios`, label `network-scenario`. It starts validators only when
+`CONFORMANCE_NETWORK=1` is set (`CONFORMANCE_NETWORK=1 ctest -L network-scenario`); otherwise it reports
 itself skipped, including under `ctest -L conformance`, whose regex also matches this label.
 Binaries needed: `validator-engine dht-server create-state generate-random-id tos-pq-consensus-key
 toslibjson gen_fif conformance-ref-cli`, and `uv run test/tostester/generate_tl.py` once.

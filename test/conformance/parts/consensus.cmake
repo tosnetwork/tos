@@ -11,7 +11,7 @@ add_test(NAME conformance-consensus-crosscheck
     --reference $<TARGET_FILE:conformance-ref-cli> ${CONFORMANCE_DIR}/vectors/consensus)
 set_tests_properties(conformance-consensus-crosscheck PROPERTIES LABELS "conformance" TIMEOUT 600)
 
-# Network scenarios start validator processes, so they run only on request: label conformance-network,
+# Network scenarios start validator processes, so they run only on request: label network-scenario,
 # and skipped unless CONFORMANCE_NETWORK=1 (ctest -L treats its argument as a regex, so -L conformance
 # also selects this test; it then reports it skipped). They need the repository's Python environment
 # (tostester), hence uv.
@@ -24,5 +24,5 @@ if (TARGET validator-engine AND CONFORMANCE_UV)
       --reference $<TARGET_FILE:conformance-ref-cli>
       --node cpp:$<TARGET_FILE:validator-engine> --nodes 4 --only-if-env CONFORMANCE_NETWORK
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-  set_tests_properties(conformance-network-scenarios PROPERTIES LABELS "conformance-network" TIMEOUT 3600 SKIP_RETURN_CODE 77)
+  set_tests_properties(conformance-network-scenarios PROPERTIES LABELS "network-scenario" TIMEOUT 3600 SKIP_RETURN_CODE 77)
 endif()
