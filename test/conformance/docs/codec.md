@@ -92,7 +92,7 @@ fills tl families with a blob threshold above the line limit, so they stay inlin
 | `codec` | `rtos-config-param-schema` | 2,653 | RTOS `config-param-schema.{boc,tsv}.lz4`: 2,068 of 30,351 single parameters (the first 40 per index), 75 of 84 dictionary shapes, 510 of 2,217 whole configurations (those under 10 kB) |
 | `fee` | `gas-purchase` | 6,602 | `test/executor-parity/gas_purchase.py` |
 | `fee` | `storage-fee-vectors` | 21 | `crypto/block/storage-fee-vectors.tsv` |
-| `fee` | `fee-edges` | 82 | authored: storage boundaries, forward fees, 128-bit balances |
+| `fee` | `fee-edges` | 100 | authored: storage boundaries, forward fees (with prices that leave a remainder at every rounding step), 128-bit balances |
 | `tl` | `tl-cli-fixtures` | 98 | `test/tl-cli/fixtures.tsv` |
 | `tl` | `tl-proven-reads` | 18 | `test/tl-cli/binary-fixtures.json` |
 | `tl` | `tl-negative` | 58 | authored mutations of the tl-cli fixtures |
