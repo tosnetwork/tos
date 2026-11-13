@@ -6,11 +6,13 @@ handlers.py measure --build-dir B --source-dir S --out report.json
     Run every fixture and the REL-02 chain replay through the instrumented reference of build directory B
     (configured with -fprofile-instr-generate -fcoverage-mapping), merge the profiles and write, per VM
     instruction handler (crypto/vm/*ops.cpp exec_* functions), whether it executed, and the line coverage
-    of the components listed in COMPONENTS.
+    of every source file under the prefixes listed in COMPONENTS (with per-prefix totals for information).
 handlers.py check report.json [--baseline-dir D]
     Fail when a handler listed in D/vm-handlers-covered.txt did not execute, when a handler is in neither
     that file nor D/vm-handlers-unreachable.txt (each line there says why it cannot run at version 16),
-    or when a component's line coverage falls more than SLACK points below D/components.json. Handlers in
+    or when a file's line coverage falls more than SLACK points below its floor in D/components.json, or a
+    file with a floor is no longer in the report. Floors are per file, so linking more files of a prefix
+    into the reference cannot dilute them; a file without a floor is printed. Handlers in
     D/vm-handlers-gaps.txt are reachable but not yet executed: accepted, and printed on every run.
 handlers.py baseline report.json [--baseline-dir D]
     Write vm-handlers-covered.txt and components.json from a report (unreachable entries are kept as is).
@@ -104,29 +106,47 @@ def measure(build: Path, source: Path, out: Path) -> None:
             handlers[f"{current}:{parts[0]}"] = not (lines > 0 and lines == missed)
     if not handlers:
         raise SystemExit("no instruction handler found in the coverage report")
-    totals = {c: [0, 0] for c in COMPONENTS}
-    for line in summary.splitlines():
-        parts = line.split()
-        if len(parts) < 7:
-            continue
-        for c in COMPONENTS:
-            if parts[0].startswith(c):
-                try:
-                    totals[c][0] += int(parts[4])
-                    totals[c][1] += int(parts[5])
-                except ValueError:
-                    pass
-                break
-    components = {c: round(100.0 * (t - m) / t, 2) for c, (t, m) in totals.items() if t}
+    files = file_lines(summary)
+    components = {f: percent(t, m) for f, (t, m) in sorted(files.items()) if t}
+    totals = {
+        c: percent(sum(t for f, (t, _) in files.items() if f.startswith(c)),
+                   sum(m for f, (_, m) in files.items() if f.startswith(c)))
+        for c in COMPONENTS
+    }  # fmt: skip
     report = {
         "vectors": vectors.stdout.strip().splitlines()[-1],
         "chain": chain.stdout.strip().splitlines()[-1],
         "handlers": dict(sorted(handlers.items())),
         "components": components,
+        "component_totals": totals,
     }
     out.write_text(json.dumps(report, indent=1) + "\n")
     executed = sum(handlers.values())
-    print(f"handlers executed {executed}/{len(handlers)}; components {components}")
+    print(f"handlers executed {executed}/{len(handlers)}; line coverage {totals}")
+
+
+def percent(total: int, missed: int) -> float:
+    return round(100.0 * (total - missed) / total, 2) if total else 0.0
+
+
+def file_lines(summary: str) -> dict[str, tuple[int, int]]:
+    """(lines, missed lines) per file under COMPONENTS from `llvm-cov report` file rows.
+
+    A row is: file, regions, missed regions, cover, functions, missed functions, cover, lines, missed
+    lines, cover[, branches, missed branches, cover]. Lines are columns 7 and 8; 4 and 5 are functions.
+    """
+    files: dict[str, tuple[int, int]] = {}
+    for line in summary.splitlines():
+        parts = line.split()
+        if len(parts) < 10 or not any(parts[0].startswith(c) for c in COMPONENTS):
+            continue
+        if not (parts[3].endswith("%") and parts[6].endswith("%") and parts[9].endswith("%")):
+            continue
+        try:
+            files[parts[0]] = (int(parts[7]), int(parts[8]))
+        except ValueError:
+            continue
+    return files
 
 
 def read_list(path: Path) -> dict[str, str]:
@@ -160,10 +180,16 @@ def check(report_path: Path, base: Path) -> int:
             problems.append(f"handler not classified (executed={executed}): {name}")
         if (name in unreachable and not unreachable[name]) or (name in gaps and not gaps[name]):
             problems.append(f"listed handler without a reason: {name}")
+    components = cast(dict[str, float], report["components"])
+    if not floors:
+        problems.append("empty baseline of component floors")
     for component, floor in sorted(floors.items()):
-        now = cast(dict[str, float], report["components"]).get(component)
-        if now is None or now + SLACK < floor:
+        now = components.get(component)
+        if now is None:
+            problems.append(f"file with a line-coverage floor is no longer measured: {component}")
+        elif now + SLACK < floor:
             problems.append(f"line coverage of {component}: {now} below baseline {floor}")
+    unfloored = sorted(f for f in components if f not in floors)
     newly = [n for n in sorted({**unreachable, **gaps}) if handlers.get(n)]
     for name, reason in sorted(gaps.items()):
         if not handlers.get(name):
@@ -172,6 +198,10 @@ def check(report_path: Path, base: Path) -> int:
         print(f"COVERAGE {line}")
     for name in newly:
         print(f"NOTE now executed, move to the covered list: {name}")
+    for name in unfloored:
+        print(f"NOTE measured file without a floor (run baseline): {name} {components[name]}")
+    for prefix, value in sorted(cast(dict[str, float], report.get("component_totals", {})).items()):
+        print(f"TOTAL line coverage of {prefix}: {value}")
     executed = sum(handlers.values())
     print(
         f"handlers {executed}/{len(handlers)} executed; {len(covered)} required; {len(problems)} problems"

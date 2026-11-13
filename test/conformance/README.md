@@ -80,12 +80,14 @@ every digest to match its content.
 `coverage/handlers.py` measures what the vectors execute in the C++ reference: an instrumented build
 (`-fprofile-instr-generate -fcoverage-mapping`, `-DCONFORMANCE_COVERAGE=ON`, label `coverage`) runs every fixture and
 the REL-02 replay, and the gate fails when any VM instruction handler in `coverage/vm-handlers-covered.txt` is no longer
-executed, when a handler is unclassified, or when a component's line coverage drops more than 0.5 points below
-`coverage/components.json`. `vm-handlers-unreachable.txt` lists handlers no version-16 program can run (with the
+executed, when a handler is unclassified, or when a source file's line coverage drops more than 0.5 points below its
+floor in `coverage/components.json` (floors are per file under the prefixes in `COMPONENTS`, so linking more files into
+the reference cannot dilute them; a floored file that is no longer measured fails). `vm-handlers-unreachable.txt` lists handlers no version-16 program can run (with the
 reason); `vm-handlers-gaps.txt` lists reachable ones not yet executed, printed on every run. Current baseline: 411 of
-421 handlers executed (7 unreachable, 3 gaps); line coverage crypto/vm 63.6%, transaction.cpp 73.4%, mc-config.cpp
-40.7%, block.cpp 18.1%. `.github/workflows/conformance-coverage.yml` runs it weekly and on changes to the VM, the
-block code, the emulator or this suite. After adding vectors that reach more code, run
+421 handlers executed (7 unreachable, 3 gaps); line coverage crypto/vm 54.1%, crypto/pq 82.0%, transaction.cpp 66.2%,
+mc-config.cpp 55.6%, block.cpp 34.9%, emulator 82.0%, validate-query.cpp 42.4% (91 floored files).
+`.github/workflows/conformance-coverage.yml` runs it weekly and on changes to the VM, the block code, the emulator,
+the validator or this suite. After adding vectors that reach more code, run
 `handlers.py baseline <report>` and commit the raised baseline.
 
 ## Commands

@@ -38,11 +38,14 @@ class GateTests(unittest.TestCase):
         (self.base / "vm-handlers-gaps.txt").write_text(
             "a.cpp:exec_deep\tneeds a special balance\n"
         )
-        (self.base / "components.json").write_text(json.dumps({"crypto/vm/": 60.0}))
+        (self.base / "components.json").write_text(json.dumps({"crypto/vm/vm.cpp": 60.0}))
 
-    def report(self, handlers: dict[str, bool], vm: float = 60.0) -> Path:
+    def report(
+        self, handlers: dict[str, bool], vm: float = 60.0, extra: dict[str, float] | None = None
+    ) -> Path:
         path = self.base / "report.json"
-        path.write_text(json.dumps({"handlers": handlers, "components": {"crypto/vm/": vm}}))
+        components = {"crypto/vm/vm.cpp": vm, **(extra or {})}
+        path.write_text(json.dumps({"handlers": handlers, "components": components}))
         return path
 
     def good(self) -> dict[str, bool]:
@@ -72,6 +75,33 @@ class GateTests(unittest.TestCase):
     def test_component_drop_beyond_slack_fails(self) -> None:
         self.assertEqual(h.check(self.report(self.good(), vm=60.0 - h.SLACK + 0.01), self.base), 0)
         self.assertEqual(h.check(self.report(self.good(), vm=60.0 - h.SLACK - 0.01), self.base), 1)
+
+    def test_new_file_does_not_dilute_a_floor(self) -> None:
+        extra = {"crypto/vm/newly-linked.cpp": 0.0}
+        self.assertEqual(h.check(self.report(self.good(), extra=extra), self.base), 0)
+
+    def test_file_with_floor_missing_fails(self) -> None:
+        path = self.base / "report.json"
+        path.write_text(json.dumps({"handlers": self.good(), "components": {}}))
+        self.assertEqual(h.check(path, self.base), 1)
+
+    def test_empty_floors_fail(self) -> None:
+        (self.base / "components.json").write_text("{}")
+        self.assertEqual(h.check(self.report(self.good()), self.base), 1)
+
+    def test_summary_rows_read_lines_not_functions(self) -> None:
+        summary = (
+            "Filename  Regions  Missed Regions  Cover  Functions  Missed Functions  Executed"
+            "  Lines  Missed Lines  Cover  Branches  Missed Branches  Cover\n"
+            "crypto/vm/vm.cpp  1200  300  75.00%  100  20  80.00%  2000  900  55.00%"
+            "  400  200  50.00%\n"
+            "crypto/vm/tiny.cpp  4  1  75.00%  2  0  100.00%  10  3  70.00%\n"
+            "tdutils/td/utils/Slice.cpp  10  1  90.00%  2  0  100.00%  30  3  90.00%\n"
+            "TOTAL  1214  302  75.12%  104  20  80.77%  2040  906  55.59%  400  200  50.00%\n"
+        )
+        self.assertEqual(
+            h.file_lines(summary), {"crypto/vm/vm.cpp": (2000, 900), "crypto/vm/tiny.cpp": (10, 3)}
+        )
 
     def test_listed_handler_needs_a_reason(self) -> None:
         (self.base / "vm-handlers-gaps.txt").write_text("a.cpp:exec_deep\n")
