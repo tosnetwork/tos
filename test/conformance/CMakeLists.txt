@@ -22,12 +22,17 @@ target_link_options(conformance-ref PRIVATE -Wl,--exclude-libs,ALL)
 add_executable(conformance-ref-cli ${CONFORMANCE_REF_DIR}/conformance-ref-cli.cpp)
 target_link_libraries(conformance-ref-cli PRIVATE conformance-ref)
 
+set(CONFORMANCE_VECTORS_DIR "" CACHE PATH "Checkout of the conformance vectors repository at the commit pinned in test/conformance/VECTORS")
+
 # The runner's own checks, then every frozen fixture against the reference built from this tree. A
 # behaviour change fails here until the fixtures are regenerated in the same change.
 add_test(NAME conformance-runner
   COMMAND ${Python3_EXECUTABLE} -B -m unittest discover -s ${CONFORMANCE_DIR}/runner -p "test_*.py" -t ${CONFORMANCE_DIR}/runner
   WORKING_DIRECTORY ${CONFORMANCE_DIR}/runner)
 set_tests_properties(conformance-runner PROPERTIES LABELS "conformance" TIMEOUT 300)
+if (CONFORMANCE_VECTORS_DIR)
+  set_tests_properties(conformance-runner PROPERTIES ENVIRONMENT "CONFORMANCE_VECTORS_DIR=${CONFORMANCE_VECTORS_DIR}")
+endif()
 add_test(NAME conformance-vectors
   COMMAND ${Python3_EXECUTABLE} -B ${CONFORMANCE_DIR}/runner/conformance.py run
     --target $<TARGET_FILE:conformance-ref-cli> ${CONFORMANCE_DIR}/vectors)
@@ -35,7 +40,6 @@ set_tests_properties(conformance-vectors PROPERTIES LABELS "conformance" TIMEOUT
 
 # The external vectors repository pinned in VECTORS (fetch-vectors.sh checks it out). Its tests check the
 # pin first, then run every fixture there. Without a checkout they are reported as skipped, not passed.
-set(CONFORMANCE_VECTORS_DIR "" CACHE PATH "Checkout of the conformance vectors repository at the commit pinned in test/conformance/VECTORS")
 if (CONFORMANCE_VECTORS_DIR)
   add_test(NAME conformance-vectors-pin
     COMMAND ${Python3_EXECUTABLE} -B ${CONFORMANCE_DIR}/runner/vectors_pin.py check ${CONFORMANCE_VECTORS_DIR})

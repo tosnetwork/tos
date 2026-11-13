@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -45,8 +46,22 @@ def context(**changes: Any) -> dict[str, Any]:
     return base
 
 
+def family_path(family: str) -> Path | None:
+    """In the tree, or in the external vectors checkout named by CONFORMANCE_VECTORS_DIR."""
+    candidates = [FIXTURES / f"{family}.jsonl"]
+    external = os.environ.get("CONFORMANCE_VECTORS_DIR")
+    if external:
+        candidates.append(Path(external) / "get_method" / "fixtures" / f"{family}.jsonl")
+    return next((p for p in candidates if p.exists()), None)
+
+
 def fixtures(family: str) -> dict[str, dict[str, Any]]:
-    loaded = c.load_family(FIXTURES / f"{family}.jsonl")
+    path = family_path(family)
+    if path is None:
+        raise unittest.SkipTest(
+            f"{family}: in the external vectors repository; set CONFORMANCE_VECTORS_DIR"
+        )
+    loaded = c.load_family(path)
     return {
         cast(str, f["metadata"]["fixture_id"]): cast(dict[str, Any], f["effects"])
         for f in loaded.fixtures
