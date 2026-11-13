@@ -13,6 +13,7 @@
 #include "adnl/adnl-network-manager.h"
 #include "adnl/adnl-node-id.hpp"
 #include "adnl/adnl-packet.h"
+#include "adnl/adnl-peer-table.h"
 #include "adnl/adnl-peer.h"
 #include "adnl/adnl.h"
 #include "adnl/decrypt-admission.h"
@@ -387,7 +388,10 @@ class RecordingPeerPair : public adnl::AdnlPeerPair {
  public:
   explicit RecordingPeerPair(std::shared_ptr<ChannelRecord> record) : record_(std::move(record)) {
   }
-  void receive_packet_from_channel(adnl::AdnlChannelIdShort, adnl::AdnlPacket, td::uint64) override {
+  void receive_packet_from_channel(adnl::AdnlChannelIdShort, adnl::AdnlPacket packet, td::uint64) override {
+    record_->decrypted = true;
+    // A channel packet is authenticated by the channel key, not by a packet signature.
+    record_->received = "{\"packet\":" + packet_json(packet, "null") + "}";
   }
   void receive_packet_checked(adnl::AdnlPacket) override {
   }
@@ -449,8 +453,9 @@ class RecordingConnection : public adnl::AdnlNetworkConnection {
 }  // namespace
 
 // AdnlChannel::create from the local and peer channel keys and ids: the channel ids, and optionally one
-// inbound datagram decrypted by the channel (AdnlChannelImpl::decrypt) and one packet encrypted by it
-// (AdnlChannelImpl::send_message), on a single-threaded scheduler.
+// inbound datagram and one packet encrypted by the channel (AdnlChannelImpl::send_message), on a
+// single-threaded scheduler. The datagram goes through the node's peer table, with the channel registered
+// under its inbound id, to AdnlChannelImpl::receive; a drop is the node's logged reason.
 td::Result<std::string> op_adnl_channel(td::JsonObject &ctx) {
   TRY_RESULT(local_key, bits256_field(ctx, "local_channel_key"));
   TRY_RESULT(peer_key, bits256_field(ctx, "peer_channel_key"));
@@ -467,16 +472,21 @@ td::Result<std::string> op_adnl_channel(td::JsonObject &ctx) {
     TRY_RESULT_ASSIGN(to_send, hex_field(ctx, "send"));
   }
 
+  TRY_RESULT(source, datagram_source());
+
+  NodeLog log;
   auto record = std::make_shared<ChannelRecord>();
+  auto edge_record = std::make_shared<EdgeNetworkManager::Record>();
   adnl::AdnlChannelIdShort out_id;
   adnl::AdnlChannelIdShort in_id;
   td::Status create_error;
-  std::string received = "null";
   {
     td::actor::Scheduler scheduler({0});
     td::actor::ActorOwn<RecordingPeerPair> pair;
     td::actor::ActorOwn<RecordingConnection> conn;
     td::actor::ActorOwn<adnl::AdnlChannel> channel;
+    td::actor::ActorOwn<adnl::Adnl> table;
+    td::actor::ActorOwn<EdgeNetworkManager> edge;
     scheduler.run_in_context([&] {
       pair = td::actor::create_actor<RecordingPeerPair>("pair", record);
       conn = td::actor::create_actor<RecordingConnection>("conn", record);
@@ -488,37 +498,38 @@ td::Result<std::string> op_adnl_channel(td::JsonObject &ctx) {
         return;
       }
       channel = created.move_as_ok();
-      auto &impl = static_cast<adnl::AdnlChannelImpl &>(channel.get().get_actor_unsafe());
-      if (has_datagram) {
-        // AdnlPeerTableImpl::receive_packet routes by the first 32 bytes before the channel sees the rest.
-        if (datagram.size() < 32) {
-          received = "{\"reason\":" + quote(reason_class("message too short")) + "}";
-        } else if (td::Slice(datagram).truncate(32) != in_id.as_slice()) {
-          received = "{\"reason\":" + quote(reason_class("unknown channel")) + "}";
-        } else {
-          impl.decrypt(td::BufferSlice(td::Slice(datagram).substr(32)),
-                       td::PromiseCreator::lambda([&](td::Result<adnl::AdnlPacket> packet) {
-                         record->decrypted = true;
-                         if (packet.is_error()) {
-                           received = "{\"reason\":" + quote(reason_class(packet.error().message())) + "}";
-                           return;
-                         }
-                         // A channel packet is authenticated by the channel key, not by a packet signature.
-                         received = "{\"packet\":" + packet_json(packet.ok(), "null") + "}";
-                       }));
-          if (!record->decrypted) {
-            received = "{\"reason\":\"unclassified\"}";
-          }
-        }
-      }
       if (has_send) {
+        auto &impl = static_cast<adnl::AdnlChannelImpl &>(channel.get().get_actor_unsafe());
         impl.send_message(0, conn.get(), td::BufferSlice(to_send));
       }
+      if (has_datagram) {
+        // The node's peer table routes the datagram by its first 32 bytes; the channel is registered
+        // under its inbound id, as the peer pair that creates it registers it.
+        table = adnl::Adnl::create("", td::actor::ActorId<tos::keyring::Keyring>{});
+        edge = td::actor::create_actor<EdgeNetworkManager>("edge", edge_record);
+        td::actor::send_closure(table, &adnl::Adnl::register_network_manager, edge.get());
+        td::actor::send_closure(td::actor::actor_dynamic_cast<adnl::AdnlPeerTable>(table.get()),
+                                &adnl::AdnlPeerTable::register_channel, in_id, adnl::AdnlNodeIdShort{local_id},
+                                channel.get());
+      }
     });
-    for (int i = 0; i < 100 && has_send && !record->sent && create_error.is_ok(); i++) {
+    bool delivered = false;
+    for (int round = 0; round < kMaxRounds && create_error.is_ok(); ++round) {
       scheduler.run(0);
+      if (has_datagram && !delivered && edge_record->installed) {
+        delivered = true;
+        scheduler.run_in_context(
+            [&] { td::actor::send_closure(edge, &EdgeNetworkManager::deliver, source, td::BufferSlice(datagram)); });
+        continue;
+      }
+      const bool received_done = !has_datagram || (delivered && (record->decrypted || log.contains(kDropMarker)));
+      if (received_done && (!has_send || record->sent)) {
+        break;
+      }
     }
     scheduler.run_in_context([&] {
+      edge.reset();
+      table.reset();
       channel.reset();
       conn.reset();
       pair.reset();
@@ -530,6 +541,16 @@ td::Result<std::string> op_adnl_channel(td::JsonObject &ctx) {
   }
   if (has_send && !record->sent) {
     return td::Status::Error("the channel did not hand the encrypted datagram to its connection");
+  }
+  std::string received = "null";
+  if (has_datagram) {
+    if (record->decrypted) {
+      received = record->received;
+    } else if (log.contains(kDropMarker)) {
+      received = "{\"reason\":" + quote(reason_class(log.first_after(kDropMarker))) + "}";
+    } else {
+      return td::Status::Error("the node neither dropped nor delivered the channel datagram");
+    }
   }
   return "{\"outcome\":\"channel\",\"in_id\":" + quote(hex(in_id.as_slice())) +
          ",\"out_id\":" + quote(hex(out_id.as_slice())) + ",\"received\":" + received +

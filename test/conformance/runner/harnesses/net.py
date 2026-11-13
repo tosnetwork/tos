@@ -34,7 +34,6 @@ REASONS = frozenset(
         "tl_negative_flags",
         "datagram_short",
         "unknown_destination",
-        "unknown_channel",
         "ciphertext_short",
         "digest_mismatch",
         "invalid_signature",

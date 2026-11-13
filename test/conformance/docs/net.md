@@ -34,7 +34,7 @@ harnesses.
 | `adnl_message` | `message` (TL `adnl.Message`) | type, fields, the node's `size()` accounting, canonical bytes | `AdnlMessage(tl)` |
 | `adnl_packet` | `contents` (TL `adnl.packetContents`) | every extracted field, `to_sign`, canonical bytes, `signature_check` against a full source | `AdnlPacket::create` (with `run_basic_checks`), `to_sign`, `tl`, the full source's encryptor |
 | `adnl_datagram` | receiver `private_key` (Ed25519), `datagram` | the received packet, or the refusal the node logged | the node's inbound path run in-process: `AdnlPeerTableImpl::receive_packet`, `AdnlLocalId::receive` (admission, keyring decryption), `receive_decrypted_packet` and the new `AdnlPeerPairImpl::receive_packet` up to its signature check, for a receiver that knows no peer yet (see below) |
-| `adnl_channel` | local channel private key, peer channel public key, local and peer ids, optional inbound `datagram`, optional packet to `send` | `in_id`, `out_id`, the decrypted packet or its refusal, the datagram the channel emits | `AdnlChannel::create`, `AdnlChannelImpl::decrypt`, `AdnlChannelImpl::send_message` on a single-threaded scheduler, with recording doubles for the peer pair and the connection |
+| `adnl_channel` | local channel private key, peer channel public key, local and peer ids, optional inbound `datagram`, optional packet to `send` | `in_id`, `out_id`, the decrypted packet or its refusal, the datagram the channel emits | `AdnlChannel::create`, the node's peer table routing the datagram to `AdnlChannelImpl::receive`, `AdnlChannelImpl::send_message` on a single-threaded scheduler, with recording doubles for the peer pair, the connection and the socket |
 | `preauth_source` | `address` | the source key | `preauth_source` (IPv4 address, IPv6 /64, port cleared) |
 | `preauth_gate` | `max_sources`, source/process/local budgets, `events` (admit an address, release a ticket) | per event `admitted`, `released` or a refusal class; table size | `PreauthGate::admit`, `DecryptBudget` (periods of at least 60 s, so no token refills while a context runs) |
 | `overlay_id` | `name` | short id, the overlay public key | `OverlayIdFull::compute_short_id` |
@@ -102,7 +102,6 @@ the privacy rules forbid): those show as no delivery and no drop.
 | `tl_negative_flags` | `can't be negative` | `adnl-packet/negative-flags` |
 | `datagram_short` | `message too short` | `adnl-channel/bob-short` |
 | `unknown_destination` | `unknown dst` | `adnl-datagram/other-destination` |
-| `unknown_channel` | `unknown channel` | `adnl-channel/bob-unknown-channel` |
 | `ciphertext_short` | `message is too short` | `adnl-channel/bob-ciphertext-short` |
 | `digest_mismatch` | `sha256 mismatch after decryption` | `adnl-channel/bob-body-flipped` |
 | `invalid_signature` | `Wrong signature` | `adnl-datagram/unsigned` |
@@ -158,12 +157,13 @@ harness error. Each context gets a fresh peer table, keyring and local id; the n
 decrypt budget (a burst of 4096, refilled at 4096 per second) is shared by all contexts of one process,
 which a run of a few thousand datagram contexts per second would reach.
 
-`adnl_channel` still routes an inbound datagram the way the peer table does instead of running it: run
-through the node's peer table, a datagram whose first 32 bytes name no local id and no registered channel
-is logged as `unknown dst`, so `adnl-channel/bob-unknown-channel` would change from `unknown_channel` to
-`unknown_destination`, and the `unknown_channel` class would be reached by no fixture. The wording
-`unknown channel` is the harness's, not the node's; whether to adopt the node's class is an open
-decision.
+`adnl_channel` routes its inbound datagram through the same peer table: the channel is registered under
+its inbound id (`register_channel`, as the peer pair that creates it does), the socket stand-in hands the
+datagram to the table, and the channel's own `receive` decrypts it and passes the packet to the recording
+peer pair, or logs the drop. Both datagram and channel routing therefore run the node's
+`AdnlPeerTableImpl::receive_packet`; a datagram whose first 32 bytes name neither a local id nor a
+registered channel is the node's `unknown dst` (`adnl-channel/bob-unknown-channel`, class
+`unknown_destination`).
 
 Not reachable through the wire and therefore not in the table: `Too big string found` (a 64-bit length
 above the address space, which a 64-bit build never sees), `flag one_message is set, but the number of

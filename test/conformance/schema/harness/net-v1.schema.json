@@ -1662,7 +1662,6 @@
         "tl_truncated",
         "tl_unknown_constructor",
         "unclassified",
-        "unknown_channel",
         "unknown_destination"
       ],
       "description": "refusal classes of kReasonRules in ref/harness-net.cpp, and unclassified"

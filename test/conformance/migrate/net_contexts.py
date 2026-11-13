@@ -1369,7 +1369,7 @@ def add_channels(fam: Family, ref: Reference) -> None:
     fam.add(
         "bob-unknown-channel",
         channel_context(bob, alice, bob_ck, alice_cpub, datagram=flip(wire, 0).hex()),
-        {"received": {"reason": "unknown_channel"}},
+        {"received": {"reason": "unknown_destination"}},
     )
     fam.add(
         "bob-short",

@@ -53,7 +53,6 @@ constexpr ReasonRule kReasonRules[] = {
     // Datagram routing and decryption.
     {"message too short", "datagram_short"},
     {"unknown dst", "unknown_destination"},
-    {"unknown channel", "unknown_channel"},
     {"message is too short", "ciphertext_short"},
     {"sha256 mismatch after decryption", "digest_mismatch"},
     // Keys and signatures.
