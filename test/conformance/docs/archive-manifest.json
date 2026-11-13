@@ -1,0 +1,319 @@
+{
+ "schema": 1,
+ "generated": "2026-11-13",
+ "replay_commit": "9d335a2d9",
+ "note": "Inputs and outputs of the full offline archive replays (docs/archive.md). Paths are on the replay host; outputs stay there.",
+ "sources": [
+  {
+   "source": "epoch-5",
+   "tool_sha256": "76718d8792f37d9bcf87c99bd8ea29aa531ba448d165d09827e86b8c746ca422",
+   "packages": [
+    {
+     "root": "/datax/epoch5-archive/node-a-genesis-packages",
+     "glob": "*.pack",
+     "sha256_list": "/datax/conformance-archive-20261113/inputs/epoch-5/node-a-genesis-packages.SHA256SUMS",
+     "sha256_list_sha256": "b82fbd26a09b23a375f51679a127705ffb3f8dbcd3e67fb17c0f81b191ae43f4",
+     "packages": 4872,
+     "bytes": 3766451515,
+     "packages_digest": "5625ce83a6ef4bf367275ab20dadc4345b49f63b8c818ad1ccf5968c212b7882",
+     "verified": true,
+     "packages_below_base": null
+    },
+    {
+     "root": "/datax/epoch5-archive/node-b-refreshed-packages",
+     "glob": "*.pack",
+     "sha256_list": "/datax/conformance-archive-20261113/inputs/epoch-5/node-b-refreshed-packages.SHA256SUMS",
+     "sha256_list_sha256": "5a206a714f96ef6e37847eb537e36fe112e86165d3fa718358229fbaaad84d64",
+     "packages": 293,
+     "bytes": 229395839,
+     "packages_digest": "733b4fd15675434a8f39d2282578a55124d3ceddba250dced527556a37ab92ff",
+     "verified": true,
+     "packages_below_base": null
+    }
+   ],
+   "cell_packages": [
+    {
+     "root": "/datax/epoch5-archive/node-a-genesis-packages",
+     "glob": "key*",
+     "sha256_list": "/datax/conformance-archive-20261113/inputs/epoch-5/node-a-genesis-packages.SHA256SUMS",
+     "sha256_list_sha256": "b82fbd26a09b23a375f51679a127705ffb3f8dbcd3e67fb17c0f81b191ae43f4",
+     "packages": 2,
+     "bytes": 207169,
+     "packages_digest": "df620d71de76e6a18297f21e94c5092ed3d9b4ad8620db2870be95bb339c2176",
+     "verified": true,
+     "packages_below_base": null
+    },
+    {
+     "root": "/datax/epoch5-archive/node-b-refreshed-packages",
+     "glob": "key*",
+     "sha256_list": "/datax/conformance-archive-20261113/inputs/epoch-5/node-b-refreshed-packages.SHA256SUMS",
+     "sha256_list_sha256": "5a206a714f96ef6e37847eb537e36fe112e86165d3fa718358229fbaaad84d64",
+     "packages": 1,
+     "bytes": 48259,
+     "packages_digest": "73eb0f154a754d895f1ca8f1e2f577325b0f3484b8948086fb29d4899d19fcce",
+     "verified": true,
+     "packages_below_base": null
+    }
+   ],
+   "zerostate": {
+    "path": "/datax/conformance-archive-20261113/inputs/epoch-5/zerostate.boc",
+    "bytes": 17816,
+    "sha256": "b537517c29a2c3767d65499e90200c612b273c3e0266120d364e1164318bd5b2"
+   },
+   "basestate": {
+    "path": "/datax/conformance-archive-20261113/inputs/epoch-5/basestate0.boc",
+    "bytes": 105,
+    "sha256": "a96f3f19ed9ccfa8f0f597f56e1f24f0d9c0dec57963b2c85f853072464c0091"
+   },
+   "command": [
+    "build/test/conformance/conformance-archive-replay",
+    "--out",
+    "/datax/conformance-archive-20261113/epoch-5-final2",
+    "--source",
+    "epoch-5",
+    "--packs",
+    "/datax/conformance-archive-20261113/epoch-5-final2/packs.list",
+    "--cell-packs",
+    "/datax/conformance-archive-20261113/epoch-5-final2/cell-packs.list",
+    "--zerostate",
+    "/datax/conformance-archive-20261113/inputs/epoch-5/zerostate.boc",
+    "--basestate",
+    "/datax/conformance-archive-20261113/inputs/epoch-5/basestate0.boc",
+    "--export",
+    "/datax/conformance-archive-20261113/epoch-5-final2/export",
+    "--export-from",
+    "117700",
+    "--export-to",
+    "117950",
+    "--export-limit",
+    "5000"
+   ],
+   "verify_seconds": 5,
+   "replay_seconds": 380,
+   "outputs": {
+    "blocks.jsonl": {
+     "bytes": 250966860,
+     "sha256": "e3cd7da795e270845913832678517ca965db5becf0e29e1ec68581850cfd5dbf",
+     "path": "/datax/conformance-archive-20261113/epoch-5-final2/blocks.jsonl"
+    },
+    "summary.json": {
+     "bytes": 1300,
+     "sha256": "014d262caf40d1c0acd02d5783733c308289dfe97a91aad965aaa78a342f83b5",
+     "path": "/datax/conformance-archive-20261113/epoch-5-final2/summary.json"
+    },
+    "export": {
+     "path": "/datax/conformance-archive-20261113/epoch-5-final2/export",
+     "contexts": 562,
+     "contexts.jsonl": {
+      "bytes": 495003,
+      "sha256": "5a42284359d3a969e0e9f17c97c39e4822191b20b0308035d0dd905333a0379c"
+     },
+     "contexts.blobs.json": {
+      "bytes": 9047524,
+      "sha256": "ff2802b8173b63b1377559813b2a525f0a23403681ac02e0e3f9385c6a9c721f"
+     }
+    }
+   },
+   "summary": {
+    "packages": 5165,
+    "package_entries": 1029542,
+    "block_entries": 514762,
+    "duplicate_entries": 0,
+    "other_entries": {
+     "proof": 256798,
+     "prooflink": 257982
+    },
+    "other_shards": {},
+    "package_errors": [],
+    "conflicts": [],
+    "masterchain": {
+     "indexed": 256782,
+     "replayed": 256782,
+     "ok": 254736,
+     "mismatched": 0,
+     "refused": 2046,
+     "absent": 5967,
+     "unlinked_starts": 1,
+     "full_mode": 242333,
+     "hydrated_mode": 14449,
+     "not_replayed": {}
+    },
+    "shardchain": {
+     "indexed": 257980,
+     "replayed": 257980,
+     "ok": 257978,
+     "mismatched": 0,
+     "refused": 2,
+     "absent": 5998,
+     "unlinked_starts": 1,
+     "full_mode": 257979,
+     "hydrated_mode": 1,
+     "not_replayed": {}
+    },
+    "transactions": {
+     "onchain": 530098,
+     "executed": 526422,
+     "matched": 526422,
+     "mismatched": 0,
+     "refused": 3676,
+     "skipped_after_mismatch": 0,
+     "not_executed": 0,
+     "ordinary": 16403,
+     "tick": 255282,
+     "tock": 255282
+    },
+    "account_state_checks": 484982,
+    "shard_top_checks": 256782,
+    "exported_contexts": 562,
+    "mismatches": 0,
+    "mismatch_kinds": {},
+    "refusal_reasons": {
+     "missing data: account <hash> reads a pruned cell": 547,
+     "missing data: previous-block context reads a pruned cell": 1500,
+     "missing masterchain context 248300": 2
+    },
+    "gaps": [
+     "-1:242334-248300 (5967 blocks, absent from every package)",
+     "0:243423-249420 (5998 blocks, absent from every package)"
+    ],
+    "gave_up": false,
+    "max_mismatches": 5,
+    "wall_seconds": 375
+   }
+  },
+  {
+   "source": "epoch-6",
+   "tool_sha256": "76718d8792f37d9bcf87c99bd8ea29aa531ba448d165d09827e86b8c746ca422",
+   "packages": [
+    {
+     "root": "/datax/e6-remote-reval-20261105/archive-packs",
+     "glob": "*.pack",
+     "sha256_list": "/datax/conformance-archive-20261113/inputs/epoch-6/archive-packs.SHA256SUMS",
+     "sha256_list_sha256": "35e48c146c8b7c75538eb52e3e79ad3d933bcc0416f8feec4f0902b879b5463c",
+     "packages": 10860,
+     "bytes": 8429454642,
+     "packages_digest": "35e48c146c8b7c75538eb52e3e79ad3d933bcc0416f8feec4f0902b879b5463c",
+     "verified": true,
+     "packages_below_base": null
+    }
+   ],
+   "cell_packages": [],
+   "zerostate": {
+    "path": "/datax/conformance-archive-20261113/inputs/epoch-6/zerostate.boc",
+    "bytes": 17911,
+    "sha256": "3b374df5ebd18368d4bf0eb374704771daf8dacd85175605f3bfd1c7a922a039"
+   },
+   "basestate": {
+    "path": "/datax/conformance-archive-20261113/inputs/epoch-6/basestate0.boc",
+    "bytes": 105,
+    "sha256": "9822dbb3a017df7ae344140aa9502ada1f7749a2025f2f5b229d8dda7a3d1c9a"
+   },
+   "command": [
+    "build/test/conformance/conformance-archive-replay",
+    "--out",
+    "/datax/conformance-archive-20261113/epoch-6-final2",
+    "--source",
+    "epoch-6",
+    "--packs",
+    "/datax/conformance-archive-20261113/epoch-6-final2/packs.list",
+    "--zerostate",
+    "/datax/conformance-archive-20261113/inputs/epoch-6/zerostate.boc",
+    "--basestate",
+    "/datax/conformance-archive-20261113/inputs/epoch-6/basestate0.boc",
+    "--export",
+    "/datax/conformance-archive-20261113/epoch-6-final2/export",
+    "--export-from",
+    "1",
+    "--export-to",
+    "2000",
+    "--export-limit",
+    "5000"
+   ],
+   "verify_seconds": 16,
+   "replay_seconds": 264,
+   "outputs": {
+    "blocks.jsonl": {
+     "bytes": 530450431,
+     "sha256": "48a74d2cea6addb5e6dec4910d76c1f718e8c3dcc3e28f73004fd56ecd6301e4",
+     "path": "/datax/conformance-archive-20261113/epoch-6-final2/blocks.jsonl"
+    },
+    "summary.json": {
+     "bytes": 1010,
+     "sha256": "b01b403f881dc8b3006b4b9704a8a7ea9f834337e14d11ce6029611920cead5b",
+     "path": "/datax/conformance-archive-20261113/epoch-6-final2/summary.json"
+    },
+    "export": {
+     "path": "/datax/conformance-archive-20261113/epoch-6-final2/export",
+     "contexts": 4124,
+     "contexts.jsonl": {
+      "bytes": 3286224,
+      "sha256": "cdc16827e5571539422151c22e2979fbd81a0f2d9c62cef7d46c4c05fe5fa014"
+     },
+     "contexts.blobs.json": {
+      "bytes": 50963688,
+      "sha256": "e250b0fc1301773b5b524775f88ead655bda1b2d2cbe61927de8b2d296a2a1e5"
+     }
+    }
+   },
+   "summary": {
+    "packages": 10860,
+    "package_entries": 2177132,
+    "block_entries": 1088566,
+    "duplicate_entries": 0,
+    "other_entries": {
+     "proof": 540999,
+     "prooflink": 547567
+    },
+    "other_shards": {},
+    "package_errors": [],
+    "conflicts": [],
+    "masterchain": {
+     "indexed": 540999,
+     "replayed": 540999,
+     "ok": 540999,
+     "mismatched": 0,
+     "refused": 0,
+     "absent": 0,
+     "unlinked_starts": 0,
+     "full_mode": 540999,
+     "hydrated_mode": 0,
+     "not_replayed": {}
+    },
+    "shardchain": {
+     "indexed": 547567,
+     "replayed": 547567,
+     "ok": 547567,
+     "mismatched": 0,
+     "refused": 0,
+     "absent": 0,
+     "unlinked_starts": 0,
+     "full_mode": 547567,
+     "hydrated_mode": 0,
+     "not_replayed": {}
+    },
+    "transactions": {
+     "onchain": 1116278,
+     "executed": 1116278,
+     "matched": 1116278,
+     "mismatched": 0,
+     "refused": 0,
+     "skipped_after_mismatch": 0,
+     "not_executed": 0,
+     "ordinary": 34280,
+     "tick": 540999,
+     "tock": 540999
+    },
+    "account_state_checks": 1082302,
+    "shard_top_checks": 540999,
+    "exported_contexts": 4124,
+    "mismatches": 0,
+    "mismatch_kinds": {},
+    "refusal_reasons": {},
+    "gaps": [],
+    "gave_up": false,
+    "max_mismatches": 5,
+    "wall_seconds": 261
+   }
+  }
+ ]
+}

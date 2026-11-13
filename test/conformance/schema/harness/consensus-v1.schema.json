@@ -1,0 +1,1121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conformance/harness/consensus-v1",
+  "title": "consensus harness: deterministic consensus operations",
+  "$defs": {
+    "context": {
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "enum": [
+            "quorum",
+            "weight_total",
+            "protocol_version",
+            "session",
+            "validator_set",
+            "vote",
+            "finality",
+            "decode_proof",
+            "proof_link",
+            "key_block_context"
+          ],
+          "description": "operation; each op requires its own subset of the fields below (runner/harnesses/consensus.py OP_REQUIRED)"
+        },
+        "total_weight": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit decimal"
+        },
+        "signed_weight": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit decimal"
+        },
+        "weights": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]{0,19})$",
+            "description": "unsigned 64-bit decimal"
+          }
+        },
+        "protocol_version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "global_id": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "options": {
+          "type": "object",
+          "required": [
+            "proto_version",
+            "new_catchain_ids",
+            "idle_timeout",
+            "max_deps",
+            "max_serialized_block_size",
+            "block_hash_covers_data",
+            "max_block_height_coeff",
+            "debug_disable_db",
+            "round_candidates",
+            "next_candidate_delay",
+            "round_attempt_duration",
+            "max_round_attempts",
+            "max_block_size",
+            "max_collated_data_size"
+          ],
+          "additionalProperties": false,
+          "description": "ConfigParam 29 validator session options",
+          "properties": {
+            "proto_version": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "new_catchain_ids": {
+              "type": "boolean"
+            },
+            "idle_timeout": {
+              "type": "number"
+            },
+            "max_deps": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "max_serialized_block_size": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "block_hash_covers_data": {
+              "type": "boolean"
+            },
+            "max_block_height_coeff": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "debug_disable_db": {
+              "type": "boolean"
+            },
+            "round_candidates": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "next_candidate_delay": {
+              "type": "number"
+            },
+            "round_attempt_duration": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "max_round_attempts": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "max_block_size": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "max_collated_data_size": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          }
+        },
+        "simplex_config_hash": {
+          "$ref": "../common-v1.schema.json#/$defs/hash"
+        },
+        "shard": {
+          "type": "object",
+          "required": [
+            "workchain",
+            "shard"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "workchain": {
+              "type": "integer",
+              "minimum": -2147483648,
+              "maximum": 2147483647
+            },
+            "shard": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{16}$"
+            }
+          }
+        },
+        "catchain_seqno": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "vertical_seqno": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "last_key_block_seqno": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "validators": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "validator_id",
+                  "key_id",
+                  "algorithm_id",
+                  "public_key",
+                  "weight",
+                  "adnl"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "validator_id": {
+                    "$ref": "../common-v1.schema.json#/$defs/hash"
+                  },
+                  "key_id": {
+                    "$ref": "../common-v1.schema.json#/$defs/hash"
+                  },
+                  "algorithm_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  },
+                  "public_key": {
+                    "$ref": "../common-v1.schema.json#/$defs/hex"
+                  },
+                  "weight": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,19})$",
+                    "description": "unsigned 64-bit decimal"
+                  },
+                  "adnl": {
+                    "$ref": "../common-v1.schema.json#/$defs/hash"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "ed25519",
+                  "weight",
+                  "adnl"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "ed25519": {
+                    "$ref": "../common-v1.schema.json#/$defs/hash"
+                  },
+                  "weight": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,19})$",
+                    "description": "unsigned 64-bit decimal"
+                  },
+                  "adnl": {
+                    "$ref": "../common-v1.schema.json#/$defs/hash"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "session_id": {
+          "$ref": "../common-v1.schema.json#/$defs/hash"
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "candidate": {
+          "$ref": "../common-v1.schema.json#/$defs/hex",
+          "description": "TL consensus.CandidateHashData"
+        },
+        "final": {
+          "type": "boolean"
+        },
+        "block": {
+          "type": "object",
+          "required": [
+            "workchain",
+            "shard",
+            "seqno",
+            "root_hash",
+            "file_hash"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "workchain": {
+              "type": "integer",
+              "minimum": -2147483648,
+              "maximum": 2147483647
+            },
+            "shard": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{16}$"
+            },
+            "seqno": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "root_hash": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            "file_hash": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            }
+          }
+        },
+        "public_key": {
+          "$ref": "../common-v1.schema.json#/$defs/hex"
+        },
+        "signature": {
+          "$ref": "../common-v1.schema.json#/$defs/hex"
+        },
+        "expected_session_id": {
+          "$ref": "../common-v1.schema.json#/$defs/hash"
+        },
+        "role": {
+          "enum": [
+            "final",
+            "approve"
+          ]
+        },
+        "signature_set": {
+          "type": "object",
+          "required": [
+            "catchain_seqno",
+            "validator_set_hash",
+            "session_id",
+            "slot",
+            "candidate",
+            "signatures"
+          ],
+          "additionalProperties": false,
+          "description": "fields of a block_signatures_simplex_pq carrier",
+          "properties": {
+            "catchain_seqno": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "validator_set_hash": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "session_id": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            "slot": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "candidate": {
+              "$ref": "../common-v1.schema.json#/$defs/hex"
+            },
+            "signatures": {
+              "type": "array",
+              "maxItems": 1024,
+              "items": {
+                "type": "object",
+                "required": [
+                  "validator_id",
+                  "algorithm_id",
+                  "signature"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "validator_id": {
+                    "$ref": "../common-v1.schema.json#/$defs/hash"
+                  },
+                  "algorithm_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  },
+                  "signature": {
+                    "$ref": "../common-v1.schema.json#/$defs/hex"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "claimed_weight": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit decimal"
+        },
+        "key_block": {
+          "type": "object",
+          "required": [
+            "workchain",
+            "shard",
+            "seqno",
+            "root_hash",
+            "file_hash"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "workchain": {
+              "type": "integer",
+              "minimum": -2147483648,
+              "maximum": 2147483647
+            },
+            "shard": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{16}$"
+            },
+            "seqno": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "root_hash": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            "file_hash": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            }
+          }
+        },
+        "is_key": {
+          "type": "boolean"
+        },
+        "key_block_proof": {
+          "$ref": "../common-v1.schema.json#/$defs/boc",
+          "description": "BlockProof cell of the governing key block"
+        },
+        "block_proof": {
+          "$ref": "../common-v1.schema.json#/$defs/boc",
+          "description": "BlockProof cell of the block"
+        }
+      }
+    },
+    "effects": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "threshold",
+            "has_quorum"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "quorum"
+            },
+            "threshold": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            },
+            "has_quorum": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "total"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "weight_total"
+            },
+            "total": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "supported",
+            "enable_block_sync",
+            "use_new_db_names",
+            "observers_in_private_overlay",
+            "enable_plumtree_broadcast",
+            "max_supported"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "protocol_version"
+            },
+            "supported": {
+              "type": "boolean"
+            },
+            "enable_block_sync": {
+              "type": "boolean"
+            },
+            "use_new_db_names": {
+              "type": "boolean"
+            },
+            "observers_in_private_overlay": {
+              "type": "boolean"
+            },
+            "enable_plumtree_broadcast": {
+              "type": "boolean"
+            },
+            "max_supported": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "options_hash",
+            "session_config_hash",
+            "session_id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "session"
+            },
+            "options_hash": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            "session_config_hash": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            "session_id": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "validator_set_hash",
+            "total_weight",
+            "threshold"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "validator_set"
+            },
+            "validator_set_hash": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "total_weight": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            },
+            "threshold": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "candidate_hash",
+            "data_to_sign",
+            "signature_check"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "vote"
+            },
+            "candidate_hash": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            "data_to_sign": {
+              "$ref": "../common-v1.schema.json#/$defs/hex"
+            },
+            "signature_check": {
+              "enum": [
+                null,
+                "valid",
+                "invalid",
+                "malformed"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "weight",
+            "total_weight",
+            "threshold"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "finalized"
+            },
+            "weight": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            },
+            "total_weight": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            },
+            "threshold": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "seqno",
+            "root_hash",
+            "file_hash",
+            "state_old_hash",
+            "state_hash",
+            "signature_set",
+            "claimed_weight"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "proof"
+            },
+            "seqno": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "root_hash": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            "file_hash": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            "state_old_hash": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            "state_hash": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            "signature_set": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "final",
+                    "catchain_seqno",
+                    "validator_set_hash",
+                    "session_id",
+                    "slot",
+                    "candidate",
+                    "signatures"
+                  ],
+                  "additionalProperties": false,
+                  "description": "decoded block_signatures_simplex_pq carrier",
+                  "properties": {
+                    "final": {
+                      "type": "boolean"
+                    },
+                    "catchain_seqno": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4294967295
+                    },
+                    "validator_set_hash": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4294967295
+                    },
+                    "session_id": {
+                      "$ref": "../common-v1.schema.json#/$defs/hash"
+                    },
+                    "slot": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4294967295
+                    },
+                    "candidate": {
+                      "$ref": "../common-v1.schema.json#/$defs/hex"
+                    },
+                    "signatures": {
+                      "type": "array",
+                      "maxItems": 1024,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "validator_id",
+                          "algorithm_id",
+                          "signature"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "validator_id": {
+                            "$ref": "../common-v1.schema.json#/$defs/hash"
+                          },
+                          "algorithm_id": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 65535
+                          },
+                          "signature": {
+                            "$ref": "../common-v1.schema.json#/$defs/hex"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "claimed_weight": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit decimal"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "gen_utime",
+            "expected_session_id",
+            "verified_weight",
+            "total_weight"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "linked"
+            },
+            "gen_utime": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "expected_session_id": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            "verified_weight": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            },
+            "total_weight": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "global_id",
+            "config_global_id",
+            "options",
+            "simplex_config_hash",
+            "protocol_version",
+            "gen_utime",
+            "catchain_seqno",
+            "vertical_seqno",
+            "prev_key_block_seqno",
+            "is_key",
+            "header_validator_set_hash",
+            "validator_set_hash",
+            "total_weight",
+            "validators",
+            "session_id",
+            "validator_path_session_id",
+            "signature_set",
+            "claimed_weight"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "context"
+            },
+            "global_id": {
+              "type": "integer",
+              "minimum": -2147483648,
+              "maximum": 2147483647
+            },
+            "config_global_id": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "integer",
+                  "minimum": -2147483648,
+                  "maximum": 2147483647
+                }
+              ]
+            },
+            "options": {
+              "type": "object",
+              "required": [
+                "proto_version",
+                "new_catchain_ids",
+                "idle_timeout",
+                "max_deps",
+                "max_serialized_block_size",
+                "block_hash_covers_data",
+                "max_block_height_coeff",
+                "debug_disable_db",
+                "round_candidates",
+                "next_candidate_delay",
+                "round_attempt_duration",
+                "max_round_attempts",
+                "max_block_size",
+                "max_collated_data_size"
+              ],
+              "additionalProperties": false,
+              "description": "ConfigParam 29 validator session options",
+              "properties": {
+                "proto_version": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                },
+                "new_catchain_ids": {
+                  "type": "boolean"
+                },
+                "idle_timeout": {
+                  "type": "number"
+                },
+                "max_deps": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                },
+                "max_serialized_block_size": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                },
+                "block_hash_covers_data": {
+                  "type": "boolean"
+                },
+                "max_block_height_coeff": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                },
+                "debug_disable_db": {
+                  "type": "boolean"
+                },
+                "round_candidates": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                },
+                "next_candidate_delay": {
+                  "type": "number"
+                },
+                "round_attempt_duration": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                },
+                "max_round_attempts": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                },
+                "max_block_size": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                },
+                "max_collated_data_size": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                }
+              }
+            },
+            "simplex_config_hash": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            "protocol_version": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "gen_utime": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "catchain_seqno": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "vertical_seqno": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "prev_key_block_seqno": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "is_key": {
+              "type": "boolean"
+            },
+            "header_validator_set_hash": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "validator_set_hash": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "total_weight": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            },
+            "validators": {
+              "type": "array",
+              "maxItems": 1024,
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "validator_id",
+                      "key_id",
+                      "algorithm_id",
+                      "public_key",
+                      "weight",
+                      "adnl"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "validator_id": {
+                        "$ref": "../common-v1.schema.json#/$defs/hash"
+                      },
+                      "key_id": {
+                        "$ref": "../common-v1.schema.json#/$defs/hash"
+                      },
+                      "algorithm_id": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 65535
+                      },
+                      "public_key": {
+                        "$ref": "../common-v1.schema.json#/$defs/hex"
+                      },
+                      "weight": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,19})$",
+                        "description": "unsigned 64-bit decimal"
+                      },
+                      "adnl": {
+                        "$ref": "../common-v1.schema.json#/$defs/hash"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "ed25519",
+                      "weight",
+                      "adnl"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "ed25519": {
+                        "$ref": "../common-v1.schema.json#/$defs/hash"
+                      },
+                      "weight": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,19})$",
+                        "description": "unsigned 64-bit decimal"
+                      },
+                      "adnl": {
+                        "$ref": "../common-v1.schema.json#/$defs/hash"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "session_id": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            "validator_path_session_id": {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            "signature_set": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "final",
+                    "catchain_seqno",
+                    "validator_set_hash",
+                    "session_id",
+                    "slot",
+                    "candidate",
+                    "signatures"
+                  ],
+                  "additionalProperties": false,
+                  "description": "decoded block_signatures_simplex_pq carrier",
+                  "properties": {
+                    "final": {
+                      "type": "boolean"
+                    },
+                    "catchain_seqno": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4294967295
+                    },
+                    "validator_set_hash": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4294967295
+                    },
+                    "session_id": {
+                      "$ref": "../common-v1.schema.json#/$defs/hash"
+                    },
+                    "slot": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4294967295
+                    },
+                    "candidate": {
+                      "$ref": "../common-v1.schema.json#/$defs/hex"
+                    },
+                    "signatures": {
+                      "type": "array",
+                      "maxItems": 1024,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "validator_id",
+                          "algorithm_id",
+                          "signature"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "validator_id": {
+                            "$ref": "../common-v1.schema.json#/$defs/hash"
+                          },
+                          "algorithm_id": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 65535
+                          },
+                          "signature": {
+                            "$ref": "../common-v1.schema.json#/$defs/hex"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "claimed_weight": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit decimal"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "reason"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "refused"
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "^[a-z0-9_]{1,64}$",
+              "description": "stable class of the node's refusal"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

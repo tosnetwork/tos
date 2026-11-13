@@ -1,0 +1,1068 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conformance/harness/crypto-v1",
+  "title": "crypto harness: one cryptographic or consensus-identity function",
+  "description": "inputs must match $defs.operations[scheme + '/' + operation]. Variable-length bytes are base64 (or a blob reference), 32-byte identifiers 64 lowercase hex digits, integers that may exceed 2^53 decimal strings. Effects carry lowercase hex.",
+  "$defs": {
+    "context": {
+      "type": "object",
+      "required": [
+        "scheme",
+        "operation",
+        "inputs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "scheme": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "inputs": {
+          "type": "object",
+          "description": "per operation, see $defs.operations"
+        },
+        "edits": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/edit"
+          },
+          "description": "applied in order to the named byte inputs before the call"
+        }
+      }
+    },
+    "effects": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "verdict"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "verdict"
+            },
+            "verdict": {
+              "enum": [
+                "backend_error",
+                "invalid",
+                "malformed_input",
+                "valid"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "output"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "bytes"
+            },
+            "output": {
+              "$ref": "../common-v1.schema.json#/$defs/hex"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "value"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "integer"
+            },
+            "value": {
+              "$ref": "#/$defs/u64"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "value"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "boolean"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "fields"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "record"
+            },
+            "fields": {
+              "type": "object",
+              "minProperties": 1,
+              "propertyNames": {
+                "pattern": "^[a-z0-9_]{1,64}$"
+              },
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "reason"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "rejected"
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "^[a-z0-9_]{1,64}$"
+            }
+          }
+        }
+      ]
+    },
+    "bytes": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        },
+        {
+          "type": "object",
+          "required": [
+            "blob"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "blob": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      ]
+    },
+    "hex32": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "u64": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]{0,19})$"
+    },
+    "bool": {
+      "type": "boolean"
+    },
+    "decimal": {
+      "type": "string",
+      "pattern": "^[0-9]+(?:\\.[0-9]+)?$"
+    },
+    "descriptor": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "public_key",
+            "weight",
+            "adnl"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "classical"
+            },
+            "public_key": {
+              "$ref": "#/$defs/hex32"
+            },
+            "weight": {
+              "$ref": "#/$defs/u64"
+            },
+            "adnl": {
+              "$ref": "#/$defs/hex32"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "validator_id",
+            "algorithm_id",
+            "key_id",
+            "public_key",
+            "weight",
+            "adnl"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "pq"
+            },
+            "validator_id": {
+              "$ref": "#/$defs/hex32"
+            },
+            "algorithm_id": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "key_id": {
+              "$ref": "#/$defs/hex32"
+            },
+            "public_key": {
+              "$ref": "#/$defs/bytes"
+            },
+            "weight": {
+              "$ref": "#/$defs/u64"
+            },
+            "adnl": {
+              "$ref": "#/$defs/hex32"
+            }
+          }
+        }
+      ]
+    },
+    "validators": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "$ref": "#/$defs/descriptor"
+      }
+    },
+    "validator_set": {
+      "type": "object",
+      "required": [
+        "catchain_seqno",
+        "validators"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "catchain_seqno": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "validators": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1024,
+          "items": {
+            "$ref": "#/$defs/descriptor"
+          }
+        }
+      }
+    },
+    "block_id": {
+      "type": "object",
+      "required": [
+        "workchain",
+        "shard",
+        "seqno",
+        "root_hash",
+        "file_hash"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "workchain": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "shard": {
+          "$ref": "#/$defs/u64"
+        },
+        "seqno": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "root_hash": {
+          "$ref": "#/$defs/hex32"
+        },
+        "file_hash": {
+          "$ref": "#/$defs/hex32"
+        }
+      }
+    },
+    "state8": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/hex32"
+      }
+    },
+    "descriptors": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/bytes"
+      }
+    },
+    "edit": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "input",
+            "op",
+            "offset",
+            "value"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "type": "string"
+            },
+            "op": {
+              "const": "xor"
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1048575
+            },
+            "value": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 255
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "input",
+            "op",
+            "length",
+            "value"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "type": "string"
+            },
+            "op": {
+              "const": "resize"
+            },
+            "length": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65536
+            },
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "input",
+            "op",
+            "value"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "type": "string"
+            },
+            "op": {
+              "const": "fill"
+            },
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            }
+          }
+        }
+      ]
+    },
+    "operations": {
+      "ed25519/verify": {
+        "type": "object",
+        "required": [
+          "message",
+          "public_key",
+          "signature"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "$ref": "#/$defs/bytes"
+          },
+          "public_key": {
+            "$ref": "#/$defs/bytes"
+          },
+          "signature": {
+            "$ref": "#/$defs/bytes"
+          }
+        }
+      },
+      "mldsa44/verify": {
+        "type": "object",
+        "required": [
+          "context",
+          "message",
+          "public_key",
+          "signature"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "$ref": "#/$defs/bytes"
+          },
+          "message": {
+            "$ref": "#/$defs/bytes"
+          },
+          "public_key": {
+            "$ref": "#/$defs/bytes"
+          },
+          "signature": {
+            "$ref": "#/$defs/bytes"
+          }
+        }
+      },
+      "mldsa44/verify_consensus": {
+        "type": "object",
+        "required": [
+          "message",
+          "public_key",
+          "signature",
+          "surface"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "$ref": "#/$defs/bytes"
+          },
+          "public_key": {
+            "$ref": "#/$defs/bytes"
+          },
+          "signature": {
+            "$ref": "#/$defs/bytes"
+          },
+          "surface": {
+            "enum": [
+              "simplex",
+              "validator_election",
+              "validator_config_vote",
+              "config_admin"
+            ]
+          }
+        }
+      },
+      "mldsa44/derive_key_id": {
+        "type": "object",
+        "required": [
+          "algorithm_id",
+          "public_key"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "algorithm_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "public_key": {
+            "$ref": "#/$defs/bytes"
+          }
+        }
+      },
+      "falcon512/verify_padded": {
+        "type": "object",
+        "required": [
+          "message",
+          "public_key",
+          "signature"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "$ref": "#/$defs/bytes"
+          },
+          "public_key": {
+            "$ref": "#/$defs/bytes"
+          },
+          "signature": {
+            "$ref": "#/$defs/bytes"
+          }
+        }
+      },
+      "slhdsa128s/verify": {
+        "type": "object",
+        "required": [
+          "context",
+          "message",
+          "public_key",
+          "signature"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "$ref": "#/$defs/bytes"
+          },
+          "message": {
+            "$ref": "#/$defs/bytes"
+          },
+          "public_key": {
+            "$ref": "#/$defs/bytes"
+          },
+          "signature": {
+            "$ref": "#/$defs/bytes"
+          }
+        }
+      },
+      "lms_fee/verify": {
+        "type": "object",
+        "required": [
+          "message",
+          "public_key",
+          "signature"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "$ref": "#/$defs/bytes"
+          },
+          "public_key": {
+            "$ref": "#/$defs/bytes"
+          },
+          "signature": {
+            "$ref": "#/$defs/bytes"
+          }
+        }
+      },
+      "lms_fee/worst_compressions": {
+        "type": "object",
+        "required": [
+          "message_bytes",
+          "public_key"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "message_bytes": {
+            "$ref": "#/$defs/u64"
+          },
+          "public_key": {
+            "$ref": "#/$defs/bytes"
+          }
+        }
+      },
+      "sha256/digest": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/bytes"
+          }
+        }
+      },
+      "poseidon2/permute": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "$ref": "#/$defs/state8"
+          }
+        }
+      },
+      "poseidon2/manifest_digest": {
+        "type": "object",
+        "required": [],
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "quorum/threshold": {
+        "type": "object",
+        "required": [
+          "total_weight"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "total_weight": {
+            "$ref": "#/$defs/u64"
+          }
+        }
+      },
+      "quorum/has_quorum": {
+        "type": "object",
+        "required": [
+          "signed_weight",
+          "total_weight"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "signed_weight": {
+            "$ref": "#/$defs/u64"
+          },
+          "total_weight": {
+            "$ref": "#/$defs/u64"
+          }
+        }
+      },
+      "validator_session/members": {
+        "type": "object",
+        "required": [
+          "validators"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "validators": {
+            "$ref": "#/$defs/validators"
+          }
+        }
+      },
+      "validator_session/identity": {
+        "type": "object",
+        "required": [
+          "catchain_seqno",
+          "global_id",
+          "last_key_block_seqno",
+          "new_catchain_ids",
+          "shard",
+          "simplex_config_cell_hash",
+          "validator_options_hash",
+          "validators",
+          "vertical_seqno",
+          "workchain"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "catchain_seqno": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "global_id": {
+            "type": "integer",
+            "minimum": -2147483648,
+            "maximum": 2147483647
+          },
+          "last_key_block_seqno": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "new_catchain_ids": {
+            "$ref": "#/$defs/bool"
+          },
+          "shard": {
+            "$ref": "#/$defs/u64"
+          },
+          "simplex_config_cell_hash": {
+            "$ref": "#/$defs/hex32"
+          },
+          "validator_options_hash": {
+            "$ref": "#/$defs/hex32"
+          },
+          "validators": {
+            "$ref": "#/$defs/validators"
+          },
+          "vertical_seqno": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "workchain": {
+            "type": "integer",
+            "minimum": -2147483648,
+            "maximum": 2147483647
+          }
+        }
+      },
+      "validator_session/config_hash": {
+        "type": "object",
+        "required": [
+          "global_id",
+          "simplex_config_cell_hash",
+          "validator_options_hash"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "global_id": {
+            "type": "integer",
+            "minimum": -2147483648,
+            "maximum": 2147483647
+          },
+          "simplex_config_cell_hash": {
+            "$ref": "#/$defs/hex32"
+          },
+          "validator_options_hash": {
+            "$ref": "#/$defs/hex32"
+          }
+        }
+      },
+      "validator_session/options_hash": {
+        "type": "object",
+        "required": [
+          "block_hash_covers_data",
+          "debug_disable_db",
+          "idle_timeout",
+          "max_block_height_coeff",
+          "max_block_size",
+          "max_collated_data_size",
+          "max_deps",
+          "max_round_attempts",
+          "max_serialized_block_size",
+          "new_catchain_ids",
+          "next_candidate_delay",
+          "proto_version",
+          "round_attempt_duration",
+          "round_candidates"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "block_hash_covers_data": {
+            "$ref": "#/$defs/bool"
+          },
+          "debug_disable_db": {
+            "$ref": "#/$defs/bool"
+          },
+          "idle_timeout": {
+            "$ref": "#/$defs/decimal"
+          },
+          "max_block_height_coeff": {
+            "$ref": "#/$defs/u64"
+          },
+          "max_block_size": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "max_collated_data_size": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "max_deps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "max_round_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "max_serialized_block_size": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "new_catchain_ids": {
+            "$ref": "#/$defs/bool"
+          },
+          "next_candidate_delay": {
+            "$ref": "#/$defs/decimal"
+          },
+          "proto_version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "round_attempt_duration": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "round_candidates": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          }
+        }
+      },
+      "pq_bytes/pack": {
+        "type": "object",
+        "required": [
+          "data",
+          "max_bytes"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/bytes"
+          },
+          "max_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1048576
+          }
+        }
+      },
+      "pq_bytes/unpack": {
+        "type": "object",
+        "required": [
+          "boc",
+          "max_bytes"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "boc": {
+            "$ref": "#/$defs/bytes"
+          },
+          "max_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1048576
+          }
+        }
+      },
+      "consensus/simplex_data_to_sign": {
+        "type": "object",
+        "required": [
+          "block_id",
+          "candidate",
+          "final",
+          "session_id",
+          "slot"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "block_id": {
+            "$ref": "#/$defs/block_id"
+          },
+          "candidate": {
+            "$ref": "#/$defs/bytes"
+          },
+          "final": {
+            "$ref": "#/$defs/bool"
+          },
+          "session_id": {
+            "$ref": "#/$defs/hex32"
+          },
+          "slot": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          }
+        }
+      },
+      "block_signatures/fetch": {
+        "type": "object",
+        "required": [
+          "boc"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "boc": {
+            "$ref": "#/$defs/bytes"
+          },
+          "validator_set": {
+            "$ref": "#/$defs/validator_set"
+          }
+        }
+      },
+      "block_signatures/fetch_tl": {
+        "type": "object",
+        "required": [
+          "carrier",
+          "wire"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "carrier": {
+            "enum": [
+              "node",
+              "lite"
+            ]
+          },
+          "wire": {
+            "$ref": "#/$defs/bytes"
+          }
+        }
+      },
+      "config43/parse": {
+        "type": "object",
+        "required": [
+          "boc"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "boc": {
+            "$ref": "#/$defs/bytes"
+          }
+        }
+      },
+      "validator_set/unpack": {
+        "type": "object",
+        "required": [],
+        "additionalProperties": false,
+        "properties": {
+          "descriptors": {
+            "$ref": "#/$defs/descriptors"
+          },
+          "main": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "set": {
+            "$ref": "#/$defs/bytes"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "total_weight": {
+            "$ref": "#/$defs/u64"
+          },
+          "utime_since": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "utime_until": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          }
+        }
+      },
+      "elector/stake_preimage": {
+        "type": "object",
+        "required": [
+          "adnl_addr",
+          "global_id",
+          "max_factor",
+          "src_addr",
+          "stake_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "adnl_addr": {
+            "$ref": "#/$defs/hex32"
+          },
+          "global_id": {
+            "type": "integer",
+            "minimum": -2147483648,
+            "maximum": 2147483647
+          },
+          "max_factor": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "src_addr": {
+            "$ref": "#/$defs/hex32"
+          },
+          "stake_at": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          }
+        }
+      },
+      "elector/config_vote_preimage": {
+        "type": "object",
+        "required": [
+          "global_id",
+          "idx",
+          "proposal_hash",
+          "validator_id",
+          "validator_set_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "global_id": {
+            "type": "integer",
+            "minimum": -2147483648,
+            "maximum": 2147483647
+          },
+          "idx": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "proposal_hash": {
+            "$ref": "#/$defs/hex32"
+          },
+          "validator_id": {
+            "$ref": "#/$defs/hex32"
+          },
+          "validator_set_id": {
+            "$ref": "#/$defs/hex32"
+          }
+        }
+      },
+      "elector/complaint_vote_preimage": {
+        "type": "object",
+        "required": [
+          "complaint_hash",
+          "election_id",
+          "global_id",
+          "idx",
+          "validator_id",
+          "validator_set_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "complaint_hash": {
+            "$ref": "#/$defs/hex32"
+          },
+          "election_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "global_id": {
+            "type": "integer",
+            "minimum": -2147483648,
+            "maximum": 2147483647
+          },
+          "idx": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "validator_id": {
+            "$ref": "#/$defs/hex32"
+          },
+          "validator_set_id": {
+            "$ref": "#/$defs/hex32"
+          }
+        }
+      }
+    }
+  }
+}

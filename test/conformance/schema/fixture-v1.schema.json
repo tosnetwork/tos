@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conformance/fixture-v1",
+  "title": "Conformance fixture, version 1",
+  "description": "One JSON object per line in a family file <harness>/fixtures/<family>.jsonl. A fixture is metadata + context (input) + effects (expected output, filled by the C++ reference). context and effects follow schema/harness/<harness>-v1.schema.json ($defs.context, $defs.effects). See test/conformance/README.md.",
+  "type": "object",
+  "required": ["metadata", "context", "effects"],
+  "additionalProperties": false,
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": ["harness", "harness_version", "fixture_id", "family", "source", "reference_commit"],
+      "additionalProperties": false,
+      "properties": {
+        "harness": {"type": "string", "description": "Name of a schema/harness/<harness>-v1.schema.json"},
+        "harness_version": {"const": 1},
+        "fixture_id": {"type": "string", "pattern": "^[A-Za-z0-9._:/+-]{1,200}$"},
+        "family": {"type": "string", "pattern": "^[a-z0-9-]{1,64}$"},
+        "source": {"type": "string", "pattern": "^(authored|fuzz|replay|migrated:[a-z0-9_./-]+)$"},
+        "reference_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "note": {"type": "string"}
+      }
+    },
+    "context": {"type": "object"},
+    "effects": {"type": "object"}
+  }
+}

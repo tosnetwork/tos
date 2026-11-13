@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conformance/harness/block-v1",
+  "title": "block harness: one block applied to its previous state and re-executed",
+  "$defs": {
+    "context": {
+      "type": "object",
+      "required": ["block", "prev_state"],
+      "additionalProperties": false,
+      "properties": {
+        "block": {"$ref": "../common-v1.schema.json#/$defs/boc", "description": "The block BOC; its bytes are hashed only when it is a masterchain context"},
+        "prev_state": {"$ref": "../common-v1.schema.json#/$defs/boc", "description": "Previous ShardStateUnsplit; may be partial (pruned branches) as long as every cell the procedure reads is present"},
+        "master_block": {"$ref": "../common-v1.schema.json#/$defs/boc", "description": "Original bytes of the masterchain block a shard block references (root and file hash are checked); only with master_state"},
+        "master_state": {"$ref": "../common-v1.schema.json#/$defs/boc", "description": "New state of master_block, the source of a shard block's configuration; only with master_block"}
+      }
+    },
+    "effects": {
+      "oneOf": [
+        {"type": "object", "required": ["outcome", "block_root_hash", "new_state_hash", "transactions"], "additionalProperties": false,
+         "properties": {
+           "outcome": {"const": "accepted"},
+           "block_root_hash": {"$ref": "../common-v1.schema.json#/$defs/hash"},
+           "new_state_hash": {"$ref": "../common-v1.schema.json#/$defs/hash", "description": "Hash of the previous state with the state update applied"},
+           "transactions": {"type": "array", "maxItems": 4096, "description": "Re-executed transactions in account then logical-time order",
+             "items": {"type": "object", "required": ["transaction_hash", "account_hash"], "additionalProperties": false,
+               "properties": {"transaction_hash": {"$ref": "../common-v1.schema.json#/$defs/hash"}, "account_hash": {"$ref": "../common-v1.schema.json#/$defs/hash"}}}}
+         }},
+        {"type": "object", "required": ["outcome", "reason"], "additionalProperties": false,
+         "properties": {
+           "outcome": {"const": "rejected"},
+           "reason": {"enum": ["malformed_block", "split_merge_unsupported", "state_update_invalid", "prev_state_mismatch", "state_update_not_applicable", "state_update_mismatch", "prev_state_malformed", "master_context_mismatch", "config_unavailable", "account_unavailable", "transaction_context_mismatch", "execution_refused", "transaction_mismatch", "account_hash_mismatch", "new_state_mismatch", "pruned_state"]}
+         }}
+      ]
+    }
+  }
+}

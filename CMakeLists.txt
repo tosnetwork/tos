@@ -1969,6 +1969,8 @@ set_tests_properties(wallet-quantum-review-sources-self-test PROPERTIES LABELS "
 add_test(NAME varuint-codec-contract
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/executor-parity/test_varuint_codec.py)
 set_tests_properties(varuint-codec-contract PROPERTIES LABELS "source-guard")
+# Conformance vectors and their reference library (test/conformance/README.md).
+add_subdirectory(test/conformance)
 add_test(NAME branch-chain-python-ci-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-branch-chain-python-ci.py)
 set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-guard")
