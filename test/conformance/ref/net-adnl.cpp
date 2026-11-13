@@ -14,8 +14,10 @@
 #include "adnl/adnl-node-id.hpp"
 #include "adnl/adnl-packet.h"
 #include "adnl/adnl-peer.h"
+#include "adnl/adnl.h"
 #include "adnl/decrypt-admission.h"
 #include "auto/tl/tos_api.hpp"
+#include "keyring/keyring.h"
 #include "keys/encryptor.h"
 #include "keys/keys.hpp"
 #include "td/actor/actor.h"
@@ -24,6 +26,7 @@
 #include "tl-utils/tl-utils.hpp"
 
 #include "net-common.h"
+#include "net-node.h"
 
 namespace conformance::net {
 
@@ -225,9 +228,40 @@ td::Result<std::string> op_adnl_packet(td::JsonObject &ctx) {
   return "{\"outcome\":\"packet\",\"packet\":" + packet_json(packet.ok(), packet_signature_check(packet.ok())) + "}";
 }
 
-// A datagram addressed to a local id of a receiver that knows no peer yet: the steps of
-// AdnlPeerTableImpl::receive_packet, AdnlLocalId::receive, receive_decrypted_packet and
-// AdnlPeerPairImpl::receive_packet up to the signature check, in their order.
+namespace {
+
+// Scheduler rounds a context may take before the node is taken to have given no verdict. A datagram
+// passes through about ten actor messages; the bound only stops a context that never settles.
+constexpr int kMaxRounds = 2000;
+
+// The text the node logs for every inbound datagram or packet it drops.
+constexpr td::Slice kDropMarker = "dropping IN message";
+
+// Whether a peer pair of the receiver ran its checked-packet handler: from then on its stats carry a
+// reinit deadline (AdnlPeerPairImpl::receive_packet_checked), which no earlier step sets.
+bool pair_accepted(const tos::tl_object_ptr<tos_api::adnl_stats> &stats) {
+  if (stats == nullptr) {
+    return false;
+  }
+  for (const auto &local : stats->local_ids_) {
+    for (const auto &peer : local->peers_) {
+      if (peer->try_reinit_at_ > 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+// A datagram addressed to a local id of a receiver that knows no peer yet, through the node's own
+// inbound path on a single-threaded scheduler: AdnlPeerTableImpl::receive_packet (routing by the
+// first 32 bytes), AdnlLocalId::receive (admission, decryption by the keyring, packet decoding),
+// AdnlPeerTableImpl::receive_decrypted_packet (packet checks, source) and the new AdnlPeerPairImpl's
+// receive_packet (packet checks, signature). Only the socket is a stand-in. A refusal is the node's
+// logged reason for the drop; the datagram is received once the peer pair has run its checked-packet
+// handler, and the effect then carries the packet it accepted.
 td::Result<std::string> op_adnl_datagram(td::JsonObject &ctx) {
   TRY_RESULT(key_bytes, hex_field(ctx, "private_key", 4096));
   TRY_RESULT(datagram, hex_field(ctx, "datagram"));
@@ -236,38 +270,105 @@ td::Result<std::string> op_adnl_datagram(td::JsonObject &ctx) {
     return td::Status::Error(PSLICE() << "private_key: not a TL PrivateKey: " << key_tl.error().message());
   }
   tos::PrivateKey key{key_tl.ok()};
-  if (datagram.size() < 32) {
-    return refused_text("message too short");
+  auto public_key = key.compute_public_key();
+  // AdnlPeerTableImpl::add_id_ex requires an Ed25519 local id; the key is the receiver's configuration.
+  if (!public_key.is_ed25519()) {
+    return td::Status::Error("private_key: the receiver's local id must be an Ed25519 key");
   }
-  const td::Slice dst = td::Slice(datagram).truncate(32);
-  if (dst != key.compute_short_id().as_slice()) {
-    return refused_text("unknown dst");
+  TRY_RESULT(source, datagram_source());
+
+  NodeLog log;
+  auto edge_record = std::make_shared<EdgeNetworkManager::Record>();
+  td::Status setup_error;
+  bool accepted = false;
+  bool dropped = false;
+  bool settled = false;
+  {
+    td::actor::Scheduler scheduler({0});
+    td::actor::ActorOwn<tos::keyring::Keyring> keyring;
+    td::actor::ActorOwn<adnl::Adnl> table;
+    td::actor::ActorOwn<EdgeNetworkManager> edge;
+    bool stats_pending = false;
+    bool stats_final = false;
+    // Asks the peer table for its stats; the answer sets `accepted`.
+    auto ask_stats = [&](bool final) {
+      stats_pending = true;
+      td::actor::send_closure(table, &adnl::Adnl::get_stats, true,
+                              [&, final](td::Result<tos::tl_object_ptr<tos_api::adnl_stats>> stats) {
+                                stats_pending = false;
+                                if (stats.is_error()) {
+                                  setup_error = stats.move_as_error_prefix("peer table stats: ");
+                                  settled = true;
+                                  return;
+                                }
+                                accepted = pair_accepted(stats.ok());
+                                stats_final = final;
+                              });
+    };
+    scheduler.run_in_context([&] {
+      keyring = tos::keyring::Keyring::create("");
+      td::actor::send_closure(keyring, &tos::keyring::Keyring::add_key, key, true, [&](td::Result<td::Unit> added) {
+        if (added.is_error()) {
+          setup_error = added.move_as_error_prefix("keyring: ");
+          settled = true;
+        }
+      });
+      table = adnl::Adnl::create("", keyring.get());
+      edge = td::actor::create_actor<EdgeNetworkManager>("edge", edge_record);
+      td::actor::send_closure(table, &adnl::Adnl::register_network_manager, edge.get());
+      td::actor::send_closure(table, &adnl::Adnl::add_id_ex, adnl::AdnlNodeIdFull{public_key}, adnl::AdnlAddressList{},
+                              td::uint8{0}, td::uint32{0});
+    });
+    // The datagram arrives once the peer table has installed its socket callback. Then, until the node
+    // drops it or a peer pair accepts it, and one more stats answer decides (a drop logged after the
+    // checked-packet handler started does not undo the acceptance).
+    bool delivered = false;
+    for (int round = 0; round < kMaxRounds && !settled; ++round) {
+      scheduler.run(0);
+      if (!delivered) {
+        if (edge_record->installed) {
+          delivered = true;
+          scheduler.run_in_context(
+              [&] { td::actor::send_closure(edge, &EdgeNetworkManager::deliver, source, td::BufferSlice(datagram)); });
+        }
+        continue;
+      }
+      if (stats_pending) {
+        continue;
+      }
+      if (stats_final) {
+        settled = true;
+      } else if (accepted || log.contains(kDropMarker)) {
+        scheduler.run_in_context([&] { ask_stats(true); });
+      } else {
+        scheduler.run_in_context([&] { ask_stats(false); });
+      }
+    }
+    if (stats_final) {
+      dropped = !accepted;
+    }
+    scheduler.run_in_context([&] {
+      edge.reset();
+      table.reset();
+      keyring.reset();
+    });
+    scheduler.run(0);
   }
+  if (setup_error.is_error()) {
+    return setup_error;
+  }
+  if (!settled) {
+    return td::Status::Error("the node neither dropped nor accepted the datagram");
+  }
+  if (dropped) {
+    return refused_text(log.first_after(kDropMarker));
+  }
+  // The packet the node accepted, decoded once more for the effect.
   TRY_RESULT(decryptor, key.create_decryptor());
-  auto plain = decryptor->decrypt(td::Slice(datagram).substr(32));
-  if (plain.is_error()) {
-    return refused(plain.error());
-  }
-  auto packet = packet_from_bytes(plain.ok().as_slice());
-  if (packet.is_error()) {
-    return refused(packet.error());
-  }
-  if (auto status = packet.ok().run_basic_checks(); status.is_error()) {
-    return refused(status);
-  }
-  if (!packet.ok().inited_from_short()) {
-    return refused_text("src not set");
-  }
-  if (!packet.ok().inited_from()) {
-    return refused_text("unknown peer and no full src in packet");
-  }
-  TRY_RESULT(encryptor, packet.ok().from().pubkey().create_encryptor());
-  auto status = encryptor->check_signature(packet.ok().to_sign().as_slice(), packet.ok().signature().as_slice());
-  if (status.is_error()) {
-    return refused(status);
-  }
-  return "{\"outcome\":\"received\",\"from_short\":" + quote(bits(packet.ok().from_short().bits256_value())) +
-         ",\"packet\":" + packet_json(packet.ok(), "\"valid\"") + "}";
+  TRY_RESULT(plain, decryptor->decrypt(td::Slice(datagram).substr(32)));
+  TRY_RESULT(packet, packet_from_bytes(plain.as_slice()));
+  return "{\"outcome\":\"received\",\"from_short\":" + quote(bits(packet.from_short().bits256_value())) +
+         ",\"packet\":" + packet_json(packet, "\"valid\"") + "}";
 }
 
 namespace {

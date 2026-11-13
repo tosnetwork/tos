@@ -33,7 +33,7 @@ harnesses.
 | `adnl_address_list` | `address_list` (TL) | version, dates, priority, flags, each address, QUIC addresses, `serialized_size`, canonical bytes | `AdnlAddressList::create` |
 | `adnl_message` | `message` (TL `adnl.Message`) | type, fields, the node's `size()` accounting, canonical bytes | `AdnlMessage(tl)` |
 | `adnl_packet` | `contents` (TL `adnl.packetContents`) | every extracted field, `to_sign`, canonical bytes, `signature_check` against a full source | `AdnlPacket::create` (with `run_basic_checks`), `to_sign`, `tl`, the full source's encryptor |
-| `adnl_datagram` | receiver `private_key`, `datagram` | the received packet, or the first refusal | the steps of `AdnlPeerTableImpl::receive_packet`, `AdnlLocalId::receive`, `receive_decrypted_packet` and `AdnlPeerPairImpl::receive_packet` up to the signature check, for a receiver that knows no peer yet |
+| `adnl_datagram` | receiver `private_key` (Ed25519), `datagram` | the received packet, or the refusal the node logged | the node's inbound path run in-process: `AdnlPeerTableImpl::receive_packet`, `AdnlLocalId::receive` (admission, keyring decryption), `receive_decrypted_packet` and the new `AdnlPeerPairImpl::receive_packet` up to its signature check, for a receiver that knows no peer yet (see below) |
 | `adnl_channel` | local channel private key, peer channel public key, local and peer ids, optional inbound `datagram`, optional packet to `send` | `in_id`, `out_id`, the decrypted packet or its refusal, the datagram the channel emits | `AdnlChannel::create`, `AdnlChannelImpl::decrypt`, `AdnlChannelImpl::send_message` on a single-threaded scheduler, with recording doubles for the peer pair and the connection |
 | `preauth_source` | `address` | the source key | `preauth_source` (IPv4 address, IPv6 /64, port cleared) |
 | `preauth_gate` | `max_sources`, source/process/local budgets, `events` (admit an address, release a ticket) | per event `admitted`, `released` or a refusal class; table size | `PreauthGate::admit`, `DecryptBudget` (periods of at least 60 s, so no token refills while a context runs) |
@@ -104,9 +104,28 @@ timestamp.
 | `need_more_symbols` | `Need more symbols`, `Not ready` | `fec-online/decode/s768-n1-source` |
 
 `runner/test_net.py` checks that the C++ table, the validator's `REASONS` and the schema's `$defs/reason`
-name the same classes, and that every class but `unclassified` is reached by a frozen fixture. Messages
-the harness itself words (`message too short`, `unknown dst`, `unknown channel`, `src not set`, `no full
-src in packet`) are the node's log texts for the same drops, which have no status of their own.
+name the same classes, and that every class but `unclassified` is reached by a frozen fixture.
+
+A drop on the inbound ADNL path has no status of its own: the node logs it (`dropping IN message ...`)
+and returns. `adnl_datagram` therefore runs the node's own peer table, keyring and local id on a
+single-threaded scheduler (`ref/net-node.cpp`; the only stand-in is the socket, which hands the datagram
+to the peer table from 192.0.2.1:3000 for every address category), captures the node's log while the
+context runs, and classifies the text after the first `dropping IN message` by the table above
+(`message too short`, `unknown dst`, `src not set`, `no full src in packet` and the statuses the node
+appends). The datagram is received once the new peer pair has run its checked-packet handler, which is
+the first step that gives the pair a reinit deadline in its stats (`AdnlPeerTable::get_stats`); what
+the pair then does with the packet (reinit dates, sequence numbers, addresses, messages) is not part of
+the effect. The receiver's local id is an Ed25519 key (`add_id_ex` requires one); any other key is a
+harness error. Each context gets a fresh peer table, keyring and local id; the node's process-wide
+decrypt budget (a burst of 4096, refilled at 4096 per second) is shared by all contexts of one process,
+which a run of a few thousand datagram contexts per second would reach.
+
+`adnl_channel` still routes an inbound datagram the way the peer table does instead of running it: run
+through the node's peer table, a datagram whose first 32 bytes name no local id and no registered channel
+is logged as `unknown dst`, so `adnl-channel/bob-unknown-channel` would change from `unknown_channel` to
+`unknown_destination`, and the `unknown_channel` class would be reached by no fixture. The wording
+`unknown channel` is the harness's, not the node's; whether to adopt the node's class is an open
+decision.
 
 Not reachable through the wire and therefore not in the table: `Too big string found` (a 64-bit length
 above the address space, which a 64-bit build never sees), `flag one_message is set, but the number of
