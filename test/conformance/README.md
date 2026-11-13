@@ -90,7 +90,9 @@ mc-config.cpp 55.6%, block.cpp 34.9%, emulator 82.0%, validate-query.cpp 42.4%, 
 rldp2 55.9%, fec 79.6%, tdfec 85.2% (186 floored files).
 `.github/workflows/conformance-coverage.yml` runs it weekly and on changes to the VM, the block code, the emulator,
 the validator, the network code (adnl, keys, overlay, rldp2, fec, tdfec) or this suite. After adding vectors that reach more code, run
-`handlers.py baseline <report>` and commit the raised baseline.
+`handlers.py baseline <report>` and commit the raised baseline. Measure with the workflow's configuration
+(`TOS_ARCH=x86-64-v2`, `PORTABLE=x86-64-v2`): code compiled per CPU feature level, such as
+`tdfec/td/fec/algebra/Simd.h`, takes other paths in a `native` build and measures differently.
 
 ## Commands
 
