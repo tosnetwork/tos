@@ -39,7 +39,7 @@ python3 test/conformance/migrate/rel02.py chain build/emulator/test-epoch-replay
 python3 test/conformance/runner/tosvm_controls.py $T test/conformance/vectors
 ```
 
-`parts/tosvm.cmake` adds these as ctests labelled `rust-target` when cargo is found
+`parts/tosvm.cmake` adds these as ctests labelled `rust-target` when configured with `-DCONFORMANCE_RUST_TARGET=ON` and cargo is found
 (`conformance-tosvm-build`, `-vectors`, `-controls`, and `-rel02-chain` when `test-epoch-replay` is a
 target); the adapter is built into `build/test/conformance/tosvm-target`:
 
@@ -64,9 +64,9 @@ refused. Pointed at the C++ reference the second control fails, since the refere
 
 There is no frozen `txn` family yet, so the `txn` harness is exercised by the chain lane only.
 
-## Result with the external vectors (2026-11-13)
+## Result with all vm vectors (2026-11-13)
 
-With `CONFORMANCE_VECTORS_DIR` set (vectors pin 71 files), `conformance-tosvm-vectors` runs 144,975 vm
+With every vm family in the tree, `conformance-tosvm-vectors` runs 144,975 vm
 fixtures: 136,264 equal, 8,711 mismatched, 0 refused, 0 skipped. Every mismatch is in a family whose
 contexts were converted from the other implementation's tests; all tree-sourced families are equal:
 

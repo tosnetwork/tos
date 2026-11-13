@@ -9,29 +9,25 @@ add_test(NAME conformance-vmfam-tamper-seed
     ${CMAKE_CURRENT_BINARY_DIR}/vmfam-tamper-seed
     pq-v16-chksig-ignore pq-falcon512-chksig-ignore)
 set_tests_properties(conformance-vmfam-tamper-seed PROPERTIES LABELS "conformance" TIMEOUT 600)
-# These families live in the external vectors repository (CONFORMANCE_VECTORS_DIR).
-if (NOT CONFORMANCE_VECTORS_DIR)
-  return()
-endif()
-set(VMFAM_FIXTURES ${CONFORMANCE_VECTORS_DIR}/vm/fixtures)
+set(VMFAM_FIXTURES ${CONFORMANCE_DIR}/vectors/vm/fixtures)
 if (TARGET test-vm-endstate AND TARGET test-pq-suite-parity AND TARGET test-vm-opcode-table)
   add_test(NAME conformance-vmfam-crosscheck
     COMMAND ${Python3_EXECUTABLE} -B ${CONFORMANCE_DIR}/migrate/vmfam.py crosscheck
       ${CMAKE_BINARY_DIR} ${VMFAM_FIXTURES} ${CMAKE_CURRENT_BINARY_DIR}/vmfam-crosscheck)
-  set_tests_properties(conformance-vmfam-crosscheck PROPERTIES LABELS "conformance" FIXTURES_REQUIRED conformance-vectors-checkout TIMEOUT 1800)
+  set_tests_properties(conformance-vmfam-crosscheck PROPERTIES LABELS "conformance" TIMEOUT 1800)
 endif()
 add_test(NAME conformance-vmfam-authored
   COMMAND ${Python3_EXECUTABLE} -B ${CONFORMANCE_DIR}/migrate/vmfam.py authored
     ${VMFAM_FIXTURES} ${CMAKE_CURRENT_BINARY_DIR}/vmfam-authored
     --seed-dir ${CONFORMANCE_DIR}/vectors/vm/fixtures)
-set_tests_properties(conformance-vmfam-authored PROPERTIES LABELS "conformance" FIXTURES_REQUIRED conformance-vectors-checkout TIMEOUT 300)
+set_tests_properties(conformance-vmfam-authored PROPERTIES LABELS "conformance" TIMEOUT 300)
 add_test(NAME conformance-vmfam-tamper
   COMMAND ${Python3_EXECUTABLE} -B ${CONFORMANCE_DIR}/migrate/vmfam.py tamper-control
     $<TARGET_FILE:conformance-ref-cli> ${VMFAM_FIXTURES} ${CMAKE_CURRENT_BINARY_DIR}/vmfam-tamper
     vm-prefix pq-v16-parity rtos-opcode-gates)
-set_tests_properties(conformance-vmfam-tamper PROPERTIES LABELS "conformance" FIXTURES_REQUIRED conformance-vectors-checkout TIMEOUT 900)
-add_test(NAME conformance-vmfam-tamper-external
+set_tests_properties(conformance-vmfam-tamper PROPERTIES LABELS "conformance" TIMEOUT 900)
+add_test(NAME conformance-vmfam-tamper-converted
   COMMAND ${Python3_EXECUTABLE} -B ${CONFORMANCE_DIR}/migrate/vmfam.py tamper-control
-    $<TARGET_FILE:conformance-ref-cli> ${VMFAM_FIXTURES} ${CMAKE_CURRENT_BINARY_DIR}/vmfam-tamper-external
+    $<TARGET_FILE:conformance-ref-cli> ${VMFAM_FIXTURES} ${CMAKE_CURRENT_BINARY_DIR}/vmfam-tamper-converted
     rtos-library-budget-limits rtos-pq-chksig)
-set_tests_properties(conformance-vmfam-tamper-external PROPERTIES LABELS "conformance" FIXTURES_REQUIRED conformance-vectors-checkout TIMEOUT 600)
+set_tests_properties(conformance-vmfam-tamper-converted PROPERTIES LABELS "conformance" TIMEOUT 600)

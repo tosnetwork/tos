@@ -28,33 +28,10 @@ jobs:
             cpu: armv8-a
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
-    env:
-      # Secrets are not passed to pull requests from forks; those run the in-tree seed vectors only.
-      VECTORS_KEY_PRESENT: ${{ secrets.CONFORMANCE_VECTORS_DEPLOY_KEY != '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - name: Read the pinned vectors commit
-        id: pin
-        run: |
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          pin = json.load(open("test/conformance/VECTORS"))
-          print(f"commit={pin['commit']}")
-          PY
-      - name: Check out the pinned conformance vectors
-        if: env.VECTORS_KEY_PRESENT == 'true'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: tosnetwork/conformance-vectors
-          ref: ${{ steps.pin.outputs.commit }}
-          path: conformance-vectors
-          ssh-key: ${{ secrets.CONFORMANCE_VECTORS_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Report a run without the external vectors
-        if: env.VECTORS_KEY_PRESENT != 'true'
-        run: echo "::warning title=Conformance vectors::no read access to the vectors repository (fork pull request); only the in-tree seed vectors run"
       - name: Check and prepare LLVM DNS on the ephemeral runner
         run: |
           python3 scripts/test_llvm_dns_fallback.py --controls
@@ -73,12 +50,10 @@ jobs:
         env:
           CPU: ${{ matrix.cpu }}
         run: |
-          vectors=()
-          if [ -d conformance-vectors ]; then vectors=(-DCONFORMANCE_VECTORS_DIR="$PWD/conformance-vectors"); fi
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
-            -DTOS_ARCH="$CPU" -DPORTABLE="$CPU" -DTOS_USE_JEMALLOC=ON "${vectors[@]}"
+            -DTOS_ARCH="$CPU" -DPORTABLE="$CPU" -DTOS_USE_JEMALLOC=ON
       - name: Build the reference library, its drivers and the replay tools
         run: |
           cmake --build build --parallel "$(nproc)" --target test/conformance/all emulator test-epoch-replay \
@@ -90,8 +65,8 @@ jobs:
         run: |
           set -o pipefail
           ctest --test-dir build -L '^conformance$' --no-tests=error --output-on-failure 2>&1 | tee ctest.log
-          # With the vectors checked out, every test must have run: a skip is not a pass.
-          if [ -d conformance-vectors ] && grep -q 'Skipped' ctest.log; then
-            echo "::error title=Conformance gate::a conformance test was skipped with the external vectors present"
+          # Every vector is in the tree, so every test must have run: a skip is not a pass.
+          if grep -q 'Skipped' ctest.log; then
+            echo "::error title=Conformance gate::a conformance test was skipped"
             exit 1
           fi

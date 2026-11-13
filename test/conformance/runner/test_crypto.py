@@ -249,9 +249,7 @@ class CrossCheckTests(unittest.TestCase):
         self.assertEqual(self.run_quietly(crypto_authored.check, SOURCE, copy), 1)
 
     def test_every_family_validates(self) -> None:
-        # The in-tree crypto families (families converted from other implementations live in the
-        # external vectors repository).
-        self.assertGreaterEqual(c.command_validate([FIXTURES]), 394)
+        self.assertGreater(c.command_validate([FIXTURES]), 9000)
 
 
 if __name__ == "__main__":

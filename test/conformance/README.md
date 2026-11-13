@@ -74,24 +74,6 @@ Any BOC field may be a reference `{"blob": "<sha256 of the BOC bytes>"}` into `<
 before a context reaches a target; `validate` requires every reference to resolve, every blob to be used and
 every digest to match its content.
 
-## External vectors
-
-Most fixtures live in a separate repository, pinned by commit in `VECTORS`; the tree keeps a small seed set
-(`vectors/`) so the gate also runs without it. To run everything:
-
-```
-test/conformance/fetch-vectors.sh ../conformance-vectors        # clone and check out the pinned commit
-cmake -S . -B build -DCONFORMANCE_VECTORS_DIR=$PWD/../conformance-vectors
-ctest --test-dir build -L '^conformance$'
-```
-
-`conformance-vectors-pin` requires the checkout to be at the pinned commit, without local changes, with
-`MANIFEST.json` listing exactly the files present (`runner/vectors_pin.py check`). Without
-`CONFORMANCE_VECTORS_DIR`, `conformance-vectors-external` is reported as skipped. Updating vectors: change
-them in the vectors repository, run `runner/vectors_pin.py manifest <checkout>`, commit there, and update
-`VECTORS` in the same node change. Select the default lane with `-L '^conformance$'`; other lanes have their
-own labels.
-
 ## Commands
 
 ```
@@ -122,23 +104,24 @@ is a regression.
 
 ## Families
 
-The tree holds a seed set of 10,311 fixtures in 49 families, all with contexts from this repository, so
-the gate runs without the external vectors:
+All vectors live in this tree, under `vectors/<harness>/fixtures/`:
 
-| Harness | Seed families in the tree (fixtures) |
-|---|---|
-| `block` | `rel02-negative` (26) |
-| `codec` | `codec-corpus` (1,267), `codec-negative` (56), `storage-encoding` (284), `varuint-codec` (330) |
-| `consensus` | `decode-proof-real` (11), `finality-authored` (22), `finality-real` (16), `key-block-context-real` (8), `proof-link-authored` (5), `proof-link-real` (8), `protocol-version-authored` (1), `quorum-authored` (59), `session-authored` (17), `session-real` (8), `validator-set-real` (8), `vote-authored` (8), `vote-real` (24), `weight-total-authored` (7) |
-| `crypto` | `authorisation-preimage` (10), `config43` (9), `crypto-negatives` (112), `descriptor-verdict` (10), `falcon512-vectors` (28), `mldsa44-openssl` (3), `poseidon2-kat` (22), `pq-block-signatures` (23), `pq-bytes` (16), `pq-signature-tl` (6), `slhdsa128s-openssl` (4), `validator-session-derivation` (3), `validator-session-members` (3), `wycheproof-ed25519` (145) |
-| `fee` | `fee-edges` (100), `gas-purchase` (6,602), `storage-fee-vectors` (21) |
-| `get_method` | `c7-shape` (9), `rel02-getters` (589) |
-| `tl` | `tl-cli-fixtures` (98), `tl-negative` (58), `tl-proven-reads` (18) |
-| `txn` | `deploy-state` (63), `storage-cache-carry` (2), `storage-option-carry` (55), `storage-rollback-carry` (4), `storage-tick-carry` (3) |
-| `vm` | `pq-falcon512-chksig-ignore` (1), `pq-v16-chksig-ignore` (1), `vm-endstate` (128) |
+| Harness | Families | Fixtures | Size |
+|---|---|---|---|
+| `block` | 1 | 26 | 0.6 MB |
+| `codec` | 13 | 5,040 | 9.2 MB |
+| `consensus` | 17 | 268 | 3.2 MB |
+| `crypto` | 20 | 9,508 | 10.0 MB |
+| `fee` | 3 | 6,723 | 3.6 MB |
+| `get_method` | 5 | 2,740 | 6.2 MB |
+| `tl` | 3 | 174 | 1.2 MB |
+| `txn` | 56 | 62,054 | 177.9 MB |
+| `vm` | 32 | 145,379 | 103.5 MB |
+| total | 150 | 231,912 | 315.5 MB |
 
-The external vectors repository lists every family it holds, with counts and fill commits, in its
-`MANIFEST.json`. Per-component tables are in `docs/`.
+Families whose name starts with `rtos-` (and the get_method families rebuilt from that implementation's
+test parameters) hold contexts converted from another implementation's tests; their effects come from the C++
+reference like every other fixture. Per-component tables are in `docs/`.
 
 ## Components
 
@@ -152,7 +135,8 @@ The external vectors repository lists every family it holds, with counts and fil
 | Network scenarios | Black-box multi-node runs with per-node implementations | [docs/consensus.md](docs/consensus.md) |
 
 ctest labels: `conformance` (default; select with `-L '^conformance$'`), `history-replay` (retained archives),
-`rust-target` (needs cargo), `network-scenario` (starts validators; `CONFORMANCE_NETWORK=1`).
+`rust-target` (configure with `-DCONFORMANCE_RUST_TARGET=ON`, needs cargo), `network-scenario` (starts validators;
+`CONFORMANCE_NETWORK=1`).
 
 ## Chain replay
 
