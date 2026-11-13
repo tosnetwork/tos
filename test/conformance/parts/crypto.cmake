@@ -3,6 +3,12 @@
 target_link_libraries(conformance-ref PRIVATE tos_block tos_crypto tos_mldsa44 tos_falcon512 tos_slhdsa128s
   tos_lms_fee tos_pq_consensus tl_api tl_lite_api tl-utils tl-lite-utils)
 target_include_directories(conformance-ref PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/crypto)
+# The library carries its own static copy of the VM and block code next to libemulator.so, which the
+# txn harness calls. An inline or template function the library exports (vm::Dictionary's virtuals,
+# once a harness decodes a dictionary) interposes the emulator's copy, and that copy then runs
+# against this library's globals: the elector's tock in the REL-02 corpus came out with different
+# gas. Exporting only the conformance_* entry points keeps the two copies apart.
+set_target_properties(conformance-ref PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 
 # The C++ generators whose frozen output the crypto fixtures were migrated from must keep agreeing
 # with those fixtures row for row (migrate/crypto_generators.py).
