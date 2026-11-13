@@ -418,7 +418,9 @@ elseif (CLANG OR GCC)
       endif()
     endif()
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
-    if (NOT TOS_USE_ASAN AND NOT TOS_USE_TSAN AND NOT TOS_USE_COVERAGE AND NOT MEMPROF)
+    # Instrumented builds keep the runtime symbols of their static runtimes visible (guided conformance fuzzing
+    # loads instrumented libraries into the fuzzer, which must provide them).
+    if (NOT TOS_USE_ASAN AND NOT TOS_USE_TSAN AND NOT TOS_USE_COVERAGE AND NOT MEMPROF AND NOT CONFORMANCE_FUZZ_GUIDED)
       if (NOT USE_EMSCRIPTEN)
         if (NOT MINGW)
           set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--exclude-libs,ALL")

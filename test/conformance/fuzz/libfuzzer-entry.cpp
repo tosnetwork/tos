@@ -7,6 +7,8 @@
 //     CONFORMANCE_FUZZ_SEEDS      seed fixture file or directory (optional; required for txn)
 //     CONFORMANCE_FUZZ_OUT        vectors directory for mismatch files (optional)
 //     CONFORMANCE_FUZZ_ABORT      1: abort on the first mismatch so libFuzzer keeps the input
+//     CONFORMANCE_FUZZ_EMIT       file: append the context of every input both libraries ran with equal
+//                                 effects, one JSON line each (run over a corpus with -runs=0 to harvest it)
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -28,6 +30,7 @@ struct State {
   Library reference;
   Library target;
   SeedPool pool;
+  std::FILE *emit = nullptr;
 };
 
 State *state = nullptr;
@@ -51,6 +54,12 @@ extern "C" int LLVMFuzzerInitialize(int *, char ***) {
   }
   state->out = env("CONFORMANCE_FUZZ_OUT");
   state->abort_on_mismatch = env("CONFORMANCE_FUZZ_ABORT") == "1";
+  if (auto path = env("CONFORMANCE_FUZZ_EMIT"); !path.empty()) {
+    state->emit = std::fopen(path.c_str(), "a");
+    if (state->emit == nullptr) {
+      fail("cannot open " + path);
+    }
+  }
   const std::string reference = env("CONFORMANCE_FUZZ_REFERENCE");
   const std::string target = env("CONFORMANCE_FUZZ_TARGET");
   if (reference.empty() || target.empty()) {
@@ -84,6 +93,10 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t *data, std::size_t size
   const std::string text = c.context.dump();
   const Comparison comparison =
       compare_effects(state->reference.run(state->harness, text), state->target.run(state->harness, text));
+  if (comparison.verdict == Verdict::Equal && state->emit != nullptr) {
+    std::fprintf(state->emit, "%s\n", text.c_str());
+    std::fflush(state->emit);
+  }
   if (comparison.verdict != Verdict::Mismatch) {
     return 0;
   }

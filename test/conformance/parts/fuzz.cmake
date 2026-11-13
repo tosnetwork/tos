@@ -20,6 +20,14 @@ endif()
 
 set(CONFORMANCE_FUZZ_DIR ${CONFORMANCE_DIR}/fuzz)
 
+# Guided fuzzing: a separate build directory compiled with -fsanitize=fuzzer-no-link instruments the reference
+# library and its twin, so libFuzzer is steered by which VM and transaction code an input reaches, as the
+# other multi-client suites instrument both clients. fuzz/guided.py runs such a campaign and harvests the corpus.
+option(CONFORMANCE_FUZZ_GUIDED "This build directory instruments the reference for guided fuzzing" OFF)
+if (CONFORMANCE_FUZZ_GUIDED AND NOT CMAKE_CXX_FLAGS MATCHES "-fsanitize=fuzzer-no-link")
+  message(FATAL_ERROR "CONFORMANCE_FUZZ_GUIDED needs CMAKE_C_FLAGS/CMAKE_CXX_FLAGS with -fsanitize=fuzzer-no-link")
+endif()
+
 add_library(conformance-fuzz-core STATIC
   ${CONFORMANCE_FUZZ_DIR}/json.cpp
   ${CONFORMANCE_FUZZ_DIR}/generator.cpp
@@ -42,12 +50,17 @@ unset(CMAKE_REQUIRED_FLAGS)
 unset(CMAKE_REQUIRED_LINK_OPTIONS)
 if (CONFORMANCE_FUZZ_HAVE_LIBFUZZER)
   # The generator is compiled with coverage too, so the fuzzer is guided by which grammar paths an input takes.
-  # The libraries under test are not instrumented.
+  # The libraries under test are instrumented only in a build configured for guided fuzzing (below).
   add_executable(conformance-fuzz-libfuzzer ${CONFORMANCE_FUZZ_DIR}/libfuzzer-entry.cpp ${CONFORMANCE_FUZZ_DIR}/json.cpp
     ${CONFORMANCE_FUZZ_DIR}/generator.cpp ${CONFORMANCE_FUZZ_DIR}/differ.cpp)
   target_include_directories(conformance-fuzz-libfuzzer PRIVATE ${CONFORMANCE_FUZZ_DIR})
   target_compile_options(conformance-fuzz-libfuzzer PRIVATE -fsanitize=fuzzer)
   target_link_options(conformance-fuzz-libfuzzer PRIVATE -fsanitize=fuzzer)
+  if (CONFORMANCE_FUZZ_GUIDED)
+    # The instrumented libraries it dlopens resolve the coverage runtime (for example __sancov_lowest_stack)
+    # from this executable, so its symbols have to be exported.
+    target_link_options(conformance-fuzz-libfuzzer PRIVATE -Wl,--export-dynamic)
+  endif()
   target_link_libraries(conformance-fuzz-libfuzzer PRIVATE tos_crypto tdutils ${CMAKE_DL_LIBS})
 endif()
 
