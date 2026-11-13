@@ -653,9 +653,12 @@ def unread_blocks(blocks: dict[Any, BlockRecord], last: McRecord, cur: McRecord)
     seen: set[Any] = set()
     out = []
     for ref in wanted:
-        if ref.key in blocks or ref.key in frontier or ref.key in seen:
+        # Full ids: a block read or an opening top with another root hash is not this one.
+        read, top = blocks.get(ref.key), frontier.get(ref.key)
+        if (read is not None and read.ref == ref) or top == ref or ref.key in seen:
             continue
-        if below_frontier(ref, frontier) is not None:
+        # A back-link onto an opening top's position with another root does not reach it.
+        if top is None and below_frontier(ref, frontier) is not None:
             continue
         seen.add(ref.key)
         out.append(ref)
@@ -831,6 +834,7 @@ class Ramp:
     live: tuple[float, int] | None = None  # (monotonic time read, the live head's gen_utime)
     live_lag_max: int = 0  # the most the follower's frontier trailed the live head (chain s)
     pool: ReaderPool = field(init=False)  # the follower's and the live clock's reads
+    clock: Callable[[], float] = time.monotonic  # the live reading's age
     _cursor: int = 0
     _send_cursor: int = 0
 
@@ -904,15 +908,18 @@ class Ramp:
         from the frontier (``chain_now``), which is what the walk proved.
         """
         floor = self.follower.chain_now if self.follower is not None else 0
-        if self.live is None or time.monotonic() - self.live[0] >= LIVE_REFRESH:
+        if self.live is None or self.clock() - self.live[0] >= LIVE_REFRESH:
+            # A reading is as old as its read's start: budget waits, retries and failover
+            # between the head lookup and its header all count against LIVE_MAX_AGE.
+            started = self.clock()
             try:
                 _, utime = await t2collect.head_time(self.pool)
             except Exception as error:  # an old reading serves until LIVE_MAX_AGE, then none
                 log.warning("live head read failed: %s", type(error).__name__)
             else:
                 last = self.live[1] if self.live is not None else 0
-                self.live = (time.monotonic(), max(utime, floor, last))
-        if self.live is None or time.monotonic() - self.live[0] > LIVE_MAX_AGE:
+                self.live = (started, max(utime, floor, last))
+        if self.live is None or self.clock() - self.live[0] > LIVE_MAX_AGE:
             return None
         now = max(self.live[1], floor)
         self.live_lag_max = max(self.live_lag_max, now - floor)

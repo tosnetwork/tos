@@ -600,7 +600,7 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     (
         "live deadline: a stale reading serves forever",
         R,
-        "        if self.live is None or time.monotonic() - self.live[0] > LIVE_MAX_AGE:",
+        "        if self.live is None or self.clock() - self.live[0] > LIVE_MAX_AGE:",
         "        if self.live is None:",
         "LiveDeadlines.test_a_reading_older_than_its_maximum_age_is_not_used",
     ),
@@ -634,6 +634,41 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
         "        self._cursor = (self._cursor + 1) % n\n",
         "",
         "ReaderPoolTests.test_reads_are_spread_over_every_endpoint",
+    ),
+    (
+        "fork: the walk keeps a header of another root",
+        T2,
+        "            if record.ref != asked:\n",
+        "            if False:\n",
+        "ForkedReads.test_the_walk_keeps_no_header_whose_root_differs_from_the_one_asked",
+    ),
+    (
+        "fork: a block read is matched by position only",
+        R,
+        "(read is not None and read.ref == ref) or top == ref",
+        "read is not None or top == ref",
+        "ForkedReads.test_a_block_read_with_another_root_is_reported_unread",
+    ),
+    (
+        "fork: a back-link onto an opening top's position is taken as below it",
+        R,
+        "        if top is None and below_frontier(ref, frontier) is not None:\n",
+        "        if below_frontier(ref, frontier) is not None:\n",
+        "ForkedReads.test_a_block_read_with_another_root_is_reported_unread",
+    ),
+    (
+        "fork: a masterchain header and its shard tops from different nodes",
+        T2,
+        "        header = await source.call(\n",
+        "        header = await rpc.call(\n",
+        "ForkedReads.test_a_masterchain_block_and_its_shard_tops_come_from_one_node",
+    ),
+    (
+        "live deadline: a reading is as old as its read finished",
+        R,
+        "                self.live = (started, max(utime, floor, last))\n",
+        "                self.live = (self.clock(), max(utime, floor, last))\n",
+        "LiveDeadlines.test_a_reading_is_as_old_as_its_read_started",
     ),
 ]
 

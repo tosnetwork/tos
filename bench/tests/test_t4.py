@@ -37,7 +37,7 @@ from pytosiq_core import (  # noqa: E402
 from shard import journal as jr  # noqa: E402
 from shard import remote, t2collect  # noqa: E402
 from shard.rpc import PacedRpc, ReaderPool, RpcError  # noqa: E402
-from shard.t2check import McRecord, Msg, Tx  # noqa: E402
+from shard.t2check import BlockRecord, BlockRef, McRecord, Msg, Tx  # noqa: E402
 from t4 import ramp  # noqa: E402
 from t4.ledger import (  # noqa: E402
     ACCEPTED,
@@ -655,11 +655,14 @@ class Transport:
         self.answers, self.nonce, self.head_utime = list(answers), nonce, head_utime
         self.sends: list[str] = []
         self.head_reads = 0
+        self.on_head_read: Any = None  # called on every head read, before it answers
 
     async def __call__(self, url: str, body: bytes, timeout: float) -> tuple[int, bytes]:
         request = json.loads(body)
         if request["method"] in ("getMasterchainInfo", "getBlockHeader"):
             self.head_reads += 1
+            if self.on_head_read is not None:
+                self.on_head_read(request["method"])
             if self.head_utime is None:
                 return 200, json.dumps({"error": {"code": -32603, "message": "no head"}}).encode()
             result: dict[str, Any] = {"last": tr.block_id(-1, 7)}
@@ -2132,9 +2135,32 @@ class LiveDeadlines(unittest.TestCase):
     def test_the_head_is_read_at_most_once_a_refresh_period(self):
         transport = Transport([], head_utime=1_300)
         r = make_ramp(transport, wallets=3)
+        clock = FakeClock()
+        r.clock = clock
         for _ in range(3):
             asyncio.run(issue_and_wait(r))
+            clock.t += ramp.LIVE_REFRESH / 4
         self.assertEqual(transport.head_reads, 2)  # getMasterchainInfo + getBlockHeader, once
+        clock.t += ramp.LIVE_REFRESH
+        asyncio.run(issue_and_wait(r))
+        self.assertEqual(transport.head_reads, 4)  # past the refresh period: read again
+
+    def test_a_reading_is_as_old_as_its_read_started(self):
+        # The header answers 70 s after the head lookup began (budget waits, retries,
+        # failover): that reading is already past LIVE_MAX_AGE and builds nothing.
+        transport = Transport([], head_utime=1_300)
+        r = make_ramp(transport, wallets=3)
+        clock = FakeClock()
+        r.clock = clock
+
+        def slow(method: str) -> None:
+            if method == "getBlockHeader":
+                clock.t += 70
+
+        transport.on_head_read = slow
+        [ext] = asyncio.run(issue_and_wait(r))
+        self.assertEqual(ext.outcome(0, 99), (REFUSED, "local: no live chain time"))
+        self.assertEqual(transport.sends, [])
 
     def test_without_a_live_reading_no_request_is_built(self):
         transport = Transport([], head_utime=None)
@@ -2155,6 +2181,14 @@ class LiveDeadlines(unittest.TestCase):
         [late] = asyncio.run(issue_and_wait(r))
         self.assertEqual(late.deadline, 1_260)
         self.assertEqual(len(transport.sends), 1)
+
+
+class FakeClock:
+    def __init__(self, t: float = 1_000.0):
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
 
 
 class CountingTransport:
@@ -2277,6 +2311,109 @@ class FollowerReadRate(unittest.TestCase):
         follower = asyncio.run(scenario())
         self.assertEqual(follower.last.seqno, bad - 1)
         self.assertIn(f"masterchain block {bad}", follower.failed or "")
+
+
+class Forked:
+    """A FakeChain transport answering one basechain position with another fork's block."""
+
+    def __init__(self, chain: "FakeChain", url_tag: str = ""):
+        self.inner, self.tag = ChainTransport(chain), url_tag
+        self.at: int | None = None  # the forked basechain seqno
+        self.served: list[tuple[str, int, str]] = []  # (method, seqno, url)
+
+    async def __call__(self, url: str, body: bytes, timeout: float) -> tuple[int, bytes]:
+        request = json.loads(body)
+        params = request.get("params") or {}
+        self.served.append((request["method"], int(params.get("seqno", -1)), url))
+        status, raw = await self.inner(url, body, timeout)
+        if self.at is None or params.get("workchain") != 0 or params.get("seqno") != self.at:
+            return status, raw
+        document = json.loads(raw)
+        result = document.get("result")
+        if isinstance(result, dict) and isinstance(result.get("id"), dict):
+            result["id"]["root_hash"] = b64(hashlib.sha256(b"other fork").digest())
+        return status, json.dumps(document).encode()
+
+
+class ForkedReads(unittest.TestCase):
+    def test_a_shard_block_of_another_fork_is_never_read_as_the_one_committed(self):
+        chain = FakeChain("0:" + "ee" * 32, {})
+        transport = Forked(chain)
+        r = make_ramp(transport, wallets=3)
+        for w in r.wallets:
+            chain.wallets[w.address] = 0
+
+        async def scenario() -> tuple[External, int]:
+            head = await r.head()
+            [first] = await t2collect.read_masterchain(r.reader, head, head)
+            r.follower = ramp.Follower(r.reader, r.ledger, r.included, first, 0.01)
+            [ext] = await issue_and_wait(r)
+            at = min(chain.txs)  # the shard block that executes the external
+            transport.at = at
+            give_up = time.monotonic() + 20
+            while time.monotonic() < give_up and r.follower.failed is None:
+                await r.follower.round()
+                await asyncio.sleep(0.05)
+            return ext, at
+
+        ext, at = asyncio.run(scenario())
+        assert r.follower is not None
+        self.assertIn("headers unreadable", r.follower.failed or "")
+        self.assertLess(r.follower.last.seqno, at)
+        self.assertIsNone(ext.tx_hash)  # never bound, never expired from a forked read
+        self.assertFalse(ext.expired)
+
+    def test_the_walk_keeps_no_header_whose_root_differs_from_the_one_asked(self):
+        chain = FakeChain("0:" + "ee" * 32, {})
+        transport = Forked(chain)
+        reader = PacedRpc("http://fake", 1.0, transport=transport)
+
+        async def scenario() -> tuple[dict[Any, Any], int]:
+            while chain.head() < chain.base + 3:
+                await asyncio.sleep(BLOCK_INTERVAL / 2)
+            mcs = await t2collect.read_masterchain(reader, chain.base, chain.base + 2, 3)
+            lo, hi = mcs[0], mcs[-1]
+            transport.at = chain.base + 1
+            return await t2collect.walk_blocks(reader, [lo, hi]), chain.base + 1
+
+        blocks, at = asyncio.run(scenario())
+        self.assertNotIn((0, -(1 << 63), at), blocks)
+        self.assertIn((0, -(1 << 63), at + 1), blocks)
+
+    def test_a_block_read_with_another_root_is_reported_unread(self):
+        def ref(seqno: int, root: str) -> BlockRef:
+            return BlockRef(0, -(1 << 63), seqno, root * 32)
+
+        last = McRecord(1, 1_000, "00" * 32, (ref(1, "aa"),))
+        cur = McRecord(2, 1_001, "11" * 32, (ref(3, "cc"),))
+        honest = BlockRecord(ref(3, "cc"), (ref(2, "bb"),))
+        other = BlockRecord(ref(2, "ff"), (ref(1, "aa"),))  # position 2, another fork
+        blocks = {r.ref.key: r for r in (honest, other)}
+        self.assertEqual(ramp.unread_blocks(blocks, last, cur), [ref(2, "bb")])
+        # An opening top with another root is not the one the walk stops at either.
+        moved = McRecord(1, 1_000, "00" * 32, (ref(2, "ff"),))
+        self.assertEqual(ramp.unread_blocks({honest.ref.key: honest}, moved, cur), [ref(2, "bb")])
+
+    def test_a_masterchain_block_and_its_shard_tops_come_from_one_node(self):
+        chain = FakeChain("0:" + "ee" * 32, {})
+        transport = Forked(chain)
+        pool = ReaderPool(
+            [PacedRpc(f"http://node-{i}", 1.0, transport=transport) for i in range(3)]
+        )
+
+        async def scenario() -> list[McRecord]:
+            while chain.head() < chain.base + 6:
+                await asyncio.sleep(BLOCK_INTERVAL / 2)
+            return await t2collect.read_masterchain(pool, chain.base, chain.base + 5, parallel=6)
+
+        mcs = asyncio.run(scenario())
+        self.assertEqual([m.seqno for m in mcs], list(range(chain.base, chain.base + 6)))
+        by_block: dict[int, set[str]] = {}
+        for method, seqno, url in transport.served:
+            if method in ("getBlockHeader", "getShards"):
+                by_block.setdefault(seqno, set()).add(url)
+        self.assertTrue(all(len(urls) == 1 for urls in by_block.values()), by_block)
+        self.assertGreater(len(set().union(*by_block.values())), 1)  # still spread
 
 
 if __name__ == "__main__":

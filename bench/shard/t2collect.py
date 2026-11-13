@@ -41,7 +41,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from shard import t2check  # noqa: E402
-from shard.rpc import PacedRpc, RateLimited, Reader, RpcError  # noqa: E402
+from shard.rpc import PacedRpc, RateLimited, Reader, ReaderPool, RpcError  # noqa: E402
 from shard.t2check import (  # noqa: E402
     BlockKey,
     BlockRecord,
@@ -215,21 +215,26 @@ async def read_masterchain(rpc: Reader, lo: int, hi: int, parallel: int = 4) -> 
         raise ValueError("a masterchain range needs 0 <= lo <= hi")
 
     async def one(seqno: int) -> McRecord | None:
-        try:
-            return await read_one(seqno)
-        except (RpcError, RateLimited):
-            # An unread masterchain block is a gap in the layout record, never a guess.
-            return None
+        # getShards does not name the block it answers for, so a pooled read takes a
+        # block's header and its shard tops from one node, and moves on as a pair.
+        sources: list[Reader] = list(rpc.order()) if isinstance(rpc, ReaderPool) else [rpc]
+        for source in sources:
+            try:
+                return await read_one(source, seqno)
+            except (RpcError, RateLimited, OSError, TimeoutError):
+                continue
+        # An unread masterchain block is a gap in the layout record, never a guess.
+        return None
 
-    async def read_one(seqno: int) -> McRecord:
-        header = await rpc.call(
+    async def read_one(source: Reader, seqno: int) -> McRecord:
+        header = await source.call(
             "getBlockHeader",
             {"workchain": -1, "shard": str(MASTERCHAIN_SHARD), "seqno": seqno},
         )
         ref = parse_block_id(header.get("id"))
         if ref.seqno != seqno or ref.workchain != -1:
             raise ValueError(f"masterchain header {seqno} answered for {ref.label()}")
-        shards = await rpc.call("getShards", {"seqno": seqno})
+        shards = await source.call("getShards", {"seqno": seqno})
         tops = tuple(
             parse_block_id(s) for s in shards.get("shards", []) if int(s.get("workchain", -1)) == 0
         )
@@ -283,13 +288,17 @@ async def walk_blocks(
         headers = await asyncio.gather(
             *(rpc.call("getBlockHeader", _block_params(r)) for r in wave), return_exceptions=True
         )
-        for header in headers:
-            if isinstance(header, (RpcError, RateLimited)):
+        for asked, header in zip(wave, headers, strict=True):
+            if isinstance(header, (RpcError, RateLimited, OSError, TimeoutError)):
                 # The block stays unread; check_continuity reports it as a gap.
                 continue
             if isinstance(header, BaseException):
                 raise header
             record = parse_header(header)
+            if record.ref != asked:
+                # Blocks are asked for by position; a header with another root hash is a
+                # different block (another node's fork), so this one stays unread.
+                continue
             blocks[record.ref.key] = record
             pending.extend(record.prev)
     return blocks
