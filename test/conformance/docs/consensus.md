@@ -31,18 +31,21 @@ harness error, because `block::ValidatorSet` aborts on it.
 
 ### Families (`vectors/consensus/fixtures/`)
 
-| Family | Fixtures | Source |
-|---|---|---|
-| `quorum` | 59 | authored boundaries (0..10 equal validators, 100..102, the protocol cap, 2^64-1, signed above total) |
-| `weight-total` | 7 | authored (empty, zero weight, exactly the cap, above it) |
-| `protocol-version` | 6 | RTOS `simplex-protocol-predicates.tsv` (versions 0-4, values as expectations) + 2^32-1 |
-| `validator-set` | 8 | real: the validator sets the epoch-5 proofs were checked against |
-| `session` | 27 | 8 real + 19 authored variants (each constructor and options-hash branch, other network, config, catchain seqno, key block, member order, classical members) |
-| `vote` | 84 | 24 real signatures (every signer of the 8 real certificates), 8 authored mutations, 52 converted RTOS rows (`pq-finality`, `live-pq`, `live-pq-chain` notarize/finalize rows) |
-| `finality` | 47 | 16 real (each block through its proof and as an explicit set), 22 authored mutations of a real certificate, 9 on the RTOS two-validator set |
-| `decode-proof` | 11 | real: 8 block proofs and 3 key-block proofs |
-| `key-block-context` | 8 | real |
-| `proof-link` | 13 | 8 real + 5 authored refusals |
+A family is frozen in one file per context source, `<family>-real` (`replay`), `<family>-authored` and
+`<family>-rtos` (`migrated:rtos/<family>`); 270 fixtures in all.
+
+| Family | real | authored | rtos | Contexts |
+|---|---|---|---|---|
+| `quorum` | | 59 | | 0..10 equal validators, 100..102, the protocol cap, 2^64-1, signed above total |
+| `weight-total` | | 7 | | empty, zero weight, exactly the cap, above it |
+| `protocol-version` | | 1 | 5 | RTOS `simplex-protocol-predicates.tsv` versions 0-4 (its values as expectations), 2^32-1 |
+| `validator-set` | 8 | | | the sets the epoch-5 proofs were checked against |
+| `session` | 8 | 17 | | each constructor and options-hash branch, other network, config, catchain seqno, key block, member order, classical members |
+| `vote` | 24 | 8 | 52 | every signature of the 8 real certificates; mutations; RTOS `pq-finality`, `live-pq`, `live-pq-chain` notarize/finalize rows |
+| `finality` | 16 | 22 | 9 | each real block through its proof and as an explicit set; mutations of a real certificate; the RTOS two-validator set |
+| `decode-proof` | 11 | | | 8 block proofs and 3 key-block proofs |
+| `key-block-context` | 8 | | | |
+| `proof-link` | 8 | 5 | | |
 
 Real material: `migrate/consensus_contexts.py contexts` reads masterchain block proofs and key-block
 proofs from a validator's package directory of the public-testnet epoch-5 archive (blocks 117750, 117751,
@@ -63,22 +66,23 @@ partial effect). The effects come from the reference; `consensus_contexts.py che
 `conformance-consensus-crosscheck`) requires every expectation to hold and the families to agree with
 each other: the lite and validator session derivations, the raw `session` derivation and the session the
 chain's certificate carries are one value; the computed validator set hash is the header's; the header's
-global id is ConfigParam 19; `decode_proof` and `key_block_context` decode the same certificate; no two
-authored session variants collide with each other or with a real session.
+global id is ConfigParam 19; `decode_proof` and `key_block_context` decode the same certificate; two
+different session contexts never derive the same session.
 
-Regenerating (from a clean, committed reference build):
+Regenerating (from a clean, committed reference build; `create` runs `runner/conformance.py create` per
+file with its family and source, and keeps families with hex fields free of blobs, because the blob store
+takes any long base64-looking string):
 
 ```
 python3 test/conformance/migrate/consensus_contexts.py contexts --reference build/test/conformance/conformance-ref-cli \
     --archive <epoch-5 node package directory> --rtos <dir with the five RTOS files> --out <scratch>
-for f in <scratch>/*.contexts.jsonl; do family=$(basename $f .contexts.jsonl)
-  python3 test/conformance/runner/conformance.py create --reference build/test/conformance/conformance-ref-cli \
-      --harness consensus --family $family --source authored $f test/conformance/vectors/consensus/fixtures/$family.jsonl
-done
+python3 test/conformance/migrate/consensus_contexts.py create --reference build/test/conformance/conformance-ref-cli \
+    --contexts <scratch> test/conformance/vectors/consensus
 ```
 
-(`--source` is per family: `replay` for the real families, `migrated:rtos/...` for converted ones; the
-script prints the counts.)
+The RTOS files are `tl/rtos_api/tests/data/{pq-finality,pq-finality-keys,live-pq,live-pq-chain}.json` and
+`rtos/consensus-common/src/tests/data/simplex-protocol-predicates.tsv` of the RTOS repository. Regenerating
+the contexts twice gives byte-identical files.
 
 ### Not a pure function, so not in the harness
 
@@ -123,6 +127,8 @@ uv run python test/conformance/scenarios/run_scenarios.py --build-dir build --so
     --work-dir build/conformance-network --node cpp:build/validator-engine/validator-engine --nodes 4
 ```
 
-ctest: `conformance-network-scenarios`, label `conformance-network` (not run by `-L conformance`).
+ctest: `conformance-network-scenarios`, label `conformance-network`. It starts validators only when
+`CONFORMANCE_NETWORK=1` is set (`CONFORMANCE_NETWORK=1 ctest -L conformance-network`); otherwise it reports
+itself skipped, including under `ctest -L conformance`, whose regex also matches this label.
 Binaries needed: `validator-engine dht-server create-state generate-random-id tos-pq-consensus-key
 toslibjson gen_fif conformance-ref-cli`, and `uv run test/tostester/generate_tl.py` once.

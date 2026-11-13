@@ -68,6 +68,7 @@ DEFAULT_TIMEOUT_SECONDS = 300.0
 POLL_SECONDS = 0.5
 REFERENCE_TIMEOUT_SECONDS = 600
 MAX_NODES = 16
+SKIPPED = 77
 
 
 class ScenarioError(Exception):
@@ -518,7 +519,15 @@ def main(argv: Sequence[str] | None = None, runner: Callable[..., Any] | None = 
     parser.add_argument("--expect-state", action="append", default=[], help="<seqno>=<state root>")
     parser.add_argument("--allow-rotational", action="store_true")
     parser.add_argument("--report", type=Path)
+    parser.add_argument(
+        "--only-if-env",
+        metavar="NAME",
+        help="skip (exit 77) unless the environment variable NAME is 1; ctest uses it",
+    )
     args = parser.parse_args(argv)
+    if args.only_if_env and os.environ.get(args.only_if_env) != "1":
+        print(f"skipped: set {args.only_if_env}=1 to start validator networks")
+        return SKIPPED
     try:
         if args.blocks < 4:
             raise ScenarioError("--blocks must be at least 4")

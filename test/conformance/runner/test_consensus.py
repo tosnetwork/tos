@@ -284,6 +284,9 @@ class ScenarioComparisonTests(unittest.TestCase):
             "--allow-rotational",
         ]
         self.assertEqual(rs.main(argv, runner=fake), 0)
+        os.environ.pop("CONFORMANCE_NETWORK_TEST_GATE", None)
+        gated = [*argv, "--only-if-env", "CONFORMANCE_NETWORK_TEST_GATE"]
+        self.assertEqual(rs.main(gated, runner=fake), rs.SKIPPED)
         self.assertEqual(rs.main([*argv, "--expect-state", f"1={'0' * 64}"], runner=fake), 1)
         reports = cast(
             list[dict[str, Any]], json.loads((root / "work" / "run-2" / "report.json").read_text())
