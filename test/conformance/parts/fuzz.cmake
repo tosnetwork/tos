@@ -53,7 +53,10 @@ function(conformance_fuzz_library name)
   add_library(${name} SHARED ${CONFORMANCE_REF_SOURCES} ${CMAKE_SOURCE_DIR}/emulator/emulator-extern.cpp ${ARGN})
   target_include_directories(${name} PRIVATE ${CMAKE_SOURCE_DIR}/emulator ${CMAKE_BINARY_DIR}/emulator
     ${CONFORMANCE_REF_DIR})
-  target_link_libraries(${name} PRIVATE emulator_static git)
+  # The same libraries the reference links for its harnesses, evaluated at generation time so every part
+  # counts, but static: the shared emulator is replaced by emulator_static and emulator-extern.cpp above.
+  target_link_libraries(${name} PRIVATE emulator_static git
+    "$<FILTER:$<TARGET_PROPERTY:conformance-ref,LINK_LIBRARIES>,EXCLUDE,^(emulator|git)$>")
   target_link_options(${name} PRIVATE -Wl,-Bsymbolic -Wl,--version-script=${CONFORMANCE_FUZZ_EXPORTS})
   add_dependencies(${name} emulator)  # emulator_export.h
 endfunction()
