@@ -3,6 +3,6 @@
  "crypto/block/mc-config.cpp": 40.68,
  "crypto/block/transaction.cpp": 73.39,
  "crypto/pq/": 77.36,
- "crypto/vm/": 62.38,
+ "crypto/vm/": 63.57,
  "emulator/": 84.21
 }

@@ -99,3 +99,4 @@ work, separate from this suite.
 
 The codepage-0 instruction sweep (`vm-opcode-sweep`, 10,836 fixtures, all version 16) adds 35 differences: 21 in the
 0xcf builder/store range, 12 in the 0xd7 slice range and 2 in 0xf2.
+The guided-fuzzing family (`vm-fuzz-guided`, 7,573 fixtures) adds 109 more differences.

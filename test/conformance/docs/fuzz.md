@@ -115,3 +115,20 @@ untraced one.
 | `conformance-fuzz-trace` | with the hook: the first mutant mismatch is located at its first diverging step and the trace leaves the effects unchanged; without it: the trace request is refused |
 
 `runner/test_fuzz.py` checks the Python tools against fake targets, each check with a control that fails.
+
+## Guided fuzzing of the instrumented reference
+
+Configure a separate build directory with `-DCMAKE_C_FLAGS=-fsanitize=fuzzer-no-link` (the same for C++, executable
+and shared linker flags) and `-DCONFORMANCE_FUZZ_GUIDED=ON`; then the reference library and its twin carry coverage
+instrumentation and libFuzzer is steered by the VM and transaction code an input reaches.
+
+```
+python3 test/conformance/fuzz/guided.py campaign --build-dir build-fz --corpus corpus --seconds 900 --forks 8 --seeds <fixtures>
+python3 test/conformance/fuzz/guided.py harvest --build-dir build-fz --corpus corpus --seeds <fixtures> --out contexts.jsonl
+python3 test/conformance/runner/conformance.py create --reference build/test/conformance/conformance-ref-cli \
+    --harness vm --family vm-fuzz-guided --source fuzz contexts.jsonl vectors/vm/fixtures/vm-fuzz-guided.jsonl
+```
+
+First campaign (15 min, 8 forks, seeds vm-endstate and vm-opcode-sweep): about 7.55M executions, 25,691 edges,
+corpus 7,617, no crash or mismatch; 7,573 distinct contexts frozen as `vm-fuzz-guided`. They raised crypto/vm line
+coverage from 62.4% to 63.6% and executed one listed gap (the RIST255_MULBASE inner callback).
