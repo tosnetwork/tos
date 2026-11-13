@@ -40,7 +40,7 @@ checked. The operator's existing tick interval bounds warning frequency. The
 current/next configuration reads retain their existing transport trust boundary;
 this change affects local metadata availability, not consensus validity.
 
-Reproduce with `cargo +1.99.1 test --manifest-path tosctl/src/Cargo.toml -p elections --release --locked`.
+Reproduce with `cargo +1.100.0 test --manifest-path tosctl/src/Cargo.toml -p elections --release --locked`.
 The focused cases cover a late election, actual announced/expired duties, unrelated
 and already-retained addresses, non-shortening, malformed/bounded input, exact fee
 warning threshold, a closed-elector runner warning, failed balance/export reads,

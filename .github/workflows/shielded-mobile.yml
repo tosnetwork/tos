@@ -30,7 +30,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install pinned Rust
-        run: rustup toolchain install 1.99.1 --profile minimal --component clippy
+        run: rustup toolchain install 1.100.0 --profile minimal --component clippy
       - name: Lint and test payment staging with proving enabled
         working-directory: tools/shielded-pool-mobile
         run: |
@@ -44,7 +44,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install pinned Rust
-        run: rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
+        run: rustup toolchain install 1.100.0 --profile minimal --component clippy,rustfmt
       - name: Check build and sensitivity scripts
         run: |
           python3 -m pip install ruff==0.15.2

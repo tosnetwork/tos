@@ -53,7 +53,7 @@ revoke old direct scrape owners or prove production admission isolation. A fixed
 
 ## Run tests
 
-Use the repository-pinned Rust toolchain (1.99.1):
+Use the repository-pinned Rust toolchain (1.100.0):
 
 ```sh
 scripts/install-rust-toolchain.sh
