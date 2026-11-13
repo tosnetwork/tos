@@ -70,6 +70,15 @@ td::Result<std::string> run_vm(td::JsonObject &ctx) {
     }
   }
 
+  TRY_RESULT(chksig_always_succeed, ctx.get_optional_bool_field("chksig_always_succeed", false));
+  td::int64 max_library_loads = -1;
+  if (ctx.has_field("max_library_loads")) {
+    TRY_RESULT_ASSIGN(max_library_loads, ctx.get_required_long_field("max_library_loads"));
+    if (max_library_loads < 0 || max_library_loads > 0xffffffffLL) {
+      return td::Status::Error("max_library_loads must fit 32 bits unsigned");
+    }
+  }
+
   vm::VmState st{vm::load_cell_slice_ref(code),
                  version,
                  std::move(stack),
@@ -79,6 +88,10 @@ td::Result<std::string> run_vm(td::JsonObject &ctx) {
                  vm::VmLog{},
                  std::move(libraries),
                  std::move(c7)};
+  st.set_chksig_always_succeed(chksig_always_succeed);
+  if (max_library_loads >= 0) {
+    st.set_max_library_loads(static_cast<td::uint32>(max_library_loads));
+  }
   // run() returns out of gas as 13, so ~13 reports it as -14, as transactions do.
   const int exit_code = ~st.run();
   const bool committed = st.committed();
