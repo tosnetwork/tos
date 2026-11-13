@@ -55,7 +55,7 @@ Caused by:
 
 ## Reproduce
 
-Use a disposable checkout without another compiler/editor, Rust1.99.1, Cargo/Rayon/Tokio at most2workers, under the host thermal guard:
+Use a disposable checkout without another compiler/editor, the repository-pinned Rust toolchain (this evidence was recorded with 1.99.1), Cargo/Rayon/Tokio at most2workers, under the host thermal guard:
 
 ```sh
 python3 test/bonded-relayer/native_faults/storage_controls.py --checkout "$PWD" --out /path/to/new-receipts
