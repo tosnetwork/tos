@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from collections import deque
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Protocol
 
 PER_IP_REQUESTS = 600
 PER_IP_WINDOW = 10.0
@@ -170,3 +170,50 @@ class PacedRpc:
             "sent": self.sent,
             "throttled": self.throttled,
         }
+
+
+class Reader(Protocol):
+    """Anything that answers one JSON-RPC read: a ``PacedRpc`` or a ``ReaderPool``."""
+
+    async def call(self, method: str, params: dict[str, Any] | None = None) -> Any: ...
+
+
+class ReaderPool:
+    """Reads spread over several endpoints, each inside its own client's budget.
+
+    A call goes first to the next endpoint in turn that has room in its
+    budget, so concurrent reads use every endpoint's share. An endpoint that
+    answers with an error, is rate limited or cannot be reached is skipped,
+    and the call is tried once on each other endpoint; a node a block behind
+    the others then costs one extra request instead of a failed read. The
+    last error is raised when every endpoint failed. Blocks are read by id,
+    and the callers check that the answer is for the block they asked, so
+    reading consecutive blocks from different nodes binds nothing new.
+    """
+
+    def __init__(self, clients: list[PacedRpc]):
+        if not clients:
+            raise ValueError("a reader pool needs at least one endpoint")
+        self.clients = list(clients)
+        self._cursor = 0
+        self.failovers = 0
+
+    def order(self) -> list[PacedRpc]:
+        """Every client once: the next in turn with budget room first, then the rest."""
+        n = len(self.clients)
+        turn = [self.clients[(self._cursor + k) % n] for k in range(n)]
+        self._cursor = (self._cursor + 1) % n
+        with_room = [c for c in turn if c.budget.room() > 0]
+        return with_room + [c for c in turn if c not in with_room]
+
+    async def call(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        failure: Exception | None = None
+        for index, client in enumerate(self.order()):
+            if index:
+                self.failovers += 1
+            try:
+                return await client.call(method, params)
+            except (RpcError, RateLimited, OSError, TimeoutError) as error:
+                failure = error
+        assert failure is not None
+        raise failure

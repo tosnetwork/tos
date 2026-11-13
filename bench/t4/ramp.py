@@ -62,7 +62,12 @@ transfers. Each request a wallet signs has a deadline above its last one, so
 a refused request rebuilt before chain time moves is still a new message.
 The follower advances past a masterchain block only once all of its shard
 blocks are read in full; a block still unread after ``READ_ATTEMPTS`` reads
-stops the measurement.
+stops the measurement. It reads the windows of up to 16 masterchain blocks
+at once, spread over every ``--rpc`` endpoint (``ReaderPool``), and applies
+them in order. A request's deadline counts from the live head's time, read
+at most once a second; expiry counts from the follower's frontier, which is
+what the walk has proved. ``results.json`` records the most the frontier
+trailed the head (``follower.max_lag_s``).
 
 Exit statuses (``exit_status``): 0 when the ramp ran as specified (every
 step passed, or it ended at the first counted failing step), 1 when the
@@ -107,7 +112,7 @@ from pytosiq_core import Address, Cell, MessageAny
 from shard import hopbench, remote, t2collect
 from shard import journal as jr
 from shard.remote import BenchWallet, Remote, Secret, raw
-from shard.rpc import PacedRpc, RateLimited, RpcError
+from shard.rpc import PacedRpc, RateLimited, Reader, ReaderPool, RpcError
 from shard.t2check import BlockRecord, BlockRef, McRecord, below_frontier
 
 from t4.ledger import NO_WALLET, External, Ledger, StepRule, step_layout, step_metrics
@@ -123,6 +128,10 @@ DEADLINE_GRACE = jr.DEADLINE_GRACE
 STALL_SECONDS = 120.0
 # Reads of one masterchain block's shard blocks before the follower gives up on it.
 READ_ATTEMPTS = 3
+# A new request's deadline counts from the live head's time, read at most this often (s)...
+LIVE_REFRESH = 1.0
+# ...and never from a reading older than this (s): without one no request is built.
+LIVE_MAX_AGE = 5.0
 MAX_WALLETS = 65_536
 log = logging.getLogger("t4-ramp")
 
@@ -644,9 +653,12 @@ def unread_blocks(blocks: dict[Any, BlockRecord], last: McRecord, cur: McRecord)
     seen: set[Any] = set()
     out = []
     for ref in wanted:
-        if ref.key in blocks or ref.key in frontier or ref.key in seen:
+        # Full ids: a block read or an opening top with another root hash is not this one.
+        read, top = blocks.get(ref.key), frontier.get(ref.key)
+        if (read is not None and read.ref == ref) or top == ref or ref.key in seen:
             continue
-        if below_frontier(ref, frontier) is not None:
+        # A back-link onto an opening top's position with another root does not reach it.
+        if top is None and below_frontier(ref, frontier) is not None:
             continue
         seen.add(ref.key)
         out.append(ref)
@@ -666,7 +678,7 @@ class Follower:
 
     def __init__(
         self,
-        rpc: PacedRpc,
+        rpc: Reader,
         ledger: Ledger,
         on_included: Callable[[External], None],
         first: McRecord,
@@ -695,25 +707,24 @@ class Follower:
     async def _pause(self) -> None:
         await asyncio.sleep(max(self.poll, 0.02))
 
-    async def read_window(self, cur: McRecord) -> list[Any] | None:
-        """Every transaction of the shard blocks between the frontier and ``cur``.
+    async def read_window(self, prev: McRecord, cur: McRecord) -> list[Any] | str:
+        """Every transaction of the shard blocks between ``prev``'s tops and ``cur``'s.
 
-        None when a header or a transaction list is still unread after the
-        bounded attempts.
+        Why it failed, when a header or a transaction list is still unread
+        after the bounded attempts.
         """
         blocks: dict[Any, BlockRecord] = {}
         for attempt in range(self.read_attempts):
-            blocks = await t2collect.walk_blocks(self.rpc, [self.last, cur], max_blocks=4096)
-            missing = unread_blocks(blocks, self.last, cur)
+            blocks = await t2collect.walk_blocks(self.rpc, [prev, cur], max_blocks=4096)
+            missing = unread_blocks(blocks, prev, cur)
             if not missing:
                 break
             self.incomplete_blocks += [list(r.key) for r in missing]
             if attempt + 1 == self.read_attempts:
-                self.failed = (
+                return (
                     f"shard block headers unreadable after {self.read_attempts} attempts:"
                     f" {[list(r.key) for r in missing[:4]]} (masterchain block {cur.seqno})"
                 )
-                return None
             await self._pause()
         refs = [b.ref for b in blocks.values()]
         # Load wallets are basechain accounts, so masterchain transactions are not read.
@@ -730,11 +741,10 @@ class Follower:
                     self.incomplete_blocks.append(list(key))
             left = [list(r.key) for r in refs if r.key not in done]
             if left and attempt + 1 == self.read_attempts:
-                self.failed = (
+                return (
                     f"shard block transactions unreadable after {self.read_attempts} attempts:"
                     f" {left[:4]} (masterchain block {cur.seqno})"
                 )
-                return None
             if left:
                 await self._pause()
         return [tx for block in done.values() for tx in block.txs]
@@ -747,11 +757,23 @@ class Follower:
         if head <= self.last.seqno:
             return 0
         hi = min(head, self.last.seqno + self.per_round)
-        fresh = await t2collect.read_masterchain(self.rpc, self.last.seqno + 1, hi)
+        fresh = await t2collect.read_masterchain(
+            self.rpc, self.last.seqno + 1, hi, parallel=self.per_round
+        )
+        # Each window is fixed by its two masterchain blocks, so the windows are read
+        # together and applied in order: the frontier still moves one block at a time,
+        # and nothing past the first window that failed is applied.
+        opening = [self.last, *fresh[:-1]]
+        windows = await asyncio.gather(
+            *(self.read_window(p, c) for p, c in zip(opening, fresh, strict=True)),
+            return_exceptions=True,
+        )
         advanced = 0
-        for cur in fresh:
-            txs = await self.read_window(cur)
-            if txs is None:
+        for cur, txs in zip(fresh, windows, strict=True):
+            if isinstance(txs, BaseException):
+                raise txs
+            if isinstance(txs, str):
+                self.failed = txs
                 log.error("follower stopped: %s", self.failed)
                 return advanced
             included = self.ledger.observe((tx, cur.seqno, cur.gen_utime) for tx in txs)
@@ -809,11 +831,16 @@ class Ramp:
     tasks: set[asyncio.Task[None]] = field(default_factory=set)
     steps_done: list[dict[str, Any]] = field(default_factory=list)
     stated_rate: float | None = None
+    live: tuple[float, int] | None = None  # (monotonic time read, the live head's gen_utime)
+    live_lag_max: int = 0  # the most the follower's frontier trailed the live head (chain s)
+    pool: ReaderPool = field(init=False)  # the follower's and the live clock's reads
+    clock: Callable[[], float] = time.monotonic  # the live reading's age
     _cursor: int = 0
     _send_cursor: int = 0
 
     def __post_init__(self) -> None:
         self.ledger.on_delivery = self.delivered
+        self.pool = ReaderPool([e.rpc for e in self.endpoints])
 
     @property
     def reader(self) -> PacedRpc:
@@ -865,8 +892,38 @@ class Ramp:
         return count
 
     def chain_now(self) -> int:
+        """The follower's frontier time: what a complete walk has proved, for expiry."""
         assert self.follower is not None
         return self.follower.chain_now
+
+    async def live_now(self) -> int | None:
+        """The chain time a new request's deadline counts from: the live head's.
+
+        The follower's frontier trails the head by however far its reads are
+        behind, and a deadline counted from it can be past before the request
+        is sent: the wallet then refuses it as expired (exit code 1805). The
+        head is read at most every ``LIVE_REFRESH`` seconds and never runs
+        below the frontier; None when no reading is younger than
+        ``LIVE_MAX_AGE``, and then no request is built. Expiry still counts
+        from the frontier (``chain_now``), which is what the walk proved.
+        """
+        floor = self.follower.chain_now if self.follower is not None else 0
+        if self.live is None or self.clock() - self.live[0] >= LIVE_REFRESH:
+            # A reading is as old as its read's start: budget waits, retries and failover
+            # between the head lookup and its header all count against LIVE_MAX_AGE.
+            started = self.clock()
+            try:
+                _, utime = await t2collect.head_time(self.pool)
+            except Exception as error:  # an old reading serves until LIVE_MAX_AGE, then none
+                log.warning("live head read failed: %s", type(error).__name__)
+            else:
+                last = self.live[1] if self.live is not None else 0
+                self.live = (started, max(utime, floor, last))
+        if self.live is None or self.clock() - self.live[0] > LIVE_MAX_AGE:
+            return None
+        now = max(self.live[1], floor)
+        self.live_lag_max = max(self.live_lag_max, now - floor)
+        return now
 
     # ── wallet state ──
 
@@ -1039,9 +1096,15 @@ class Ramp:
         by a distinct one (``distinct_deadline``), linked to it as ``prior``.
         """
         room = self.send_room()
+        live = await self.live_now()
         ready: list[tuple[External, LoadWallet, Endpoint, Cell, str | None]] = []
         for intended, size in due:
-            now = self.chain_now()
+            if live is None:
+                self.ledger.refuse(
+                    self.build(step, intended, size, None), "local: no live chain time"
+                )
+                continue
+            now = live
             w = self.next_free(now)
             if w is None:
                 self.ledger.refuse(self.build(step, intended, size, None), "local: no free wallet")
@@ -1778,7 +1841,7 @@ async def run_locked(
         journal,
     )
     first = (await t2collect.read_masterchain(ramp.reader, (h := await ramp.head()), h))[0]
-    ramp.follower = Follower(ramp.reader, ledger, ramp.included, first, a.poll)
+    ramp.follower = Follower(ramp.pool, ledger, ramp.included, first, a.poll)
     follower_task = asyncio.ensure_future(ramp.follower.run())
     record["config_start"] = await ramp.config()
     try:
@@ -1837,6 +1900,8 @@ async def run_locked(
             "failed": ramp.follower.failed,
             "mc_from": ramp.follower.mcs[0].seqno,
             "mc_to": ramp.follower.last.seqno,
+            "max_lag_s": ramp.live_lag_max,
+            "reader_failovers": ramp.pool.failovers,
         },
         "config_end": await ramp.config(),
     }

@@ -41,7 +41,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from shard import t2check  # noqa: E402
-from shard.rpc import PacedRpc, RateLimited, RpcError  # noqa: E402
+from shard.rpc import PacedRpc, RateLimited, Reader, ReaderPool, RpcError  # noqa: E402
 from shard.t2check import (  # noqa: E402
     BlockKey,
     BlockRecord,
@@ -209,27 +209,34 @@ def _block_params(ref: BlockRef) -> dict[str, Any]:
     return {"workchain": ref.workchain, "shard": str(ref.shard), "seqno": ref.seqno}
 
 
-async def read_masterchain(rpc: PacedRpc, lo: int, hi: int, parallel: int = 4) -> list[McRecord]:
+async def read_masterchain(rpc: Reader, lo: int, hi: int, parallel: int = 4) -> list[McRecord]:
     """Every masterchain block in [lo, hi], with its basechain shard tops."""
     if not 0 <= lo <= hi:
         raise ValueError("a masterchain range needs 0 <= lo <= hi")
 
     async def one(seqno: int) -> McRecord | None:
-        try:
-            return await read_one(seqno)
-        except (RpcError, RateLimited):
-            # An unread masterchain block is a gap in the layout record, never a guess.
-            return None
+        # getShards does not name the block it answers for, so a pooled read takes a
+        # block's header and its shard tops from one node, and moves on as a pair.
+        sources: list[Reader] = list(rpc.order()) if isinstance(rpc, ReaderPool) else [rpc]
+        for index, source in enumerate(sources):
+            if index and isinstance(rpc, ReaderPool):
+                rpc.failovers += 1  # the pair moved to the next node; counted like call()
+            try:
+                return await read_one(source, seqno)
+            except (RpcError, RateLimited, OSError, TimeoutError):
+                continue
+        # An unread masterchain block is a gap in the layout record, never a guess.
+        return None
 
-    async def read_one(seqno: int) -> McRecord:
-        header = await rpc.call(
+    async def read_one(source: Reader, seqno: int) -> McRecord:
+        header = await source.call(
             "getBlockHeader",
             {"workchain": -1, "shard": str(MASTERCHAIN_SHARD), "seqno": seqno},
         )
         ref = parse_block_id(header.get("id"))
         if ref.seqno != seqno or ref.workchain != -1:
             raise ValueError(f"masterchain header {seqno} answered for {ref.label()}")
-        shards = await rpc.call("getShards", {"seqno": seqno})
+        shards = await source.call("getShards", {"seqno": seqno})
         tops = tuple(
             parse_block_id(s) for s in shards.get("shards", []) if int(s.get("workchain", -1)) == 0
         )
@@ -242,8 +249,22 @@ async def read_masterchain(rpc: PacedRpc, lo: int, hi: int, parallel: int = 4) -
     return out
 
 
+async def head_time(rpc: Reader) -> tuple[int, int]:
+    """The masterchain head the node reports now: (seqno, gen_utime)."""
+    info = await rpc.call("getMasterchainInfo")
+    seqno = parse_block_id(info.get("last")).seqno
+    header = await rpc.call(
+        "getBlockHeader", {"workchain": -1, "shard": str(MASTERCHAIN_SHARD), "seqno": seqno}
+    )
+    ref = parse_block_id(header.get("id"))
+    utime = header.get("gen_utime")
+    if ref.seqno != seqno or ref.workchain != -1 or type(utime) is not int or utime <= 0:
+        raise ValueError(f"masterchain header {seqno} answered for {ref.label()} at {utime!r}")
+    return seqno, utime
+
+
 async def walk_blocks(
-    rpc: PacedRpc, mcs: list[McRecord], max_blocks: int = 200_000
+    rpc: Reader, mcs: list[McRecord], max_blocks: int = 200_000
 ) -> dict[BlockKey, BlockRecord]:
     """Headers of every block between the opening tops and the later tops, by back-links.
 
@@ -269,19 +290,23 @@ async def walk_blocks(
         headers = await asyncio.gather(
             *(rpc.call("getBlockHeader", _block_params(r)) for r in wave), return_exceptions=True
         )
-        for header in headers:
-            if isinstance(header, (RpcError, RateLimited)):
+        for asked, header in zip(wave, headers, strict=True):
+            if isinstance(header, (RpcError, RateLimited, OSError, TimeoutError)):
                 # The block stays unread; check_continuity reports it as a gap.
                 continue
             if isinstance(header, BaseException):
                 raise header
             record = parse_header(header)
+            if record.ref != asked:
+                # Blocks are asked for by position; a header with another root hash is a
+                # different block (another node's fork), so this one stays unread.
+                continue
             blocks[record.ref.key] = record
             pending.extend(record.prev)
     return blocks
 
 
-async def read_transactions(rpc: PacedRpc, ref: BlockRef) -> BlockTxs:
+async def read_transactions(rpc: Reader, ref: BlockRef) -> BlockTxs:
     """Every page of one block's transaction list."""
     txs: list[Tx] = []
     params = _block_params(ref) | {"count": TX_PAGE}
@@ -336,7 +361,7 @@ async def wait_until_past(
 
 
 async def read_all_transactions(
-    rpc: PacedRpc, refs: list[BlockRef], parallel: int = 8
+    rpc: Reader, refs: list[BlockRef], parallel: int = 8
 ) -> dict[BlockKey, BlockTxs]:
     out: dict[BlockKey, BlockTxs] = {}
     for start in range(0, len(refs), parallel):
