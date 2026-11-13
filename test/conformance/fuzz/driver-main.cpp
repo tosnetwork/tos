@@ -293,6 +293,11 @@ int campaign(const Options &o, const SeedPool &pool) {
   if (o.expect_mismatch) {
     return tally.mismatched > 0 ? 0 : 1;
   }
+  // Both sides refusing every case compares nothing that ran; a campaign needs equal executed cases.
+  if (tally.equal == 0) {
+    std::cerr << "conformance-fuzz: no case executed on both sides (all refused)\n";
+    return 1;
+  }
   return tally.mismatched == 0 ? 0 : 1;
 }
 

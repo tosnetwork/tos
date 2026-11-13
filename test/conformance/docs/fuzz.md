@@ -91,7 +91,7 @@ mutant changed.
 
 ## VM step trace
 
-Configuring with `-DTOS_VM_STEP_TRACE=ON` (default OFF; the option is declared in `parts/fuzz.cmake`)
+Configuring a separate build directory with `-DTOS_VM_STEP_TRACE=ON -DTOS_VM_STEP_TRACE_TEST_BUILD=ON` (default OFF; configuration stops if only the first is set; both are declared in `parts/fuzz.cmake`)
 compiles a per-step hook into the VM (`crypto/vm/step-trace.h`): after the step counter is incremented and
 before the instruction runs, and after every charged cell load, it calls a sink installed on the thread.
 Without the option the hook does not exist in the build. With it, a vm context with `"trace": true` returns

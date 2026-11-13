@@ -310,6 +310,12 @@ td::Result<std::string> apply_block(Original &block_input, const Cell &prev_inpu
         return false;
       }
       original = cb.finalize();
+      // Every later step reads the account through the entry's first reference.
+      if (vm::load_cell_slice(original).size_refs() < 1) {
+        why = {"prev_state_malformed"};
+        failure = td::Status::Error("ShardAccount entry without an account reference");
+        return false;
+      }
     }
     // One emulator per account, as the replay creates one, set from the block's context.
     why = {"execution_refused"};

@@ -49,7 +49,7 @@ def boolean(value: object, where: str) -> bool:
 
 
 def text(value: object, pattern: re.Pattern[str], where: str) -> str:
-    if not isinstance(value, str) or not pattern.match(value):
+    if not isinstance(value, str) or not pattern.fullmatch(value):
         raise FixtureError(f"{where}: invalid value")
     return value
 

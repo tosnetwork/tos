@@ -264,6 +264,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 1
         if args.expect_mismatch:
             return 0 if tally["mismatched"] > 0 else 1
+        # Both sides refusing every case compares nothing that ran.
+        if tally["equal"] == 0:
+            print("no case executed on both sides (all refused)", file=sys.stderr)
+            return 1
         return 0 if tally["mismatched"] == 0 else 1
     except (c.FixtureError, json.JSONDecodeError, subprocess.TimeoutExpired, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)

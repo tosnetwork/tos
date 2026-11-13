@@ -6,7 +6,14 @@
 # The VM step trace hook (crypto/vm/step-trace.h) is compiled only when this is ON. It is for test builds:
 # a build with it is not a production build.
 option(TOS_VM_STEP_TRACE "Test builds only: compile the per-step VM trace hook used by conformance diagnosis." OFF)
+# Every node binary of a build directory links tos_crypto_core, so turning it on needs a second, explicit
+# statement that the build directory is a test build; otherwise configuration stops.
+option(TOS_VM_STEP_TRACE_TEST_BUILD "Confirm that this build directory is a test build (required by TOS_VM_STEP_TRACE)." OFF)
 if (TOS_VM_STEP_TRACE)
+  if (NOT TOS_VM_STEP_TRACE_TEST_BUILD)
+    message(FATAL_ERROR "TOS_VM_STEP_TRACE puts the trace hook into every binary of this build, validator-engine "
+      "included. Use a separate build directory and also set -DTOS_VM_STEP_TRACE_TEST_BUILD=ON.")
+  endif()
   message(WARNING "TOS_VM_STEP_TRACE is ON: this build carries the VM step trace hook and is for tests only")
   target_compile_definitions(tos_crypto_core PUBLIC TOS_VM_STEP_TRACE)
 endif()

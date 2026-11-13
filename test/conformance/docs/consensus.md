@@ -102,7 +102,7 @@ These belong to scenarios.
 
 ## Network scenarios (`scenarios/run_scenarios.py`)
 
-A Hive-style runner over the repository's local-network tooling (`test/tostester`). Each node's
+A black-box multi-node runner over the repository's local-network tooling (`test/tostester`). Each node's
 implementation is a parameter: `--node cpp:<validator-engine>` or `--node adapter:<launcher>`, once for all
 nodes or once per node. An adapter is any executable that accepts the validator-engine command line
 (`--global-config`, `--local-config`, `--db`, `-v`, the engine flags) and speaks the same lite-server, DHT
