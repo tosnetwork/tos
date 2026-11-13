@@ -85,3 +85,14 @@ contexts were converted from the other implementation's tests; all tree-sourced 
 Fields: stack 7,330, gas_used 5,089, exit_code 4,202, committed/c4/c5 3,418, steps 962 (a fixture can
 differ in several). These are divergences of the tosctl VM from the C++ VM, not fixture defects; the lane
 is red until they are fixed in the tosctl VM. The REL-02 chain lane (txn) is 576/576.
+
+By global version (the network runs 16; STATUS 13.219: the tosctl VM only has to equal the C++ VM at 16):
+
+| Version | Mismatched | Families |
+|---|---|---|
+| below 16 | 6,305 | not defects under that ruling |
+| 17 and above | 1,699 | rtos-sendmsg (v19 packing cases) and others; not active on the network |
+| exactly 16 | 707 | rtos-opcode-stack 667 (dictionary get on null roots), rtos-poseidon2 25, rtos-decode-matrix 12, rtos-decode-vectors 3 |
+
+The 707 version-16 differences are defects of the tosctl VM against the C++ reference. Fixing them is tosctl VM
+work, separate from this suite.
