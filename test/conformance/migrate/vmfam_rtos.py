@@ -29,8 +29,9 @@ Families (RTOS test, data, VM set-up):
                         opcode-gates
     bchk                test_bchk_parity.rs, export RTOS_BCHK_EXPORT; as opcode-gates
     library-budget      test_library_budget.rs, export RTOS_LIBRARY_BUDGET_EXPORT; no c7, the
-                        inputs as cells, one library collection {a, b}; cases with a library
-                        load limit are not converted
+                        inputs as cells, one library collection {a, b}; the cases without a
+                        library load limit
+    library-budget-limits  the same export, the cases with a load limit, as max_library_loads
     poseidon2           test_poseidon2.rs, export RTOS_POSEIDON_EXPORT; no c7, the inputs, the
                         case's library collection when it has one
     sendmsg             test_sendmsg_parity.rs, export RTOS_SENDMSG_EXPORT; c7 = (info) built from
@@ -44,10 +45,10 @@ Families (RTOS test, data, VM set-up):
     pq-suite            test_pq_suite.rs, data pq-suite.json;            code the opcode repeated
     pq-mldsa44          test_pq_mldsa44.rs, data pq-mldsa44.json;        with DROP between, or the
     lms-fee             test_lms_fee.rs, data lms-fee.json;              compiled program entered
-                                                                         with 0 on top; cases with
-                                                                         ignore = true (set
-                                                                         chksig_always_succeed) are
-                                                                         not converted
+                                                                         with 0 on top; the cases
+                                                                         with ignore = false
+    pq-chksig           the ignore = true cases of those four, --data the RTOS vm/tests/data
+                        directory, ids <family>/<case>, chksig_always_succeed = true
     sha256c             test_sha256c.rs, data sha256c.json; no c7, the cell repeated, SHA256C
                         repeated with DROP between, the case's library collection
     short-code          test_cont.rs short_code_matches_reference, data short-code.tsv; c7 = (),
@@ -249,13 +250,21 @@ def continuation_save(path: Path, _: Builder) -> Result:
     return out
 
 
-def library_budget(path: Path, builder: Builder) -> Result:
+def limit_id(name: str) -> str:
+    """A fixture id for a library-budget case name: ``limitSome(2)`` becomes ``limitSome-2``."""
+    return name.replace("(", "-").replace(")", "")
+
+
+def library_budget(path: Path, builder: Builder, limits: bool = False) -> Result:
+    """The cases without a library load limit, or with ``limits`` only those with one, which
+    run with max_library_loads (rtos-library-budget-limits)."""
     out = Result()
     rows = exported_rows(path)
     pending: list[tuple[Json, int]] = []
     for row in rows:
-        if row["limit"] is not None:
-            out.skipped.append((row["name"], "set_max_library_loads (library load limit)"))
+        if (row["limit"] is not None) != limits:
+            if not limits:
+                out.skipped.append((row["name"], "library load limit: in library-budget-limits"))
             continue
         pending.append((row, builder.ask({"op": "libdict", "cells": row["libraries"]})))
     builder.run()
@@ -269,7 +278,12 @@ def library_budget(path: Path, builder: Builder) -> Result:
             [cell_item(x) for x in row["inputs"]],
             libraries=None if libraries is None else b64(libraries),
         )
-        out.entries.append({"fixture_id": row["name"], "context": ctx})
+        if limits:
+            limit = int(row["limit"])
+            if not 0 <= limit <= 0xFFFFFFFF:
+                raise SystemExit(f"{row['name']}: limit outside 32 bits")
+            ctx["max_library_loads"] = limit
+        out.entries.append({"fixture_id": limit_id(row["name"]), "context": ctx})
     return out
 
 
@@ -499,7 +513,9 @@ def pq_operand(operand: Any, cells: Sequence[str], family: str) -> Json | None:
     raise SystemExit(f"{family}: unknown operand {operand!r}")
 
 
-def pq_family(family: str) -> Callable[[Path, Builder], Result]:
+def pq_family(family: str, ignored: bool = False) -> Callable[[Path, Builder], Result]:
+    """The cases with ignore = false, or with ``ignored`` only those with ignore = true, which run
+    with chksig_always_succeed (rtos-pq-chksig)."""
     opcode = OPCODES[family]
 
     def convert(path: Path, builder: Builder) -> Result:
@@ -510,8 +526,9 @@ def pq_family(family: str) -> Callable[[Path, Builder], Result]:
         program_index = builder.ask({"op": "compile", "src": f"DROP {opcode}"})
         for case in data["cases"]:
             name = case["name"]
-            if case["ignore"]:
-                out.skipped.append((name, "set_chksig_always_succeed (ignore = true)"))
+            if bool(case["ignore"]) != ignored:
+                if not ignored:
+                    out.skipped.append((name, "ignore = true: in rtos-pq-chksig"))
                 continue
             repeats = int(case["repeats"])
             if not 1 <= repeats <= MAX_REPEATS:
@@ -540,10 +557,26 @@ def pq_family(family: str) -> Callable[[Path, Builder], Result]:
                 raise SystemExit(f"{case['name']}: the program cell is not DROP {opcode}")
             code_b64 = code if isinstance(code, str) else builder.code(code)
             ctx = context(code_b64, int(case["version"]), int(case["gas"]), TEST_GAS_MAX, stack)
+            if ignored:
+                ctx["chksig_always_succeed"] = True
             out.entries.append({"fixture_id": case["name"], "context": ctx})
         return out
 
     return convert
+
+
+def pq_chksig(directory: Path, builder: Builder) -> Result:
+    """rtos-pq-chksig: the ignore = true cases of the four PQ families, from the RTOS data
+    directory; each id is ``<family>/<case>``."""
+    out = Result()
+    for family in sorted(OPCODES):
+        part = pq_family(family, ignored=True)(
+            directory / f"{family}.json", Builder(builder.program)
+        )
+        for entry in part.entries:
+            out.entries.append({**entry, "fixture_id": f"{family}/{entry['fixture_id']}"})
+        out.skipped.extend((f"{family}/{name}", reason) for name, reason in part.skipped)
+    return out
 
 
 def sha256c(path: Path, builder: Builder) -> Result:
@@ -602,6 +635,8 @@ CONVERTERS: dict[str, Callable[[Path, Builder], Result]] = {
     "continuation-chain": simple_export,
     "bchk": simple_export,
     "library-budget": library_budget,
+    "library-budget-limits": lambda path, builder: library_budget(path, builder, limits=True),
+    "pq-chksig": pq_chksig,
     "poseidon2": poseidon2,
     "sendmsg": sendmsg,
     "decode-matrix": decode,
@@ -627,6 +662,7 @@ RECORDED_POSITIONS: dict[str, dict[str, int]] = {
     "bchk": {"exit": 0, "gas": 1, "committed": 3, "steps": 4},
     "sendmsg": {"exit": 0, "gas": 1, "committed": 3, "steps": 4},
     "library-budget": {"exit": 0, "gas": 1, "committed": 3},
+    "library-budget-limits": {"exit": 0, "gas": 1, "committed": 3},
     "poseidon2": {"exit": 0, "gas": 1, "committed": 3, "steps": 4},
     "continuation-chain": {"exit": 0, "gas": 1, "steps": 2, "committed": 3},
     "decode-matrix": {"exit": 0, "gas": 1, "steps": 2, "committed": 3},
@@ -640,6 +676,11 @@ def recorded(family: str, data: Path) -> dict[str, dict[str, Any]]:
     decode-matrix.json), or the case file for the families that keep expectations inline.
     """
     out: dict[str, dict[str, Any]] = {}
+    if family == "pq-chksig":
+        for part in sorted(OPCODES):
+            for name, entry in recorded(part, data / f"{part}.json").items():
+                out[f"{part}/{name}"] = entry
+        return out
     if family == "short-code":
         for line in data.read_text().splitlines():
             if not line.startswith("#"):
@@ -650,9 +691,8 @@ def recorded(family: str, data: Path) -> dict[str, dict[str, Any]]:
     if family in RECORDED_POSITIONS:
         positions = RECORDED_POSITIONS[family]
         for name, e in cast(Json, value).items():
-            out[name] = {
-                k: (bool(e[i]) if k == "committed" else e[i]) for k, i in positions.items()
-            }
+            key = limit_id(name) if family == "library-budget-limits" else name
+            out[key] = {k: (bool(e[i]) if k == "committed" else e[i]) for k, i in positions.items()}
     elif family == "decode-vectors":
         for row in cast(list[Json], value):
             e = row["expected"]

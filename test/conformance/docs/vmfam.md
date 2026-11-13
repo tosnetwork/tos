@@ -30,9 +30,16 @@ test does.
 (16) and DATASIZE (6) rows were already part of `vm-endstate`; `vmfam.py authored` runs their
 authored checkers on those frozen effects.
 
-Not converted: `pq-v16-parity` `bad-signature-ignore-classic` and `pq-falcon512-parity`
-`invalid-ignore-classic` run with `VmState::set_chksig_always_succeed(true)`, which the `vm` context
-does not carry. `native-cost`'s `--storage` and `--tariff` modes are not VM executions.
+The rows that run with `VmState::set_chksig_always_succeed(true)` (ignore = 1) are their own families,
+whose contexts carry `"chksig_always_succeed": true`; these families are in this tree
+(`vectors/vm/fixtures`):
+
+| Family | Fixtures | Context source | Checked against |
+|---|---:|---|---|
+| `pq-v16-chksig-ignore` | 1 | `bad-signature-ignore-classic` of the `pq-v16-parity` scenarios | `test-pq-v16-parity` |
+| `pq-falcon512-chksig-ignore` | 1 | `invalid-ignore-classic` of the `pq-falcon512-parity` scenarios | `test-pq-falcon512-parity` |
+
+Not converted: `native-cost`'s `--storage` and `--tariff` modes are not VM executions.
 
 Fields the drivers report that the fixtures hold: all of them. Fields the fixtures hold that a driver
 does not report: `test-pq-suite-parity` (committed, c4/c5, the stack beyond the result value),
@@ -66,14 +73,16 @@ JSON carries each code cell as the test built it.
 
 `opcode-activation` is not converted: its cases are a strict subset of `opcode-gates`.
 
-Not converted, by the context field the `vm` harness lacks:
+The cases that need the two context fields added later are their own families, in this tree
+(`vectors/vm/fixtures`):
 
-- `chksig_always_succeed` (`VmState::set_chksig_always_succeed(bool)`): the `ignore = true` cases of the
-  four PQ families (18).
-- `max_library_loads` (`VmState::set_max_library_loads(td::uint32)`): `library-budget` cases with a
-  load limit (384 of 480; the 96 without a limit are converted).
-- Integers outside 257 signed bits cannot be on a C++ VM stack: the `balance-wide` and `incoming-wide`
-  contexts of `sendmsg` (8), whose value is 2^256.
+| Family | Fixtures | Cases | Context field |
+|---|---:|---|---|
+| `rtos-library-budget-limits` | 384 | the `library-budget` cases with a load limit (0, 1, 2, 2^32-1); ids with `limitSome(n)` written `limitSome-n` | `max_library_loads` (`VmState::set_max_library_loads`) |
+| `rtos-pq-chksig` | 18 | the `ignore = true` cases of `pq-falcon512` (4), `pq-suite` (9), `pq-mldsa44` (1), `lms-fee` (4); ids `<family>/<case>` | `chksig_always_succeed` (`VmState::set_chksig_always_succeed`) |
+
+The 8 not-converted `sendmsg` cases are the `balance-wide` and `incoming-wide` contexts, whose value 2^256
+is outside 257 signed bits and cannot be on a C++ VM stack.
 
 Effects the RTOS tests compare that the `vm` effects do not hold: the final c0..c3 and the
 continuation node table (`continuation-chain`, `decode-*`, through their digest), the error argument
@@ -85,10 +94,12 @@ tuple in c7 get `"c7": {"type": "tuple", "items": []}`, the others no c7; a test
 dictionary is no collection.
 
 `vmfam_rtos.py agree` compares the fills with the values the RTOS files recorded from older C++ builds
-(exit, gas, and steps and committed where recorded): all equal except `rtos-opcode-gates` 2,
-`rtos-pq-suite` 270 and `rtos-pq-mldsa44` 255 rows, all in the gas of ML-DSA-44 verification, which
-the current C++ VM charges less than the build that filled those files (a valid suite-1 check: 57,127
-recorded, 3,339 now; an opcode-gates ML-DSA-44 row: 50,156 recorded, 156 now).
+(exit, gas, and steps and committed where recorded): all equal (including all 384
+`rtos-library-budget-limits` rows) except `rtos-opcode-gates` 2, `rtos-pq-suite` 270, `rtos-pq-mldsa44`
+255 and `rtos-pq-chksig` 5 rows, all in the gas of PQ signature verification, which the current C++ VM
+charges less than the build that filled those files (a valid ML-DSA-44 suite-1 check: 57,127 recorded,
+3,339 now; an opcode-gates ML-DSA-44 row: 50,156 recorded, 156 now; an SLH-DSA suite-3 check in
+`rtos-pq-chksig`: 764,488 recorded, 11,039 now).
 
 ## Reproducing
 
@@ -119,5 +130,6 @@ python3 test/conformance/migrate/vmfam_rtos.py contexts decode-matrix ctx.jsonl 
   to equal the frozen ones, runs `test-vm-endstate` and `test-pq-suite-parity` on the same scenarios
   and requires 0 differences.
 - `conformance-vmfam-authored` runs the authored checkers on the frozen effects.
+- `conformance-vmfam-tamper-seed` does the same for the four in-tree families above.
 - `conformance-vmfam-tamper` adds 1 to one fixture's gas in a copy of `vm-prefix`, `pq-v16-parity` and
   `rtos-opcode-gates` and requires the runner to report exactly that mismatch.

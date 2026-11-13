@@ -103,6 +103,13 @@ class TosConversionTests(unittest.TestCase):
         self.assertEqual(entries[1]["context"]["stack"][-1], {"type": "int", "value": "0"})
         # Two opcodes with DROP between: 24 + 8 + 24 bits.
         self.assertEqual(entries[0]["context"]["code"], vmfam.code_of(0xF93100, 2))
+        self.assertNotIn("chksig_always_succeed", entries[0]["context"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "s.tsv"
+            path.write_text("".join("\t".join(r) + "\n" for r in rows))
+            ignored = vmfam.pq_entries(path, 0xF93100, 12, ignored=True)
+        self.assertEqual([e["fixture_id"] for e in ignored], ["b"])
+        self.assertIs(ignored[0]["context"]["chksig_always_succeed"], True)
 
 
 class RtosConversionTests(unittest.TestCase):
@@ -172,9 +179,17 @@ class RtosConversionTests(unittest.TestCase):
                     self.results = [CELL_HEX for _ in self.requests]
 
             result = vmfam_rtos.pq_family("pq-mldsa44")(path, FakeBuilder(None))
+            ignored = vmfam_rtos.pq_family("pq-mldsa44", ignored=True)(path, FakeBuilder(None))
         self.assertEqual([e["fixture_id"] for e in result.entries], ["kept"])
         self.assertEqual(result.skipped[0][0], "ignored")
         self.assertEqual(result.entries[0]["context"]["gas"]["max"], vmfam_rtos.TEST_GAS_MAX)
+        self.assertNotIn("chksig_always_succeed", result.entries[0]["context"])
+        self.assertEqual([e["fixture_id"] for e in ignored.entries], ["ignored"])
+        self.assertIs(ignored.entries[0]["context"]["chksig_always_succeed"], True)
+
+    def test_library_limit_names_become_fixture_ids(self) -> None:
+        self.assertEqual(vmfam_rtos.limit_id("single-v9-limitSome(2)"), "single-v9-limitSome-2")
+        self.assertEqual(vmfam_rtos.limit_id("single-v9-limitNone"), "single-v9-limitNone")
 
 
 if __name__ == "__main__":

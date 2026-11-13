@@ -47,7 +47,8 @@ Formats, as each driver reads them:
   expect, four operands[, program BOC]; the operands are pushed ``repeats`` times ("int" pushes
   1), a program is entered with an extra 0 on top, otherwise the code is the opcode repeated
   with DROP between; output id exit gas value committed c4 c5. Rows with ignore = 1 run with
-  set_chksig_always_succeed, which the vm harness does not take: they are not converted.
+  set_chksig_always_succeed: they form the pq-v16-chksig-ignore and pq-falcon512-chksig-ignore
+  families, whose contexts carry chksig_always_succeed = true.
 - native-cost (test-fee-native-cost): id, version, budget, code bytes, operands bottom first
   (int:<n>, hash:<32-byte hex>, or a BOC); output id exit gas value.
 """
@@ -279,13 +280,20 @@ class Skipped:
 SKIPPED: list[Skipped] = []
 
 
-def pq_entries(path: Path | None, opcode: int, max_repeats: int) -> list[Json]:
+def pq_entries(
+    path: Path | None, opcode: int, max_repeats: int, ignored: bool = False
+) -> list[Json]:
+    """The rows with ignore = 0, or with ``ignored`` only the rows with ignore = 1, which run
+    with chksig_always_succeed (the *-chksig-ignore families)."""
     if path is None:
         raise SystemExit("--input <scenarios.tsv> required")
     out: list[Json] = []
     for row in tsv_rows(path, (10, 11)):
-        if row[3] == "1":
-            SKIPPED.append(Skipped(row[0], "set_chksig_always_succeed (ignore = 1)"))
+        if row[3] not in ("0", "1"):
+            raise SystemExit(f"{row[0]}: ignore must be 0 or 1")
+        if (row[3] == "1") != ignored:
+            if not ignored:
+                SKIPPED.append(Skipped(row[0], "ignore = 1: in the *-chksig-ignore family"))
             continue
         repeats = int(row[4])
         if not 1 <= repeats <= max_repeats:
@@ -308,6 +316,8 @@ def pq_entries(path: Path | None, opcode: int, max_repeats: int) -> list[Json]:
             "gas": {"limit": budget, "max": budget},
             "stack": stack,
         }
+        if ignored:
+            context["chksig_always_succeed"] = True
         out.append(entry(row[0], context, f"expect {row[5]}"))
     return out
 
@@ -498,6 +508,22 @@ FAMILIES: dict[str, Family] = {
             "pq-falcon512-parity",
             "test-pq-falcon512-parity",
             lambda path: pq_entries(path, 0xF93101, 11),
+            pq_projection,
+            "exit_code gas_used value committed c4_hash c5_hash",
+            "steps, stack beyond the result value",
+        ),
+        Family(
+            "pq-v16-chksig-ignore",
+            "test-pq-v16-parity",
+            lambda path: pq_entries(path, 0xF93100, 12, ignored=True),
+            pq_projection,
+            "exit_code gas_used value committed c4_hash c5_hash",
+            "steps, stack beyond the result value",
+        ),
+        Family(
+            "pq-falcon512-chksig-ignore",
+            "test-pq-falcon512-parity",
+            lambda path: pq_entries(path, 0xF93101, 11, ignored=True),
             pq_projection,
             "exit_code gas_used value committed c4_hash c5_hash",
             "steps, stack beyond the result value",

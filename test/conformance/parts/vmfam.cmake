@@ -1,6 +1,14 @@
 # The migrated VM families (docs/vmfam.md): the frozen fixtures must keep equal the original C++
 # drivers' output on the scenarios this tree generates, the authored assertions must hold on the
 # frozen effects, and a tampered fixture of each batch must fail the runner.
+# The families that need chksig_always_succeed or max_library_loads are in this tree: a tampered
+# fixture of each must fail the runner.
+add_test(NAME conformance-vmfam-tamper-seed
+  COMMAND ${Python3_EXECUTABLE} -B ${CONFORMANCE_DIR}/migrate/vmfam.py tamper-control
+    $<TARGET_FILE:conformance-ref-cli> ${CONFORMANCE_DIR}/vectors/vm/fixtures
+    ${CMAKE_CURRENT_BINARY_DIR}/vmfam-tamper-seed
+    pq-v16-chksig-ignore pq-falcon512-chksig-ignore rtos-library-budget-limits rtos-pq-chksig)
+set_tests_properties(conformance-vmfam-tamper-seed PROPERTIES LABELS "conformance" TIMEOUT 600)
 # These families live in the external vectors repository (CONFORMANCE_VECTORS_DIR).
 if (NOT CONFORMANCE_VECTORS_DIR)
   return()
