@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conformance/harness/txn-v1",
+  "title": "txn harness: one transaction",
+  "$defs": {
+    "context": {
+      "type": "object",
+      "required": ["config", "shard_account", "now", "lt", "rand_seed"],
+      "additionalProperties": false,
+      "properties": {
+        "config": {"$ref": "../common-v1.schema.json#/$defs/boc", "description": "ConfigParams BOC as accepted by transaction_emulator_create"},
+        "shard_account": {"$ref": "../common-v1.schema.json#/$defs/boc", "description": "Complete original ShardAccount"},
+        "message": {"$ref": "../common-v1.schema.json#/$defs/boc", "description": "Inbound message; exactly one of message and tick_tock"},
+        "tick_tock": {"enum": ["tick", "tock"]},
+        "now": {"type": "integer", "minimum": 1, "maximum": 4294967295},
+        "lt": {"type": "integer", "minimum": 1},
+        "rand_seed": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "libraries": {"$ref": "../common-v1.schema.json#/$defs/boc"},
+        "prev_blocks": {"$ref": "../common-v1.schema.json#/$defs/boc"}
+      }
+    },
+    "effects": {
+      "oneOf": [
+        {"type": "object", "required": ["outcome", "transaction_hash", "account_hash", "shard_account_hash"], "additionalProperties": false,
+         "properties": {"outcome": {"const": "accepted"}, "transaction_hash": {"$ref": "../common-v1.schema.json#/$defs/hash"}, "account_hash": {"$ref": "../common-v1.schema.json#/$defs/hash"}, "shard_account_hash": {"$ref": "../common-v1.schema.json#/$defs/hash"}}},
+        {"type": "object", "required": ["outcome", "vm_exit_code"], "additionalProperties": false,
+         "properties": {"outcome": {"const": "rejected"}, "vm_exit_code": {"type": "integer"}}},
+        {"type": "object", "required": ["outcome"], "additionalProperties": false,
+         "properties": {"outcome": {"const": "error"}}}
+      ]
+    }
+  }
+}

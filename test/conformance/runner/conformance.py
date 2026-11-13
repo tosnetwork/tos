@@ -4,14 +4,16 @@
 
 A target is any program with the line protocol of conformance-ref-cli (see ../README.md):
 ``<program> <harness>`` reads one context JSON per stdin line and writes one effects JSON per
-stdout line, in order. ``<program> --info`` prints the build identity.
+stdout line, in order. ``<program> --info`` prints the build identity and the harnesses it provides.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
+import hashlib
 import json
-import re
 import subprocess
 import sys
 from collections.abc import Iterable, Mapping, Sequence
@@ -19,30 +21,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
-HARNESSES = ("vm", "txn")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import fixture_types as t  # noqa: E402
+from harnesses import HARNESSES  # noqa: E402
+
+FixtureError = t.FixtureError
+Json = t.Json
 HARNESS_VERSION = 1
 TARGET_TIMEOUT_SECONDS = 3600
 MAX_FIXTURE_LINE_BYTES = 16 << 20
-
-Json = dict[str, Any]
-
-
-class FixtureError(Exception):
-    """A fixture, context or target response does not have the required shape."""
-
-
-# ---------------------------------------------------------------------------------------------
-# Structural validation. Mirrors schema/fixture-v1.schema.json; test_conformance.py checks that the
-# required/allowed key sets below match the schema file.
-
-BOC_RE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
-HASH_RE = re.compile(r"^[0-9A-F]{64}$")
-SEED_RE = re.compile(r"^[0-9a-f]{64}$")
-COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
-FIXTURE_ID_RE = re.compile(r"^[A-Za-z0-9._:/+-]{1,200}$")
-FAMILY_RE = re.compile(r"^[a-z0-9-]{1,64}$")
-SOURCE_RE = re.compile(r"^(authored|fuzz|replay|migrated:[a-z0-9_./-]+)$")
-INT_TEXT_RE = re.compile(r"^-?[0-9]{1,80}$")
+DEFAULT_BLOB_THRESHOLD = 2048
 
 METADATA_REQUIRED = {
     "harness",
@@ -53,163 +42,122 @@ METADATA_REQUIRED = {
     "reference_commit",
 }
 METADATA_ALLOWED = METADATA_REQUIRED | {"note"}
-VM_CONTEXT_REQUIRED = {"code", "global_version", "gas", "stack"}
-VM_CONTEXT_ALLOWED = VM_CONTEXT_REQUIRED | {"data", "c7", "flags", "libraries"}
-VM_EFFECTS_REQUIRED = {"exit_code", "gas_used", "steps", "committed", "c4_hash", "c5_hash", "stack"}
-TXN_CONTEXT_REQUIRED = {"config", "shard_account", "now", "lt", "rand_seed"}
-TXN_CONTEXT_ALLOWED = TXN_CONTEXT_REQUIRED | {"message", "tick_tock", "libraries", "prev_blocks"}
-TXN_EFFECTS_KEYS = {
-    "accepted": {"outcome", "transaction_hash", "account_hash", "shard_account_hash"},
-    "rejected": {"outcome", "vm_exit_code"},
-    "error": {"outcome"},
-}
 
 
-def _keys(obj: Mapping[str, Any], required: set[str], allowed: set[str], where: str) -> None:
-    missing = required - obj.keys()
-    extra = obj.keys() - allowed
-    if missing:
-        raise FixtureError(f"{where}: missing {sorted(missing)}")
-    if extra:
-        raise FixtureError(f"{where}: unexpected {sorted(extra)}")
-
-
-def _int(value: object, where: str, low: int | None = None, high: int | None = None) -> int:
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise FixtureError(f"{where}: integer required")
-    if (low is not None and value < low) or (high is not None and value > high):
-        raise FixtureError(f"{where}: {value} out of range")
-    return value
-
-
-def _str(value: object, pattern: re.Pattern[str], where: str) -> str:
-    if not isinstance(value, str) or not pattern.match(value):
-        raise FixtureError(f"{where}: invalid value")
-    return value
-
-
-def _obj(value: object, where: str) -> Mapping[str, Any]:
-    if not isinstance(value, dict):
-        raise FixtureError(f"{where}: object required")
-    return cast(Mapping[str, Any], value)
-
-
-def _list(value: object, where: str, max_items: int | None = None) -> list[Any]:
-    if not isinstance(value, list):
-        raise FixtureError(f"{where}: array required")
-    items = cast(list[Any], value)
-    if max_items is not None and len(items) > max_items:
-        raise FixtureError(f"{where}: more than {max_items} items")
-    return items
-
-
-def validate_stack_item(value: object, where: str, depth: int = 0) -> None:
-    if depth > 32:
-        raise FixtureError(f"{where}: nesting too deep")
-    item = _obj(value, where)
-    kind = item.get("type")
-    if kind in ("null", "nan"):
-        _keys(item, {"type"}, {"type"}, where)
-    elif kind == "int":
-        _keys(item, {"type", "value"}, {"type", "value"}, where)
-        _str(item["value"], INT_TEXT_RE, f"{where}.value")
-    elif kind in ("cell", "slice"):
-        _keys(item, {"type", "boc"}, {"type", "boc"}, where)
-        _str(item["boc"], BOC_RE, f"{where}.boc")
-    elif kind == "tuple":
-        _keys(item, {"type", "items"}, {"type", "items"}, where)
-        for i, sub in enumerate(_list(item["items"], f"{where}.items", 255)):
-            validate_stack_item(sub, f"{where}.items[{i}]", depth + 1)
-    else:
-        raise FixtureError(f"{where}: unknown stack item type {kind!r}")
+def harness_module(name: object, where: str) -> Any:
+    if not isinstance(name, str) or name not in HARNESSES:
+        raise FixtureError(f"{where}: unknown harness {name!r}")
+    return HARNESSES[name]
 
 
 def validate_context(harness: str, value: object, where: str = "context") -> None:
-    ctx = _obj(value, where)
-    if harness == "vm":
-        _keys(ctx, VM_CONTEXT_REQUIRED, VM_CONTEXT_ALLOWED, where)
-        _str(ctx["code"], BOC_RE, f"{where}.code")
-        _int(ctx["global_version"], f"{where}.global_version", 0, 255)
-        if "flags" in ctx:
-            _int(ctx["flags"], f"{where}.flags", 0, 255)
-        if "data" in ctx:
-            _str(ctx["data"], BOC_RE, f"{where}.data")
-        if "c7" in ctx:
-            validate_stack_item(ctx["c7"], f"{where}.c7")
-            if _obj(ctx["c7"], f"{where}.c7").get("type") != "tuple":
-                raise FixtureError(f"{where}.c7: tuple required")
-        gas = _obj(ctx["gas"], f"{where}.gas")
-        _keys(gas, {"limit", "max"}, {"limit", "max", "credit"}, f"{where}.gas")
-        for key in gas:
-            _int(gas[key], f"{where}.gas.{key}", 0)
-        for i, item in enumerate(_list(ctx["stack"], f"{where}.stack", 255)):
-            validate_stack_item(item, f"{where}.stack[{i}]")
-        for i, lib in enumerate(_list(ctx.get("libraries", []), f"{where}.libraries", 4)):
-            _str(lib, BOC_RE, f"{where}.libraries[{i}]")
-    elif harness == "txn":
-        _keys(ctx, TXN_CONTEXT_REQUIRED, TXN_CONTEXT_ALLOWED, where)
-        for key in ("config", "shard_account", "message", "libraries", "prev_blocks"):
-            if key in ctx:
-                _str(ctx[key], BOC_RE, f"{where}.{key}")
-        if ("message" in ctx) == ("tick_tock" in ctx):
-            raise FixtureError(f"{where}: exactly one of message and tick_tock")
-        if "tick_tock" in ctx and ctx["tick_tock"] not in ("tick", "tock"):
-            raise FixtureError(f"{where}.tick_tock: tick or tock")
-        _int(ctx["now"], f"{where}.now", 1, 0xFFFFFFFF)
-        _int(ctx["lt"], f"{where}.lt", 1)
-        _str(ctx["rand_seed"], SEED_RE, f"{where}.rand_seed")
-    else:
-        raise FixtureError(f"{where}: unknown harness {harness!r}")
+    harness_module(harness, where).validate_context(t.obj(value, where), where)
 
 
 def validate_effects(harness: str, value: object, where: str = "effects") -> None:
-    eff = _obj(value, where)
-    if harness == "vm":
-        _keys(eff, VM_EFFECTS_REQUIRED, VM_EFFECTS_REQUIRED, where)
-        for key in ("exit_code", "gas_used", "steps"):
-            _int(eff[key], f"{where}.{key}")
-        if not isinstance(eff["committed"], bool):
-            raise FixtureError(f"{where}.committed: boolean required")
-        for key in ("c4_hash", "c5_hash"):
-            if eff[key] is not None:
-                _str(eff[key], HASH_RE, f"{where}.{key}")
-        for i, item in enumerate(_list(eff["stack"], f"{where}.stack")):
-            if not isinstance(item, str):
-                raise FixtureError(f"{where}.stack[{i}]: string required")
-    elif harness == "txn":
-        outcome = eff.get("outcome")
-        if outcome not in TXN_EFFECTS_KEYS:
-            raise FixtureError(f"{where}.outcome: invalid {outcome!r}")
-        keys = TXN_EFFECTS_KEYS[outcome]
-        _keys(eff, keys, keys, where)
-        for key in ("transaction_hash", "account_hash", "shard_account_hash"):
-            if key in eff:
-                _str(eff[key], HASH_RE, f"{where}.{key}")
-        if "vm_exit_code" in eff:
-            _int(eff["vm_exit_code"], f"{where}.vm_exit_code")
-    else:
-        raise FixtureError(f"{where}: unknown harness {harness!r}")
+    harness_module(harness, where).validate_effects(t.obj(value, where), where)
 
 
 def validate_fixture(value: object, where: str) -> Json:
-    fixture = _obj(value, where)
-    _keys(fixture, {"metadata", "context", "effects"}, {"metadata", "context", "effects"}, where)
-    meta = _obj(fixture["metadata"], f"{where}.metadata")
-    _keys(meta, METADATA_REQUIRED, METADATA_ALLOWED, f"{where}.metadata")
+    fixture = t.obj(value, where)
+    t.keys(fixture, {"metadata", "context", "effects"}, {"metadata", "context", "effects"}, where)
+    meta = t.obj(fixture["metadata"], f"{where}.metadata")
+    t.keys(meta, METADATA_REQUIRED, METADATA_ALLOWED, f"{where}.metadata")
     harness = meta["harness"]
-    if harness not in HARNESSES:
-        raise FixtureError(f"{where}.metadata.harness: unknown {harness!r}")
+    harness_module(harness, f"{where}.metadata.harness")
     if meta["harness_version"] != HARNESS_VERSION:
         raise FixtureError(f"{where}.metadata.harness_version: {HARNESS_VERSION} required")
-    _str(meta["fixture_id"], FIXTURE_ID_RE, f"{where}.metadata.fixture_id")
-    _str(meta["family"], FAMILY_RE, f"{where}.metadata.family")
-    _str(meta["source"], SOURCE_RE, f"{where}.metadata.source")
-    _str(meta["reference_commit"], COMMIT_RE, f"{where}.metadata.reference_commit")
-    if "note" in meta and not isinstance(meta["note"], str):
-        raise FixtureError(f"{where}.metadata.note: string required")
+    t.text(meta["fixture_id"], t.FIXTURE_ID_RE, f"{where}.metadata.fixture_id")
+    t.text(meta["family"], t.FAMILY_RE, f"{where}.metadata.family")
+    t.text(meta["source"], t.SOURCE_RE, f"{where}.metadata.source")
+    t.text(meta["reference_commit"], t.COMMIT_RE, f"{where}.metadata.reference_commit")
+    if "note" in meta:
+        t.any_text(meta["note"], f"{where}.metadata.note")
     validate_context(harness, fixture["context"], f"{where}.context")
     validate_effects(harness, fixture["effects"], f"{where}.effects")
     return dict(fixture)
+
+
+# ---------------------------------------------------------------------------------------------
+# Blobs: large BOCs shared by many fixtures are stored once per family in <family>.blobs.json
+# ({"<sha256 of the BOC bytes>": "<base64>"}) and referenced as {"blob": "<sha256>"}.
+
+
+def blob_digest(b64: str) -> str:
+    try:
+        raw = base64.b64decode(b64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise FixtureError(f"blob is not base64: {exc}") from exc
+    return hashlib.sha256(raw).hexdigest()
+
+
+def is_blob_ref(value: object) -> bool:
+    return isinstance(value, dict) and set(cast(dict[str, Any], value)) == {"blob"}
+
+
+def blob_refs(value: object, out: set[str]) -> set[str]:
+    if is_blob_ref(value):
+        out.add(cast(dict[str, str], value)["blob"])
+    elif isinstance(value, dict):
+        for item in cast(dict[str, Any], value).values():
+            blob_refs(item, out)
+    elif isinstance(value, list):
+        for item in cast(list[Any], value):
+            blob_refs(item, out)
+    return out
+
+
+def resolve(value: Any, blobs: Mapping[str, str]) -> Any:
+    if is_blob_ref(value):
+        digest = cast(dict[str, str], value)["blob"]
+        if digest not in blobs:
+            raise FixtureError(f"unresolved blob {digest}")
+        return blobs[digest]
+    if isinstance(value, dict):
+        return {k: resolve(v, blobs) for k, v in cast(dict[str, Any], value).items()}
+    if isinstance(value, list):
+        return [resolve(v, blobs) for v in cast(list[Any], value)]
+    return value
+
+
+def externalize(value: Any, blobs: dict[str, str], threshold: int) -> Any:
+    """Move every base64 BOC string longer than threshold into blobs, replacing it by a reference."""
+    if isinstance(value, str) and len(value) > threshold and t.BOC_RE.match(value):
+        digest = blob_digest(value)
+        blobs[digest] = value
+        return {"blob": digest}
+    if isinstance(value, dict):
+        return {k: externalize(v, blobs, threshold) for k, v in cast(dict[str, Any], value).items()}
+    if isinstance(value, list):
+        return [externalize(v, blobs, threshold) for v in cast(list[Any], value)]
+    return value
+
+
+def blobs_path(family_path: Path) -> Path:
+    return family_path.with_name(family_path.stem + ".blobs.json")
+
+
+def load_blobs(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    data = t.obj(json.loads(path.read_text()), str(path))
+    blobs: dict[str, str] = {}
+    for digest, b64 in data.items():
+        t.text(digest, t.BLOB_RE, f"{path}: key")
+        t.text(b64, t.BOC_RE, f"{path}: {digest}")
+        if blob_digest(b64) != digest:
+            raise FixtureError(f"{path}: blob {digest} does not match its content")
+        blobs[digest] = b64
+    return blobs
+
+
+def write_blobs(path: Path, blobs: Mapping[str, str]) -> None:
+    if blobs:
+        path.write_text(
+            json.dumps(dict(sorted(blobs.items())), indent=0, separators=(",", ":")) + "\n"
+        )
+    elif path.exists():
+        path.unlink()
 
 
 # ---------------------------------------------------------------------------------------------
@@ -222,6 +170,10 @@ class FamilyFile:
     harness: str
     family: str
     fixtures: list[Json] = field(default_factory=lambda: [])
+    blobs: dict[str, str] = field(default_factory=lambda: {})
+
+    def contexts(self) -> list[Json]:
+        return [cast(Json, resolve(f["context"], self.blobs)) for f in self.fixtures]
 
 
 def read_jsonl(path: Path) -> list[Json]:
@@ -287,7 +239,15 @@ def load_family(path: Path) -> FamilyFile:
         raise FixtureError(
             f"{path}: expected <harness>/fixtures/<family>.jsonl for {harness}/{family}"
         )
-    return FamilyFile(path, harness, family, fixtures)
+    blobs = load_blobs(blobs_path(path))
+    refs: set[str] = set()
+    for fixture in fixtures:
+        blob_refs(fixture["context"], refs)
+    if refs - blobs.keys():
+        raise FixtureError(f"{path}: unresolved blobs {sorted(refs - blobs.keys())[:3]}")
+    if blobs.keys() - refs:
+        raise FixtureError(f"{path}: unreferenced blobs {sorted(blobs.keys() - refs)[:3]}")
+    return FamilyFile(path, harness, family, fixtures, blobs)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -304,6 +264,15 @@ def target_info(program: str) -> Json:
     if not isinstance(info, dict):
         raise FixtureError(f"{program} --info: object required")
     return cast(Json, info)
+
+
+def target_harnesses(program: str) -> set[str] | None:
+    harnesses = target_info(program).get("harnesses")
+    if harnesses is None:
+        return None
+    return {
+        h for h in cast(list[Any], t.array(harnesses, "--info harnesses")) if isinstance(h, str)
+    }
 
 
 def run_target(program: str, harness: str, contexts: Sequence[Mapping[str, Any]]) -> list[Json]:
@@ -401,6 +370,8 @@ def compare_family(
 
 
 def command_run(target: str, paths: Sequence[Path], harnesses: set[str] | None = None) -> Tally:
+    if harnesses is None:
+        harnesses = target_harnesses(target)
     tally = Tally()
     for path in family_files(paths):
         family = load_family(path)
@@ -410,7 +381,7 @@ def command_run(target: str, paths: Sequence[Path], harnesses: set[str] | None =
                 f"SKIPPED {path}: harness {family.harness} not provided by the target"
             )
             continue
-        responses = run_target(target, family.harness, [f["context"] for f in family.fixtures])
+        responses = run_target(target, family.harness, family.contexts())
         compare_family(family, responses, tally)
     return tally
 
@@ -418,7 +389,7 @@ def command_run(target: str, paths: Sequence[Path], harnesses: set[str] | None =
 def reference_commit(reference: str, allow_dirty: bool) -> str:
     info = target_info(reference)
     commit = info.get("reference_commit")
-    if not isinstance(commit, str) or not COMMIT_RE.match(commit):
+    if not isinstance(commit, str) or not t.COMMIT_RE.match(commit):
         raise FixtureError(f"{reference}: no reference commit in --info")
     if info.get("dirty") is not False and not allow_dirty:
         raise FixtureError(
@@ -435,11 +406,11 @@ def command_create(
     contexts_path: Path,
     out: Path,
     allow_dirty: bool = False,
+    blob_threshold: int = DEFAULT_BLOB_THRESHOLD,
 ) -> int:
-    if harness not in HARNESSES:
-        raise FixtureError(f"unknown harness {harness!r}")
-    _str(family, FAMILY_RE, "family")
-    _str(source, SOURCE_RE, "source")
+    harness_module(harness, "harness")
+    t.text(family, t.FAMILY_RE, "family")
+    t.text(source, t.SOURCE_RE, "source")
     commit = reference_commit(reference, allow_dirty)
     entries = read_jsonl(contexts_path)
     if not entries:
@@ -447,12 +418,14 @@ def command_create(
     seen: set[str] = set()
     for i, entry in enumerate(entries):
         where = f"{contexts_path}:{i + 1}"
-        _keys(entry, {"fixture_id", "context"}, {"fixture_id", "context", "note"}, where)
-        _str(entry["fixture_id"], FIXTURE_ID_RE, f"{where}.fixture_id")
+        t.keys(entry, {"fixture_id", "context"}, {"fixture_id", "context", "note"}, where)
+        t.text(entry["fixture_id"], t.FIXTURE_ID_RE, f"{where}.fixture_id")
         if entry["fixture_id"] in seen:
             raise FixtureError(f"{where}: duplicate fixture_id {entry['fixture_id']}")
         seen.add(entry["fixture_id"])
         validate_context(harness, entry["context"], f"{where}.context")
+        if blob_refs(entry["context"], set()):
+            raise FixtureError(f"{where}: contexts given to create must be inline")
     responses = run_target(reference, harness, [e["context"] for e in entries])
     refusals = [
         f"{e['fixture_id']}: {r['harness_error']}"
@@ -460,7 +433,8 @@ def command_create(
         if is_refusal(r)
     ]
     if refusals:
-        raise FixtureError("reference refused contexts:\n  " + "\n  ".join(refusals))
+        raise FixtureError("reference refused contexts:\n  " + "\n  ".join(refusals[:20]))
+    blobs: dict[str, str] = {}
     fixtures: list[Json] = []
     for entry, response in zip(entries, responses, strict=True):
         validate_effects(harness, response, f"effects of {entry['fixture_id']}")
@@ -474,10 +448,12 @@ def command_create(
         }
         if "note" in entry:
             meta["note"] = entry["note"]
-        fixtures.append({"metadata": meta, "context": entry["context"], "effects": response})
+        context = externalize(entry["context"], blobs, blob_threshold)
+        fixtures.append({"metadata": meta, "context": context, "effects": response})
     write_jsonl(out, fixtures)
+    write_blobs(blobs_path(out), blobs)
     load_family(out)
-    print(f"created {len(fixtures)} fixtures in {out} from {commit}")
+    print(f"created {len(fixtures)} fixtures ({len(blobs)} blobs) in {out} from {commit}")
     return len(fixtures)
 
 
@@ -489,7 +465,7 @@ def command_regenerate(
     changed: list[str] = []
     for path in family_files(paths):
         family = load_family(path)
-        responses = run_target(reference, family.harness, [f["context"] for f in family.fixtures])
+        responses = run_target(reference, family.harness, family.contexts())
         updated: list[Json] = []
         for fixture, response in zip(family.fixtures, responses, strict=True):
             fixture_id = f"{family.harness}/{family.family}/{fixture['metadata']['fixture_id']}"
@@ -520,12 +496,14 @@ def command_validate(paths: Sequence[Path]) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    names = sorted(HARNESSES)
 
     create = sub.add_parser("create", help="fill effects from the C++ reference")
     create.add_argument("--reference", required=True)
-    create.add_argument("--harness", required=True, choices=HARNESSES)
+    create.add_argument("--harness", required=True, choices=names)
     create.add_argument("--family", required=True)
     create.add_argument("--source", required=True)
+    create.add_argument("--blob-threshold", type=int, default=DEFAULT_BLOB_THRESHOLD)
     create.add_argument(
         "--allow-dirty", action="store_true", help="tests only: accept a dirty reference build"
     )
@@ -535,7 +513,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     run = sub.add_parser("run", help="compare a target with frozen fixtures")
     run.add_argument("--target", required=True)
     run.add_argument(
-        "--harness", action="append", choices=HARNESSES, help="harnesses the target provides"
+        "--harness", action="append", choices=names, help="harnesses the target provides"
     )
     run.add_argument("paths", type=Path, nargs="+")
 
@@ -561,6 +539,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.contexts,
                 args.out,
                 args.allow_dirty,
+                args.blob_threshold,
             )
             return 0
         if args.command == "run":

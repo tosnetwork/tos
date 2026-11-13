@@ -14,14 +14,23 @@ authored assertions may be checked against the C++ fill before it is frozen, but
 ## Layout
 
 ```
-schema/fixture-v1.schema.json     fixture format (JSON Schema)
-ref/conformance-ref.{h,cpp}       C++ reference library: one C entry point per harness
+CMakeLists.txt                    reference library (every ref/*.cpp but the CLI) and the core ctests
+parts/<component>.cmake           further targets and tests, one file per component
+schema/fixture-v1.schema.json     fixture envelope; schema/common-v1.schema.json shared value types
+schema/harness/<h>-v1.schema.json context and effects of harness <h>
+ref/common.{h,cpp}                registry, JSON, BOC and stack helpers, the C entry points
+ref/harness-<h>.cpp               one harness, registered with CONFORMANCE_REGISTER_HARNESS
 ref/conformance-ref-cli.cpp       line-oriented wrapper around the library
 runner/conformance.py             create / run / regenerate / validate
-runner/test_conformance.py        runner tests, including controls that make each check fail
-migrate/                          converters from older per-family formats
-vectors/<harness>/fixtures/<family>.jsonl
+runner/harnesses/<h>.py           validator of harness <h>, discovered by name
+runner/test_*.py                  runner tests, including controls that make each check fail
+migrate/                          converters from older per-family formats, chain replay
+vectors/<h>/fixtures/<family>.jsonl and optional <family>.blobs.json
 ```
+
+Adding a harness is three new files with the same name: `ref/harness-<h>.cpp`,
+`runner/harnesses/<h>.py` and `schema/harness/<h>-v1.schema.json`; a runner test fails when the schema and
+the validator disagree.
 
 ## Harness boundary
 
@@ -52,19 +61,25 @@ is the commit of the C++ build that filled the effects (from the binary's own gi
 tree had uncommitted changes); `metadata.source` says where the context came from (`authored`, `fuzz`,
 `replay`, or `migrated:<old family>`). Fixture ids are unique within a family.
 
+Any BOC field may be a reference `{"blob": "<sha256 of the BOC bytes>"}` into `<family>.blobs.json`
+(`{"<sha256>": "<base64>"}`). `create` moves every BOC longer than `--blob-threshold` characters (default
+2048) there, so configurations and large accounts are stored once per family. The runner inlines references
+before a context reaches a target; `validate` requires every reference to resolve, every blob to be used and
+every digest to match its content.
+
 ## Commands
 
 ```
 # fill effects from the C++ reference for a file of contexts
-python3 test/conformance/runner/conformance.py create --reference build/emulator/conformance-ref-cli \
+python3 test/conformance/runner/conformance.py create --reference build/test/conformance/conformance-ref-cli \
     --harness vm --family vm-endstate --source migrated:rescue-fee-gate/vm-endstate contexts.jsonl out.jsonl
 
 # compare a target with the frozen effects (exit 0 only when every fixture compared equal)
-python3 test/conformance/runner/conformance.py run --target build/emulator/conformance-ref-cli \
+python3 test/conformance/runner/conformance.py run --target build/test/conformance/conformance-ref-cli \
     test/conformance/vectors
 
 # refill every fixture with a new C++ build and list the fixtures whose effects changed
-python3 test/conformance/runner/conformance.py regenerate --reference build/emulator/conformance-ref-cli \
+python3 test/conformance/runner/conformance.py regenerate --reference build/test/conformance/conformance-ref-cli \
     test/conformance/vectors
 
 # schema, uniqueness and provenance checks
@@ -72,7 +87,7 @@ python3 test/conformance/runner/conformance.py validate test/conformance/vectors
 ```
 
 `run` prints `compared N, equal N, mismatched M, refused R, skipped S` and fails on any mismatch, refusal or
-skip.
+skip. Families of a harness the target does not list in `--info` are skipped, which also fails.
 
 ## Changing behaviour on purpose
 
@@ -94,5 +109,3 @@ each on-chain transaction hash and new account hash. The chain is the oracle, so
 frozen as fixtures: the corpus already in the tree is the input, and history recorded on the network has to
 keep replaying after any change. ctest runs it against the reference as `conformance-rel02-chain`.
 
-Frozen `txn` fixtures for authored scenarios need a shared store for configurations and large accounts
-(each REL-02 context repeats one of nine configurations); that is the next schema version.

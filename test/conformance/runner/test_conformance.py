@@ -16,8 +16,10 @@ from typing import Any, cast
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import conformance as c  # noqa: E402
+import fixture_types as t  # noqa: E402
+from harnesses import HARNESSES  # noqa: E402
 
-SCHEMA = Path(__file__).resolve().parent.parent / "schema" / "fixture-v1.schema.json"
+SCHEMA_DIR = Path(__file__).resolve().parent.parent / "schema"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 HASH = "A" * 64
 CODE = "te6ccgEBAQEAAwAAAXA="
@@ -252,15 +254,61 @@ class ValidateTests(Fixture):
             c.validate_effects("txn", {"outcome": "error", "detail": "text"})
 
 
+class BlobTests(Fixture):
+    def big_contexts(self) -> None:
+        # The same long code BOC in both contexts: stored once, referenced twice.
+        long_code = "A" * 4000
+        answers = {long_code: vm_effects(10), CODE: vm_effects(11)}
+        (self.dir / "answers.json").write_text(json.dumps(answers))
+        lines = [
+            {"fixture_id": "big-0", "context": vm_context(long_code)},
+            {"fixture_id": "big-1", "context": {**vm_context(long_code), "flags": 1}},
+            {"fixture_id": "small", "context": vm_context(CODE)},
+        ]
+        self.contexts.write_text("".join(json.dumps(x) + "\n" for x in lines))
+
+    def blobs_file(self) -> Path:
+        return self.family.with_name("sample.blobs.json")
+
+    def test_large_bocs_are_stored_once_and_inlined_for_targets(self) -> None:
+        self.big_contexts()
+        self.create()
+        records = c.read_jsonl(self.family)
+        self.assertEqual(records[0]["context"]["code"], records[1]["context"]["code"])
+        self.assertIn("blob", records[0]["context"]["code"])
+        self.assertEqual(records[2]["context"]["code"], CODE)
+        self.assertEqual(len(json.loads(self.blobs_file().read_text())), 1)
+        self.assertTrue(c.command_run(self.target, [self.vectors]).ok())
+
+    def test_unresolved_blob_is_rejected(self) -> None:
+        self.big_contexts()
+        self.create()
+        self.blobs_file().write_text("{}")
+        with self.assertRaises(c.FixtureError):
+            c.command_validate([self.vectors])
+
+    def test_unreferenced_blob_is_rejected(self) -> None:
+        self.create()
+        extra = "QUJD"
+        self.blobs_file().write_text(json.dumps({c.blob_digest(extra): extra}))
+        with self.assertRaises(c.FixtureError):
+            c.command_validate([self.vectors])
+
+    def test_blob_content_must_match_its_digest(self) -> None:
+        self.big_contexts()
+        self.create()
+        blobs = cast(dict[str, str], json.loads(self.blobs_file().read_text()))
+        digest = next(iter(blobs))
+        self.blobs_file().write_text(json.dumps({digest: "QUJD"}))
+        with self.assertRaises(c.FixtureError):
+            c.command_validate([self.vectors])
+
+
 class SchemaAgreementTests(unittest.TestCase):
-    """The hand-written validator and the JSON Schema document must describe the same keys."""
+    """The hand-written validators and the JSON Schema documents must describe the same keys."""
 
-    schema: dict[str, Any] = {}  # noqa: RUF012 - replaced in setUp
-    defs: dict[str, Any] = {}  # noqa: RUF012 - replaced in setUp
-
-    def setUp(self) -> None:
-        self.schema = cast(dict[str, Any], json.loads(SCHEMA.read_text()))
-        self.defs = cast(dict[str, Any], self.schema["$defs"])
+    def load(self, path: Path) -> dict[str, Any]:
+        return cast(dict[str, Any], json.loads(path.read_text()))
 
     def keys(self, node: dict[str, Any]) -> tuple[set[str], set[str]]:
         return set(cast(list[str], node.get("required", []))), set(
@@ -268,31 +316,48 @@ class SchemaAgreementTests(unittest.TestCase):
         )
 
     def test_metadata(self) -> None:
-        meta = cast(dict[str, Any], self.schema["properties"]["metadata"])
+        meta = cast(
+            dict[str, Any],
+            self.load(SCHEMA_DIR / "fixture-v1.schema.json")["properties"]["metadata"],
+        )
         self.assertEqual(self.keys(meta), (c.METADATA_REQUIRED, c.METADATA_ALLOWED))
-        self.assertEqual(
-            set(cast(list[str], meta["properties"]["harness"]["enum"])), set(c.HARNESSES)
-        )
 
-    def test_contexts(self) -> None:
-        self.assertEqual(
-            self.keys(self.defs["vm_context"]), (c.VM_CONTEXT_REQUIRED, c.VM_CONTEXT_ALLOWED)
-        )
-        self.assertEqual(
-            self.keys(self.defs["txn_context"]), (c.TXN_CONTEXT_REQUIRED, c.TXN_CONTEXT_ALLOWED)
-        )
-
-    def test_effects(self) -> None:
-        self.assertEqual(
-            self.keys(self.defs["vm_effects"]), (c.VM_EFFECTS_REQUIRED, c.VM_EFFECTS_REQUIRED)
-        )
-        variants = cast(list[dict[str, Any]], self.defs["txn_effects"]["oneOf"])
-        by_outcome = {v["properties"]["outcome"]["const"]: self.keys(v) for v in variants}
-        self.assertEqual(by_outcome, {k: (v, v) for k, v in c.TXN_EFFECTS_KEYS.items()})
+    def test_every_harness_has_a_matching_schema(self) -> None:
+        documented = {
+            p.name.removesuffix("-v1.schema.json")
+            for p in (SCHEMA_DIR / "harness").glob("*-v1.schema.json")
+        }
+        self.assertEqual(documented, set(HARNESSES))
+        for name, module in HARNESSES.items():
+            with self.subTest(harness=name):
+                defs = cast(
+                    dict[str, Any],
+                    self.load(SCHEMA_DIR / "harness" / f"{name}-v1.schema.json")["$defs"],
+                )
+                self.assertEqual(
+                    self.keys(defs["context"]),
+                    (set(module.CONTEXT_REQUIRED), set(module.CONTEXT_ALLOWED)),
+                )
+                effects = cast(dict[str, Any], defs["effects"])
+                if None in module.EFFECT_SHAPES:
+                    shape = set(module.EFFECT_SHAPES[None])
+                    self.assertEqual(self.keys(effects), (shape, shape))
+                else:
+                    variants = cast(list[dict[str, Any]], effects["oneOf"])
+                    by_outcome = {
+                        v["properties"]["outcome"]["const"]: self.keys(v) for v in variants
+                    }
+                    expected = {k: (set(v), set(v)) for k, v in module.EFFECT_SHAPES.items()}
+                    self.assertEqual(by_outcome, expected)
 
     def test_patterns(self) -> None:
-        self.assertEqual(self.defs["hash"]["pattern"], c.HASH_RE.pattern)
-        self.assertEqual(self.defs["boc"]["pattern"], c.BOC_RE.pattern)
+        defs = cast(dict[str, Any], self.load(SCHEMA_DIR / "common-v1.schema.json")["$defs"])
+        self.assertEqual(defs["hash"]["pattern"], t.HASH_RE.pattern)
+        self.assertEqual(defs["boc"]["oneOf"][0]["pattern"], t.BOC_RE.pattern)
+        self.assertEqual(
+            defs["boc"]["oneOf"][1]["properties"]["blob"]["pattern"], t.BLOB_RE.pattern
+        )
+        self.assertEqual(defs["hex"]["pattern"], t.HEX_RE.pattern)
 
 
 if __name__ == "__main__":

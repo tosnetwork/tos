@@ -85,12 +85,4 @@ if (NOT USE_EMSCRIPTEN)
   target_link_libraries(test-gas-purchase PRIVATE emulator_static)
   add_executable(test-storage-encoding test/storage-encoding.cpp)
   target_link_libraries(test-storage-encoding PRIVATE emulator_static)
-
-  # Conformance reference library and its line-protocol wrapper (test/conformance/README.md).
-  set(CONFORMANCE_REF_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../test/conformance/ref)
-  add_library(conformance-ref SHARED ${CONFORMANCE_REF_DIR}/conformance-ref.cpp)
-  target_include_directories(conformance-ref PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} PUBLIC ${CONFORMANCE_REF_DIR})
-  target_link_libraries(conformance-ref PRIVATE emulator git)
-  add_executable(conformance-ref-cli ${CONFORMANCE_REF_DIR}/conformance-ref-cli.cpp)
-  target_link_libraries(conformance-ref-cli PRIVATE conformance-ref)
 endif()

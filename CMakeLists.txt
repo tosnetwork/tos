@@ -1969,27 +1969,8 @@ set_tests_properties(wallet-quantum-review-sources-self-test PROPERTIES LABELS "
 add_test(NAME varuint-codec-contract
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/executor-parity/test_varuint_codec.py)
 set_tests_properties(varuint-codec-contract PROPERTIES LABELS "source-guard")
-# Conformance vectors (test/conformance/README.md): the runner's own checks, then every frozen fixture
-# against the reference library built from this tree. A behaviour change fails here until the
-# fixtures are regenerated in the same change.
-add_test(NAME conformance-runner
-  COMMAND ${Python3_EXECUTABLE} -B -m unittest test_conformance
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/test/conformance/runner)
-set_tests_properties(conformance-runner PROPERTIES LABELS "conformance" TIMEOUT 120)
-if (TARGET conformance-ref-cli)
-  add_test(NAME conformance-vectors
-    COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/test/conformance/runner/conformance.py run
-      --target $<TARGET_FILE:conformance-ref-cli> ${CMAKE_CURRENT_SOURCE_DIR}/test/conformance/vectors)
-  set_tests_properties(conformance-vectors PROPERTIES LABELS "conformance" TIMEOUT 600)
-  # Every REL-02 transaction run through the txn harness must reproduce its on-chain transaction
-  # and account hashes: recorded history has to keep replaying after a C++ change.
-  if (TARGET test-epoch-replay)
-    add_test(NAME conformance-rel02-chain
-      COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/test/conformance/migrate/rel02.py chain
-        $<TARGET_FILE:test-epoch-replay> $<TARGET_FILE:conformance-ref-cli> ${CMAKE_CURRENT_SOURCE_DIR}/test/rel02/corpus)
-    set_tests_properties(conformance-rel02-chain PROPERTIES LABELS "conformance" TIMEOUT 1800)
-  endif()
-endif()
+# Conformance vectors and their reference library (test/conformance/README.md).
+add_subdirectory(test/conformance)
 add_test(NAME branch-chain-python-ci-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-branch-chain-python-ci.py)
 set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-guard")
