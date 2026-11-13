@@ -44,8 +44,9 @@ fixed table in `validate-offline.cpp`: `input_unavailable`, `candidate_id_mismat
 `account_update_invalid`, `transaction_invalid`, `message_invalid`, `pruned_input`; any other message is
 `unclassified`, so a new failure path is visible. Only the class is compared. Rules are tried in order;
 `pruned_input` (a read of a cell missing from a supplied Merkle proof, reported as "prunned branch")
-comes first because the validation wraps that text in messages a content rule would match. No frozen
-fixture reaches `pruned_input` or `validator_set_mismatch` yet.
+comes first because the validation wraps that text in messages a content rule would match.
+`runner/test_validate.py` checks that the C++ table, the validator's `REASONS` and the schema enum name
+the same classes, and that every class but `unclassified` is reached by a frozen fixture.
 
 ### Contexts from archived history
 
@@ -71,8 +72,11 @@ keep collated data, so the exporter supplies what a collator attaches:
 | `rel02-chain` | 364 | every REL-02 corpus block with complete history (epoch-5 packages from genesis); all accepted, the block bytes equal the corpus files |
 | `epoch6-slice` | 246 | epoch-6 masterchain 1..100 and 250,001..250,020 with every shard block referencing them; all accepted |
 | `rel02-negative` | 28 | authored defects of corpus blocks mc 117,752, basechain 118,284 and mc 151,331 (one with an outbound message); `runner/test_validate.py` checks each outcome and class |
+| `rel02-negative-input` | 5 | authored defects of what the validation is given, on mc 117,752 and basechain 118,284: the validator-set and served-state classes; checked the same way |
 
-The three families take 14.8 MB, 11.8 MB of it in the blob files (mostly Merkle proofs of states).
+The four families take 14.9 MB, 11.9 MB of it in the blob files (mostly Merkle proofs of states).
+`rel02-negative-input` is exported in a run of its own: the proofs of a family are the union of what its
+contexts read, so adding contexts to `rel02-negative` would change its existing contexts.
 
 The defects: another previous state (same header block id, another root hash); another previous block;
 the referenced masterchain state withheld; `ValueFlow` fees + 1; a transaction's fees + 1; an account block
@@ -80,7 +84,14 @@ removed; a transaction repeated at the next logical time; `gen_utime` one hour e
 and `ConsensusExtraData`, and the header alone); `gen_utime_ms` one second off; `start_lt` not aligned;
 `end_lt` 2^40 after `start_lt` (header and new state: the logical-time hard limit); a state update that
 leaves the state unchanged; another candidate file hash, shard or producer; an `OutMsgDescr` entry
-removed.
+removed. In `rel02-negative-input`: a header that declares catchain seqno + 1 or a validator list hash
+with its lowest bit flipped, so neither matches the set computed from `validator_set_from`
+(`validator_set_mismatch`, both blocks); and the previous state of the masterchain block served as a
+Merkle proof of exactly what validating the archived block reads of it, with the accounts dictionary
+cut off as well (`pruned_input`: the validation stops with an error when it reads the configuration
+account). The same cut of a shard block's previous state fails the Merkle state update first (a message
+no rule classifies), and a cut of the referenced masterchain state's configuration or shard description
+is read by the validator set computation before `ValidateQuery` starts, so neither is a fixture.
 
 `ctest` label `history-replay`: `conformance-validate-epoch6-slice` exports every block of epoch-6
 masterchain 1..`CONFORMANCE_ARCHIVE_SLICE` (and the shard blocks referencing them) after checking the

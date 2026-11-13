@@ -141,9 +141,9 @@ All vectors live in this tree, under `vectors/<harness>/fixtures/`:
 | `net` | 23 | 1,245 | 5.2 MB |
 | `tl` | 3 | 174 | 1.2 MB |
 | `txn` | 56 | 62,054 | 177.9 MB |
-| `validate` | 3 | 638 | 14.8 MB |
+| `validate` | 4 | 643 | 14.9 MB |
 | `vm` | 34 | 163,788 | 118.1 MB |
-| total | 178 | 252,204 | 350.0 MB |
+| total | 179 | 252,209 | 350.1 MB |
 
 Families whose name starts with `rtos-` (and the get_method families rebuilt from that implementation's
 test parameters) hold contexts converted from another implementation's tests; their effects come from the C++
@@ -156,7 +156,7 @@ reference like every other fixture. Per-component tables are in `docs/`.
 | VM families | 27 migrated VM families plus the chksig and library-load-limit families | [docs/vmfam.md](docs/vmfam.md) |
 | Transaction families | 56 migrated transaction families, captured at the native call | [docs/txnfam.md](docs/txnfam.md) |
 | Network wire layer | ADNL keys, packets, datagrams and channels, overlay records and certificates, FEC codes and RLDP2 transfers through the node's own code; 23 families, known answers from RFC 8032, `test/test-adnl.cpp` and the RTOS overlay vectors | [docs/net.md](docs/net.md) |
-| Block validation | the node's `ValidateQuery` offline: 610 archived blocks accepted, 28 authored defects rejected by class; a 2,000-masterchain-block epoch-6 slice (`history-replay`) | [docs/validate.md](docs/validate.md) |
+| Block validation | the node's `ValidateQuery` offline: 610 archived blocks accepted, 33 authored defects rejected by class (every reason class reached); a 2,000-masterchain-block epoch-6 slice (`history-replay`) | [docs/validate.md](docs/validate.md) |
 | Archive replay | offline whole-history replay of archived networks from their zero states | [docs/archive.md](docs/archive.md), [docs/archive-manifest.json](docs/archive-manifest.json) |
 | Fuzzing and diagnosis | differential fuzzing (in-process and line protocol), test-build VM step trace (`TOS_VM_STEP_TRACE`, default OFF), `debug_mismatch.py`, `minimize.py` | [docs/fuzz.md](docs/fuzz.md) |
 | tosctl VM target | the tosctl Rust VM and executor behind the line protocol | [docs/tosvm.md](docs/tosvm.md) |
