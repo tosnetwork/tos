@@ -33,7 +33,11 @@ add_library(conformance-fuzz-core STATIC
   ${CONFORMANCE_FUZZ_DIR}/generator.cpp
   ${CONFORMANCE_FUZZ_DIR}/differ.cpp)
 target_include_directories(conformance-fuzz-core PUBLIC ${CONFORMANCE_FUZZ_DIR})
-target_link_libraries(conformance-fuzz-core PUBLIC tos_crypto tdutils ${CMAKE_DL_LIBS})
+# The drivers dlopen the reference library, which links jemalloc through the node's database
+# library when TOS_USE_JEMALLOC is on. jemalloc's thread-local state is initial-exec, so it cannot
+# be loaded by dlopen ("cannot allocate memory in static TLS block"); a driver links it at
+# start-up, as the node does, and the dlopened library then uses the copy already loaded.
+target_link_libraries(conformance-fuzz-core PUBLIC tos_crypto tdutils ${CMAKE_DL_LIBS} ${JEMALLOC_LIBRARIES})
 
 add_executable(conformance-fuzz ${CONFORMANCE_FUZZ_DIR}/driver-main.cpp)
 target_link_libraries(conformance-fuzz PRIVATE conformance-fuzz-core)
@@ -61,7 +65,7 @@ if (CONFORMANCE_FUZZ_HAVE_LIBFUZZER)
     # from this executable, so its symbols have to be exported.
     target_link_options(conformance-fuzz-libfuzzer PRIVATE -Wl,--export-dynamic)
   endif()
-  target_link_libraries(conformance-fuzz-libfuzzer PRIVATE tos_crypto tdutils ${CMAKE_DL_LIBS})
+  target_link_libraries(conformance-fuzz-libfuzzer PRIVATE tos_crypto tdutils ${CMAKE_DL_LIBS} ${JEMALLOC_LIBRARIES})
 endif()
 
 # Self-contained copies of the reference library: every dependency linked in statically, every symbol but the

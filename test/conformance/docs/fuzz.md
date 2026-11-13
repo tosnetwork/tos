@@ -34,6 +34,11 @@ CONFORMANCE_FUZZ_SEEDS=test/conformance/vectors CONFORMANCE_FUZZ_OUT=<dir> \
     build/test/conformance/conformance-fuzz-libfuzzer -max_total_time=600
 ```
 
+The in-process drivers `dlopen` the libraries. In a build with `TOS_USE_JEMALLOC=ON` the reference
+library depends on jemalloc (through the node's database library), whose thread-local state cannot be
+loaded by `dlopen`; the drivers therefore link jemalloc at start-up, and any other program that loads the
+library at run time has to do the same (or use the command-line protocol).
+
 Both drivers print one summary line (cases, equal, both refused, mismatched, cases per lineage, the
 reference's outcome counts, throughput) and exit 0 only when no case mismatched; with `--expect-mismatch`
 they exit 0 only when one did. A one-sided refusal (`harness_error`) is a mismatch; two refusals agree
