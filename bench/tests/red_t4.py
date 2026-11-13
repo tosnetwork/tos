@@ -50,6 +50,7 @@ R_BUMP = TR + "RemoteRun.test_a_concurrent_nonce_bump_does_not_settle_the_reques
 R_HANG = TR + "RemoteRun.test_a_hung_signer_before_any_send_is_killed_and_refused"
 R_HANG2 = TR + "RemoteRun.test_a_hung_signer_after_a_send_is_killed_and_stops"
 T2 = "bench/shard/t2collect.py"
+RPC = "bench/shard/rpc.py"
 RECON = "ReconcileHistory"
 STEP = "StepVerdicts"
 
@@ -205,7 +206,7 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     (
         "end to end: the follower walks no shard block",
         R,
-        "walk_blocks(self.rpc, [self.last, cur], max_blocks=4096)",
+        "walk_blocks(self.rpc, [prev, cur], max_blocks=4096)",
         "walk_blocks(self.rpc, [cur, cur], max_blocks=4096)",
         E2E,
     ),
@@ -440,7 +441,7 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     (
         "follower: an unread header is ignored",
         R,
-        "            missing = unread_blocks(blocks, self.last, cur)\n",
+        "            missing = unread_blocks(blocks, prev, cur)\n",
         "            missing = []\n",
         f"{INC}.test_a_header_that_fails_once_is_read_again",
     ),
@@ -581,6 +582,58 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
         "    if a.stop_file is not None and a.stop_file.exists():\n",
         "    if False:\n",
         "RemoteRun.test_a_stop_file_present_at_the_start_sends_nothing",
+    ),
+    (
+        "live deadline: count from the follower's frontier",
+        R,
+        "            now = live\n",
+        "            now = self.chain_now()\n",
+        "LiveDeadlines.test_a_deadline_counts_from_the_live_head_not_the_lagging_frontier",
+    ),
+    (
+        "live deadline: fall back to the frontier without a reading",
+        R,
+        "            return None\n        now = max(self.live[1], floor)",
+        "            return floor\n        now = max(self.live[1], floor)",
+        "LiveDeadlines.test_without_a_live_reading_no_request_is_built",
+    ),
+    (
+        "live deadline: a stale reading serves forever",
+        R,
+        "        if self.live is None or time.monotonic() - self.live[0] > LIVE_MAX_AGE:",
+        "        if self.live is None:",
+        "LiveDeadlines.test_a_reading_older_than_its_maximum_age_is_not_used",
+    ),
+    (
+        "follower: read the windows one at a time",
+        R,
+        "        windows = await asyncio.gather(\n"
+        "            *(self.read_window(p, c) for p, c in zip(opening, fresh, strict=True)),\n"
+        "            return_exceptions=True,\n"
+        "        )",
+        "        windows = [await self.read_window(p, c) for p, c in zip(opening, fresh, strict=True)]",
+        "FollowerReadRate.test_the_windows_of_one_round_are_read_together_and_applied_in_order",
+    ),
+    (
+        "follower: apply the windows after a failed one",
+        R,
+        '                log.error("follower stopped: %s", self.failed)\n                return advanced\n',
+        '                log.error("follower stopped: %s", self.failed)\n                continue\n',
+        "FollowerReadRate.test_a_window_that_fails_stops_the_frontier_before_it_and_applies_the_ones_before",
+    ),
+    (
+        "reader pool: no failover",
+        RPC,
+        "                failure = error\n",
+        "                raise\n",
+        "ReaderPoolTests.test_an_endpoint_that_errs_is_skipped_for_the_next",
+    ),
+    (
+        "reader pool: no rotation",
+        RPC,
+        "        self._cursor = (self._cursor + 1) % n\n",
+        "",
+        "ReaderPoolTests.test_reads_are_spread_over_every_endpoint",
     ),
 ]
 

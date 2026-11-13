@@ -36,7 +36,7 @@ from pytosiq_core import (  # noqa: E402
 )
 from shard import journal as jr  # noqa: E402
 from shard import remote, t2collect  # noqa: E402
-from shard.rpc import PacedRpc  # noqa: E402
+from shard.rpc import PacedRpc, ReaderPool, RpcError  # noqa: E402
 from shard.t2check import McRecord, Msg, Tx  # noqa: E402
 from t4 import ramp  # noqa: E402
 from t4.ledger import (  # noqa: E402
@@ -250,7 +250,6 @@ class LedgerOutcomes(unittest.TestCase):
             ({"aborted": False, "compute": ok}, None),
             ({"aborted": False, "compute": {"skipped": True, "skip_reason": 0}}, None),
             ({"aborted": True, "compute": ok}, "transaction aborted"),
-            ({"aborted": None, "compute": ok}, "abort flag not shown"),
             ({"compute": ok}, "abort flag not shown"),
             (
                 {"aborted": False, "compute": {**ok, "success": False, "exit_code": 33}},
@@ -269,10 +268,25 @@ class LedgerOutcomes(unittest.TestCase):
                 "lt": "5",
                 "hash": base64.b64encode(bytes(32)).decode(),
                 "in_msg": None,
+                "out_msgs": [],
                 **rendered,
             }
             tx = t2collect.parse_transaction(value, (0, 0, 1))
             self.assertEqual(tx.phase_failure, failure, rendered)
+        # An abort flag the node could not decode is refused, never read as "not shown".
+        with self.assertRaises(ValueError):
+            t2collect.parse_transaction(
+                {
+                    "account": "ab" * 32,
+                    "lt": "5",
+                    "hash": base64.b64encode(bytes(32)).decode(),
+                    "in_msg": None,
+                    "out_msgs": [],
+                    "aborted": None,
+                    "compute": ok,
+                },
+                (0, 0, 1),
+            )
 
     def test_a_second_delivery_is_a_duplicate(self):
         lg = ledger()
@@ -636,12 +650,22 @@ class FakeSigner:
 class Transport:
     """Answers queued per call: (status, document) or an exception to raise."""
 
-    def __init__(self, answers: list[Any], nonce: int = 0):
-        self.answers, self.nonce = list(answers), nonce
+    def __init__(self, answers: list[Any], nonce: int = 0, head_utime: int | None = 1_000):
+        """``head_utime`` is the live head's time; None answers every head read with an error."""
+        self.answers, self.nonce, self.head_utime = list(answers), nonce, head_utime
         self.sends: list[str] = []
+        self.head_reads = 0
 
     async def __call__(self, url: str, body: bytes, timeout: float) -> tuple[int, bytes]:
         request = json.loads(body)
+        if request["method"] in ("getMasterchainInfo", "getBlockHeader"):
+            self.head_reads += 1
+            if self.head_utime is None:
+                return 200, json.dumps({"error": {"code": -32603, "message": "no head"}}).encode()
+            result: dict[str, Any] = {"last": tr.block_id(-1, 7)}
+            if request["method"] == "getBlockHeader":
+                result = {"id": tr.block_id(-1, 7), "gen_utime": self.head_utime}
+            return 200, json.dumps({"result": result}).encode()
         if request["method"] == "getAddressInformation":
             data = base64.b64encode(tr.wallet_data(self.nonce).to_boc()).decode()
             result = {"state": "active", "balance": "1", "data": data}
@@ -2082,6 +2106,177 @@ class Signing(unittest.TestCase):
             with self.assertRaises(RuntimeError) as caught:
                 signer.sign([(seed, b"m")])
             self.assertNotIn(seed.reveal().hex(), str(caught.exception))
+
+
+# ─── chain time for deadlines, and the follower's read rate ─────────
+
+
+class LiveDeadlines(unittest.TestCase):
+    """A request's deadline counts from the live head, whatever the follower trails by."""
+
+    def test_a_deadline_counts_from_the_live_head_not_the_lagging_frontier(self):
+        # The follower's frontier is at 1,000 (make_ramp); the head is 300 s ahead of it.
+        r = make_ramp(Transport([], head_utime=1_300), wallets=3)
+        [ext] = asyncio.run(issue_and_wait(r))
+        self.assertEqual(ext.deadline, 1_360)  # head 1,300 + lifetime 60
+        self.assertEqual(r.live_lag_max, 300)
+        # Expiry still counts from the frontier: past 1,360 only once the walk is.
+        r.housekeeping()
+        self.assertFalse(ext.expired)
+
+    def test_the_live_time_never_runs_below_the_frontier(self):
+        r = make_ramp(Transport([], head_utime=900), wallets=3)  # a node behind the walk
+        [ext] = asyncio.run(issue_and_wait(r))
+        self.assertEqual(ext.deadline, 1_060)
+
+    def test_the_head_is_read_at_most_once_a_refresh_period(self):
+        transport = Transport([], head_utime=1_300)
+        r = make_ramp(transport, wallets=3)
+        for _ in range(3):
+            asyncio.run(issue_and_wait(r))
+        self.assertEqual(transport.head_reads, 2)  # getMasterchainInfo + getBlockHeader, once
+
+    def test_without_a_live_reading_no_request_is_built(self):
+        transport = Transport([], head_utime=None)
+        r = make_ramp(transport, wallets=3)
+        [ext] = asyncio.run(issue_and_wait(r))
+        self.assertEqual(ext.outcome(0, 99), (REFUSED, "local: no live chain time"))
+        self.assertEqual(transport.sends, [])
+
+    def test_a_reading_older_than_its_maximum_age_is_not_used(self):
+        transport = Transport([], head_utime=None)
+        r = make_ramp(transport, wallets=3)
+        r.live = (time.monotonic() - ramp.LIVE_MAX_AGE - 1, 5_000)
+        [ext] = asyncio.run(issue_and_wait(r))
+        self.assertEqual(ext.outcome(0, 99), (REFUSED, "local: no live chain time"))
+        self.assertEqual(transport.sends, [])
+        # A younger one serves while the head cannot be read.
+        r.live = (time.monotonic() - ramp.LIVE_REFRESH - 0.5, 1_200)
+        [late] = asyncio.run(issue_and_wait(r))
+        self.assertEqual(late.deadline, 1_260)
+        self.assertEqual(len(transport.sends), 1)
+
+
+class CountingTransport:
+    """Answers every call with ``result``, or an RPC error while ``broken``; counts calls."""
+
+    def __init__(self, broken: bool = False):
+        self.broken, self.calls = broken, 0
+
+    async def __call__(self, url: str, body: bytes, timeout: float) -> tuple[int, bytes]:
+        self.calls += 1
+        request = json.loads(body)
+        if self.broken:
+            reply: dict[str, Any] = {"error": {"code": -32603, "message": "block not ready"}}
+        else:
+            reply = {"result": {"url": url}}
+        return 200, json.dumps({"jsonrpc": "2.0", "id": request["id"], **reply}).encode()
+
+
+class ReaderPoolTests(unittest.TestCase):
+    def pool(self, *broken: bool) -> tuple[ReaderPool, list[CountingTransport]]:
+        transports = [CountingTransport(b) for b in broken]
+        clients = [PacedRpc(f"http://node-{i}", 1.0, transport=t) for i, t in enumerate(transports)]
+        return ReaderPool(clients), transports
+
+    def test_reads_are_spread_over_every_endpoint(self):
+        pool, transports = self.pool(False, False, False, False)
+
+        async def reads() -> list[Any]:
+            return await asyncio.gather(*(pool.call("getShards") for _ in range(40)))
+
+        answers = asyncio.run(reads())
+        self.assertEqual([t.calls for t in transports], [10, 10, 10, 10])
+        self.assertEqual(len({a["url"] for a in answers}), 4)
+        self.assertEqual(pool.failovers, 0)
+
+    def test_an_endpoint_that_errs_is_skipped_for_the_next(self):
+        pool, transports = self.pool(True, False)
+        answers = asyncio.run(self.many(pool, 4))
+        self.assertEqual({a["url"] for a in answers}, {"http://node-1"})
+        self.assertEqual(transports[0].calls, 2)  # tried first on every second call
+        self.assertEqual(pool.failovers, 2)
+
+    def test_every_endpoint_failing_raises_the_error(self):
+        pool, transports = self.pool(True, True)
+        with self.assertRaises(RpcError):
+            asyncio.run(pool.call("getShards"))
+        self.assertEqual([t.calls for t in transports], [1, 1])
+
+    def test_an_endpoint_without_budget_room_goes_last(self):
+        pool, transports = self.pool(False, False)
+        while pool.clients[0].budget.room() > 0:  # endpoint 0's budget is used up
+            pool.clients[0].budget.take()
+        asyncio.run(self.many(pool, 2))
+        self.assertEqual([t.calls for t in transports], [0, 2])
+
+    @staticmethod
+    async def many(pool: ReaderPool, n: int) -> list[Any]:
+        return [await pool.call("getShards") for _ in range(n)]
+
+    def test_an_empty_pool_is_refused(self):
+        with self.assertRaises(ValueError):
+            ReaderPool([])
+
+
+class InFlight:
+    """A FakeChain transport that holds every transaction read briefly and records the most
+    reads in flight at once."""
+
+    def __init__(self, chain: "FakeChain"):
+        self.inner, self.now, self.most = ChainTransport(chain), 0, 0
+
+    async def __call__(self, url: str, body: bytes, timeout: float) -> tuple[int, bytes]:
+        if json.loads(body)["method"] != "getBlockTransactionsExt":
+            return await self.inner(url, body, timeout)
+        self.now += 1
+        self.most = max(self.most, self.now)
+        try:
+            await asyncio.sleep(0.02)
+            return await self.inner(url, body, timeout)
+        finally:
+            self.now -= 1
+
+
+class FollowerReadRate(unittest.TestCase):
+    def test_the_windows_of_one_round_are_read_together_and_applied_in_order(self):
+        chain = FakeChain("0:" + "ee" * 32, {})
+        transport = InFlight(chain)
+        reader = PacedRpc("http://fake", 1.0, transport=transport)
+        lg = Ledger([])
+
+        async def scenario() -> ramp.Follower:
+            [first] = await t2collect.read_masterchain(reader, chain.base, chain.base)
+            while chain.head() < chain.base + 8:
+                await asyncio.sleep(BLOCK_INTERVAL / 2)
+            follower = ramp.Follower(reader, lg, lambda ext: None, first, 0.01)
+            self.assertGreaterEqual(await follower.round(), 8)
+            return follower
+
+        follower = asyncio.run(scenario())
+        seqnos = [m.seqno for m in follower.mcs]
+        self.assertEqual(seqnos, list(range(chain.base, seqnos[-1] + 1)))
+        self.assertGreater(transport.most, 1)  # one window at a time never overlaps reads
+        self.assertIsNone(follower.failed)
+
+    def test_a_window_that_fails_stops_the_frontier_before_it_and_applies_the_ones_before(self):
+        chain = FakeChain("0:" + "ee" * 32, {})
+        reader = PacedRpc("http://fake", 1.0, transport=ChainTransport(chain))
+        lg = Ledger([])
+        bad = chain.base + 5
+        chain.fail_reads[("getBlockTransactionsExt", 0, bad)] = 10**6
+
+        async def scenario() -> ramp.Follower:
+            [first] = await t2collect.read_masterchain(reader, chain.base, chain.base)
+            while chain.head() < chain.base + 8:
+                await asyncio.sleep(BLOCK_INTERVAL / 2)
+            follower = ramp.Follower(reader, lg, lambda ext: None, first, 0.01)
+            await follower.round()
+            return follower
+
+        follower = asyncio.run(scenario())
+        self.assertEqual(follower.last.seqno, bad - 1)
+        self.assertIn(f"masterchain block {bad}", follower.failed or "")
 
 
 if __name__ == "__main__":

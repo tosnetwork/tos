@@ -41,7 +41,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from shard import t2check  # noqa: E402
-from shard.rpc import PacedRpc, RateLimited, RpcError  # noqa: E402
+from shard.rpc import PacedRpc, RateLimited, Reader, RpcError  # noqa: E402
 from shard.t2check import (  # noqa: E402
     BlockKey,
     BlockRecord,
@@ -209,7 +209,7 @@ def _block_params(ref: BlockRef) -> dict[str, Any]:
     return {"workchain": ref.workchain, "shard": str(ref.shard), "seqno": ref.seqno}
 
 
-async def read_masterchain(rpc: PacedRpc, lo: int, hi: int, parallel: int = 4) -> list[McRecord]:
+async def read_masterchain(rpc: Reader, lo: int, hi: int, parallel: int = 4) -> list[McRecord]:
     """Every masterchain block in [lo, hi], with its basechain shard tops."""
     if not 0 <= lo <= hi:
         raise ValueError("a masterchain range needs 0 <= lo <= hi")
@@ -242,8 +242,22 @@ async def read_masterchain(rpc: PacedRpc, lo: int, hi: int, parallel: int = 4) -
     return out
 
 
+async def head_time(rpc: Reader) -> tuple[int, int]:
+    """The masterchain head the node reports now: (seqno, gen_utime)."""
+    info = await rpc.call("getMasterchainInfo")
+    seqno = parse_block_id(info.get("last")).seqno
+    header = await rpc.call(
+        "getBlockHeader", {"workchain": -1, "shard": str(MASTERCHAIN_SHARD), "seqno": seqno}
+    )
+    ref = parse_block_id(header.get("id"))
+    utime = header.get("gen_utime")
+    if ref.seqno != seqno or ref.workchain != -1 or type(utime) is not int or utime <= 0:
+        raise ValueError(f"masterchain header {seqno} answered for {ref.label()} at {utime!r}")
+    return seqno, utime
+
+
 async def walk_blocks(
-    rpc: PacedRpc, mcs: list[McRecord], max_blocks: int = 200_000
+    rpc: Reader, mcs: list[McRecord], max_blocks: int = 200_000
 ) -> dict[BlockKey, BlockRecord]:
     """Headers of every block between the opening tops and the later tops, by back-links.
 
@@ -281,7 +295,7 @@ async def walk_blocks(
     return blocks
 
 
-async def read_transactions(rpc: PacedRpc, ref: BlockRef) -> BlockTxs:
+async def read_transactions(rpc: Reader, ref: BlockRef) -> BlockTxs:
     """Every page of one block's transaction list."""
     txs: list[Tx] = []
     params = _block_params(ref) | {"count": TX_PAGE}
@@ -336,7 +350,7 @@ async def wait_until_past(
 
 
 async def read_all_transactions(
-    rpc: PacedRpc, refs: list[BlockRef], parallel: int = 8
+    rpc: Reader, refs: list[BlockRef], parallel: int = 8
 ) -> dict[BlockKey, BlockTxs]:
     out: dict[BlockKey, BlockTxs] = {}
     for start in range(0, len(refs), parallel):
