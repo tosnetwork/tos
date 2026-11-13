@@ -148,6 +148,9 @@ def transcript_records(output: Path) -> list[Json]:
         lines = [line.split("\t") for line in transcripts.read_text().splitlines() if line]
         if len(rows) != len(lines) or any(len(r) != 6 for r in rows):
             continue
+        # Other transcript dialects (e.g. named refusal classes) are not this format.
+        if any(len(n) < 5 or not n[1].lstrip("-").isdigit() for n in lines):
+            continue
         for fields, native in zip(rows, lines, strict=True):
             if native[0] != fields[0]:
                 raise SystemExit(f"{transcripts}: {native[0]} for scenario {fields[0]}")
