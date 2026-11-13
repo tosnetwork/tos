@@ -86,9 +86,10 @@ floor in `coverage/components.json` (floors are per file under the prefixes in `
 the reference cannot dilute them; a floored file that is no longer measured fails). `vm-handlers-unreachable.txt` lists handlers no version-16 program can run (with the
 reason); `vm-handlers-gaps.txt` lists reachable ones not yet executed, printed on every run. Current baseline: 411 of
 421 handlers executed (7 unreachable, 3 gaps); line coverage crypto/vm 54.1%, crypto/pq 82.0%, transaction.cpp 66.2%,
-mc-config.cpp 55.6%, block.cpp 34.9%, emulator 82.0%, validate-query.cpp 42.4% (91 floored files).
+mc-config.cpp 55.6%, block.cpp 34.9%, emulator 82.0%, validate-query.cpp 42.4%, adnl 48.5%, keys 58.9%, overlay 4.5%,
+rldp2 55.9%, fec 79.6%, tdfec 85.2% (186 floored files).
 `.github/workflows/conformance-coverage.yml` runs it weekly and on changes to the VM, the block code, the emulator,
-the validator or this suite. After adding vectors that reach more code, run
+the validator, the network code (adnl, keys, overlay, rldp2, fec, tdfec) or this suite. After adding vectors that reach more code, run
 `handlers.py baseline <report>` and commit the raised baseline.
 
 ## Commands

@@ -10,6 +10,12 @@ on:
       - "crypto/block/**"
       - "emulator/**"
       - "validator/**"
+      - "adnl/**"
+      - "keys/**"
+      - "overlay/**"
+      - "rldp2/**"
+      - "fec/**"
+      - "tdfec/**"
       - "test/conformance/**"
       - ".github/workflows/conformance-coverage.yml"
 

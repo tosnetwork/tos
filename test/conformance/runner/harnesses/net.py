@@ -299,6 +299,7 @@ FIELD_CHECKS: dict[str, Callable[[object, str], None]] = {
 OP_FIELD_KINDS: dict[tuple[str, str], Callable[[object, str], None]] = {
     ("overlay_member_certificate", "node"): ident,
     ("preauth_gate", "source"): gate_budget,
+    ("rldp2_send", "data"): lambda value, where: hex_bytes(value, where, 4 * MAX_BYTES),
     ("rldp2_budget", "data_size"): decimal,
     ("rldp2_budget", "symbol_size"): decimal,
     ("rldp2_budget", "symbols_count"): decimal,

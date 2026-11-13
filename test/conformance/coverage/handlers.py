@@ -40,6 +40,12 @@ COMPONENTS = [
     "crypto/pq/",
     "emulator/",
     "validator/impl/validate-query.cpp",
+    "adnl/",
+    "keys/",
+    "overlay/",
+    "rldp2/",
+    "fec/",
+    "tdfec/",
 ]
 SLACK = 0.5
 
