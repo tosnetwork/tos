@@ -74,6 +74,19 @@ Any BOC field may be a reference `{"blob": "<sha256 of the BOC bytes>"}` into `<
 before a context reaches a target; `validate` requires every reference to resolve, every blob to be used and
 every digest to match its content.
 
+## Coverage gate
+
+`coverage/handlers.py` measures what the vectors execute in the C++ reference: an instrumented build
+(`-fprofile-instr-generate -fcoverage-mapping`, `-DCONFORMANCE_COVERAGE=ON`, label `coverage`) runs every fixture and
+the REL-02 replay, and the gate fails when any VM instruction handler in `coverage/vm-handlers-covered.txt` is no longer
+executed, when a handler is unclassified, or when a component's line coverage drops more than 0.5 points below
+`coverage/components.json`. `vm-handlers-unreachable.txt` lists handlers no version-16 program can run (with the
+reason); `vm-handlers-gaps.txt` lists reachable ones not yet executed, printed on every run. Current baseline: 410 of
+421 handlers executed (7 unreachable, 4 gaps); line coverage crypto/vm 62.4%, transaction.cpp 73.4%, mc-config.cpp
+40.7%, block.cpp 18.1%. `.github/workflows/conformance-coverage.yml` runs it weekly and on changes to the VM, the
+block code, the emulator or this suite. After adding vectors that reach more code, run
+`handlers.py baseline <report>` and commit the raised baseline.
+
 ## Commands
 
 ```

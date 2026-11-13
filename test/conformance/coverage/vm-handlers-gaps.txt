@@ -1,0 +1,5 @@
+# Reachable at version 16 but not yet executed by any fixture. Each line: handler<TAB>what it needs.
+tosops.cpp:tosops.cpp:_ZZN2vm31exec_get_extra_currency_balanceEPNS_7VmStateEEN12LocalVmState12load_libraryEN2td9BitPtrGenIKhEE	GETEXTRABALANCE on a balance whose extra-currency dictionary needs a library cell
+tosops.cpp:tosops.cpp:_ZZN2vm31exec_get_extra_currency_balanceEPNS_7VmStateEEN12LocalVmState20register_cell_createEv	GETEXTRABALANCE path that creates a cell while reading the extra-currency dictionary
+tosops.cpp:tosops.cpp:_ZZN2vm31exec_get_extra_currency_balanceEPNS_7VmStateEENK12LocalVmState18get_global_versionEv	GETEXTRABALANCE path that asks the local state for the global version
+tosops.cpp:tosops.cpp:_ZZN2vm26exec_ristretto255_mul_baseEPNS_7VmStateEbENK3$_0clEh	RIST255_MULBASE/QMULBASE with a scalar that reaches the inner multiplication callback

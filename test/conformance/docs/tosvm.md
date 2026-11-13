@@ -96,3 +96,6 @@ By global version (the network runs 16; STATUS 13.219: the tosctl VM only has to
 
 The 707 version-16 differences are defects of the tosctl VM against the C++ reference. Fixing them is tosctl VM
 work, separate from this suite.
+
+The codepage-0 instruction sweep (`vm-opcode-sweep`, 10,836 fixtures, all version 16) adds 35 differences: 21 in the
+0xcf builder/store range, 12 in the 0xd7 slice range and 2 in 0xf2.

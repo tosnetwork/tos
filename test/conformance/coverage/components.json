@@ -1,0 +1,8 @@
+{
+ "crypto/block/block.cpp": 18.05,
+ "crypto/block/mc-config.cpp": 40.68,
+ "crypto/block/transaction.cpp": 73.39,
+ "crypto/pq/": 77.36,
+ "crypto/vm/": 62.38,
+ "emulator/": 84.21
+}
