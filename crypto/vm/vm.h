@@ -27,6 +27,7 @@
 #include "vm/continuation.h"
 #include "vm/log.h"
 #include "vm/stack.hpp"
+#include "vm/step-trace.h"
 #include "vm/vmstate.h"
 
 namespace vm {
@@ -257,6 +258,14 @@ class VmState final : public VmStateInterface {
   long long get_steps_count() const {
     return steps;
   }
+#ifdef TOS_VM_STEP_TRACE
+  int trace_stack_depth() const {
+    return stack.is_null() ? -1 : stack->depth();
+  }
+  bool trace_is_child() const {
+    return parent != nullptr;
+  }
+#endif
   td::BitArray<256> get_state_hash() const;
   td::BitArray<256> get_final_state_hash(int exit_code) const;
   int step();
