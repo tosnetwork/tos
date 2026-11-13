@@ -392,6 +392,7 @@ EFFECT_HEX = frozenset(
 EFFECT_IDS = frozenset(
     {
         "short_id",
+        "secret",
         "id",
         "from_short",
         "in_id",
