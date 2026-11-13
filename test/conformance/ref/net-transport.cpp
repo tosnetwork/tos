@@ -143,6 +143,9 @@ td::Result<std::string> op_fec_encode(td::JsonObject &ctx) {
   if (data.empty()) {
     return td::Status::Error("data: at least one byte required");
   }
+  if (symbol_size == 0) {
+    return td::Status::Error("symbol_size: 1..2048 required");
+  }
   TRY_STATUS(check_code_parameters(data.size(), symbol_size, (data.size() + symbol_size - 1) / symbol_size));
   std::string parameters;
   std::string symbols;

@@ -10,3 +10,8 @@ target_include_directories(conformance-ref PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_S
 add_test(NAME conformance-net-crosscheck
   COMMAND ${Python3_EXECUTABLE} -B ${CONFORMANCE_DIR}/migrate/net_contexts.py check ${CONFORMANCE_DIR}/vectors/net)
 set_tests_properties(conformance-net-crosscheck PROPERTIES LABELS "conformance" TIMEOUT 600)
+
+# Out-of-bound contexts (a zero FEC symbol size) are refused, and the process keeps answering.
+add_test(NAME conformance-net-bounds
+  COMMAND ${Python3_EXECUTABLE} -B ${CONFORMANCE_DIR}/migrate/net_bounds.py $<TARGET_FILE:conformance-ref-cli>)
+set_tests_properties(conformance-net-bounds PROPERTIES LABELS "conformance" TIMEOUT 300)
