@@ -27,7 +27,7 @@ when the state yields no configuration or getter context. Both mean the liteserv
 
 | Family | Fixtures | Context source |
 |---|---|---|
-| `rel02-getters` | 495 | elector, config contract and wallet, token and pool getters (the names node tooling calls) on 53 complete account states of 24 corpus accounts, each with the masterchain snapshot its block executed against |
+| `rel02-getters` | 589 | elector, config contract and wallet, token and pool getters (the names node tooling calls) on 53 complete account states of 24 corpus accounts, each with the masterchain snapshot its block executed against |
 | `rust-get-context` | 748 | rebuilt from the Rust node's `vm/src/tests/test_get_context.rs`: c7 fields by global version, time and seed, precompiled gas, library lookup modes |
 | `rust-get-history-context` | 1314 | rebuilt from `test_get_history_context.rs`: previous-block history edits (missing, truncated, renumbered entries, key block), storage prices, precompiled-list variants |
 | `rust-get-method-id-context` | 80 | rebuilt from `test_get_method_id.rs`: signed 64-bit method ids |

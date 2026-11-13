@@ -4,7 +4,9 @@
 (REL-02) on the node's own code: the block's Merkle state update is validated
 (`vm::MerkleUpdate::validate`) and applied to the supplied previous state (`vm::MerkleUpdate::apply`),
 the configuration is extracted with `block::ConfigInfo::extract_config`, and every transaction of the
-block is re-executed in account and logical-time order with `emulator::TransactionEmulator`. Each
+block is re-executed in account and logical-time order through the transaction emulator's C interface
+(`transaction_emulator_*`, one emulator per account; the C++ class is not linked into the reference
+library, whose second copy of it changed results of the txn harness in the same process). Each
 result must equal the transaction recorded in the block, the account hash its `HASH_UPDATE` declares
 and the `ShardAccount` the applied new state holds (as the collator writes it).
 

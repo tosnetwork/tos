@@ -3,11 +3,14 @@
 // (schema/harness/block-v1.schema.json), the procedure of emulator/test/epoch-replay.cpp.
 //
 // The block's Merkle state update is validated and applied to the supplied previous state; every
-// transaction of the block is re-executed in order with the production transaction emulator, and the
+// transaction of the block is re-executed in order through the transaction emulator's C interface
+// (one emulator per account, as the replay uses one, and as the txn harness drives it), and the
 // result must equal the transaction recorded in the block, the account hash its HASH_UPDATE declares
 // and the account the new state holds. The configuration comes from the previous state for a
 // masterchain block and from the referenced masterchain block's new state for a shard block.
 // Split and merge blocks need two predecessor states and are refused, as the replay refuses them.
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -16,14 +19,15 @@
 #include "block/block-parse.h"
 #include "block/mc-config.h"
 #include "block/transaction.h"
-#include "emulator/transaction-emulator.h"
 #include "td/utils/base64.h"
 #include "td/utils/crypto.h"
+#include "td/utils/misc.h"
 #include "vm/boc.h"
 #include "vm/cells/MerkleUpdate.h"
 #include "vm/dict.h"
 
 #include "common.h"
+#include "emulator-extern.h"
 
 namespace {
 
@@ -139,29 +143,78 @@ bool transaction_type(const Cell &description, int &type) {
   return true;
 }
 
-// The account the new state holds must be the re-executed one (the collator's account dictionary update).
-bool new_state_holds(vm::AugmentedDictionary &new_accounts, td::ConstBitPtr key, const block::Account &account,
-                     const Cell &original_state, const Cell &last_transaction, tos::LogicalTime last_lt) {
+// The account the new state holds must be the re-executed one, as the collator updates its account
+// dictionary: a deleted account leaves the dictionary, an unchanged account keeps its old entry, and
+// a changed account's entry is the ShardAccount the execution produced.
+bool new_state_holds(vm::AugmentedDictionary &new_accounts, td::ConstBitPtr key, const Cell &original,
+                     const Cell &final_shard_account) {
   auto entry = new_accounts.lookup(key, 256);
-  if (account.status == block::Account::acc_nonexist) {
-    return entry.is_null();
+  const auto final_account = vm::load_cell_slice(final_shard_account).prefetch_ref(0);
+  auto account_cs = vm::load_cell_slice(final_account);
+  if (account_cs.size() == 1 && account_cs.size_refs() == 0 && account_cs.prefetch_ulong(1) == 0) {
+    return entry.is_null();  // account_none$0
   }
   if (entry.is_null() || entry->size_refs() < 1) {
     return false;
   }
-  auto cs = *entry;
-  auto account_ref = cs.fetch_ref();
-  td::Bits256 last_hash;
-  unsigned long long lt = 0;
-  if (account_ref->get_hash(0) != account.total_state->get_hash(0) || !cs.fetch_bits_to(last_hash) ||
-      !cs.fetch_ulong_bool(64, lt)) {
-    return false;
+  if (vm::load_cell_slice(original).prefetch_ref(0)->get_hash(0) == final_account->get_hash(0)) {
+    return entry->prefetch_ref(0)->get_hash(0) == final_account->get_hash(0);
   }
-  if (original_state.not_null() && original_state->get_hash(0) == account.total_state->get_hash(0)) {
-    // An unchanged account keeps its old ShardAccount entry.
-    return true;
+  vm::CellBuilder cb;
+  return cb.append_cellslice_bool(*entry) && cb.finalize()->get_hash(0) == final_shard_account->get_hash(0);
+}
+
+struct EmulatorDeleter {
+  void operator()(void *emulator) const {
+    transaction_emulator_destroy(emulator);
   }
-  return last_hash == last_transaction->get_hash(0).bits() && lt == last_lt;
+};
+
+// What the transaction emulator's C interface answered for one transaction.
+struct Emulated {
+  Cell transaction;
+  Cell shard_account;
+};
+
+td::Result<Emulated> emulate(void *emulator, const std::string &shard_account, const Cell &in_msg, int type) {
+  const char *raw = nullptr;
+  if (type == block::transaction::Transaction::tr_ord) {
+    if (in_msg.is_null()) {
+      return td::Status::Error("ordinary transaction without an inbound message");
+    }
+    TRY_RESULT(message, conformance::boc_to_base64(in_msg));
+    raw = transaction_emulator_emulate_transaction(emulator, shard_account.c_str(), message.c_str());
+  } else {
+    raw = transaction_emulator_emulate_tick_tock_transaction(emulator, shard_account.c_str(),
+                                                             type == block::transaction::Transaction::tr_tock);
+  }
+  if (raw == nullptr) {
+    return td::Status::Error("transaction emulator returned no response");
+  }
+  std::string response{raw};
+  string_destroy(raw);
+  TRY_RESULT(parsed, td::json_decode(td::MutableSlice(response)));
+  if (parsed.type() != td::JsonValue::Type::Object) {
+    return td::Status::Error("transaction emulator response is not an object");
+  }
+  auto &obj = parsed.get_object();
+  TRY_RESULT(success, obj.get_required_bool_field("success"));
+  if (!success) {
+    return td::Status::Error("the transaction was not accepted");
+  }
+  TRY_RESULT(transaction, conformance::required_boc(obj, "transaction"));
+  TRY_RESULT(new_shard_account, conformance::required_boc(obj, "shard_account"));
+  if (vm::load_cell_slice(new_shard_account).size_refs() < 1) {
+    return td::Status::Error("ShardAccount without an account reference");
+  }
+  return Emulated{std::move(transaction), std::move(new_shard_account)};
+}
+
+// ShardAccount of an account the previous state does not hold: account_none, no last transaction.
+Cell absent_shard_account() {
+  vm::CellBuilder cb;
+  cb.store_ref(vm::CellBuilder{}.store_long(0, 1).finalize()).store_zeroes(256).store_long(0, 64);
+  return cb.finalize();
 }
 
 td::Result<std::string> apply_block(Original &block_input, const Cell &prev_input, const Original *master_block,
@@ -207,6 +260,22 @@ td::Result<std::string> apply_block(Original &block_input, const Cell &prev_inpu
   TRY_RESULT(config, block_config(info, previous, master_block, master_state, why));
   why = {"config_unavailable"};
   TRY_RESULT(previous_blocks, config->get_prev_blocks_info());
+  // The emulator takes its context as BOCs, as the replay's export hands it to the txn harness.
+  struct {
+    std::string config, libraries, prev_blocks, seed;
+  } contexts;
+  {
+    TRY_RESULT_ASSIGN(contexts.config, conformance::boc_to_base64(config->get_root_cell()));
+    if (config->get_libraries_root().not_null()) {
+      TRY_RESULT_ASSIGN(contexts.libraries, conformance::boc_to_base64(config->get_libraries_root()));
+    }
+    vm::CellBuilder prev_cb;
+    if (!vm::StackEntry(previous_blocks).serialize(prev_cb)) {
+      return td::Status::Error("cannot serialize the previous-block context");
+    }
+    TRY_RESULT_ASSIGN(contexts.prev_blocks, conformance::boc_to_base64(prev_cb.finalize()));
+    contexts.seed = td::to_lower(extra.rand_seed.to_hex());
+  }
 
   std::vector<Executed> executed;
   vm::AugmentedDictionary account_blocks(vm::load_cell_slice_ref(extra.account_blocks), 256,
@@ -231,35 +300,36 @@ td::Result<std::string> apply_block(Original &block_input, const Cell &prev_inpu
       failure = td::Status::Error("account block");
       return false;
     }
-    block::Account account(shard.workchain, key);
     auto original_entry = accounts.lookup(key, 256);
-    why = {"account_unavailable"};
-    if (original_entry.is_null()) {
-      if (!account.init_new(info.gen_utime)) {
-        failure = td::Status::Error("cannot initialize a new account");
+    Cell original = absent_shard_account();
+    if (original_entry.not_null()) {
+      vm::CellBuilder cb;
+      if (!cb.append_cellslice_bool(*original_entry)) {
+        why = {"account_unavailable"};
+        failure = td::Status::Error("cannot copy the account entry");
         return false;
       }
-    } else if (!account.unpack(original_entry, info.gen_utime,
-                               shard.workchain == tos::masterchainId && config->is_special_smartcontract(key))) {
-      failure = td::Status::Error("cannot load the account");
+      original = cb.finalize();
+    }
+    // One emulator per account, as the replay creates one, set from the block's context.
+    why = {"execution_refused"};
+    std::unique_ptr<void, EmulatorDeleter> emulator{transaction_emulator_create(contexts.config.c_str(), 0)};
+    if (!emulator || !transaction_emulator_set_rand_seed(emulator.get(), contexts.seed.c_str()) ||
+        !transaction_emulator_set_ignore_chksig(emulator.get(), false) ||
+        (!contexts.libraries.empty() && !transaction_emulator_set_libs(emulator.get(), contexts.libraries.c_str())) ||
+        !transaction_emulator_set_prev_blocks_info(emulator.get(), contexts.prev_blocks.c_str())) {
+      failure = td::Status::Error("the transaction emulator refused the block context");
       return false;
     }
-    const Cell original_state = account.total_state;
-    account.block_lt = info.start_lt;
-    emulator::TransactionEmulator emulator(config);
-    emulator.set_libs(vm::Dictionary(config->get_libraries_root(), 256));
-    emulator.set_prev_blocks_info(previous_blocks);
-    emulator.set_rand_seed(extra.rand_seed);
-    Cell last_transaction;
-    tos::LogicalTime last_lt = 0;
+    Cell current = original;
     vm::AugmentedDictionary transactions(vm::DictNonEmpty(), ab.transactions, 64, block::tlb::aug_AccountTransactions);
     const bool ran = transactions.check_for_each_extra([&](auto tx_value, auto, auto, int) {
-      auto original = tx_value->prefetch_ref();
+      auto original_tx = tx_value->prefetch_ref();
       block::gen::Transaction::Record record;
       block::gen::HASH_UPDATE::Record expected_account;
       int type = 0;
       why = {"malformed_block"};
-      if (original.is_null() || !tlb::unpack_cell(original, record) ||
+      if (original_tx.is_null() || !tlb::unpack_cell(original_tx, record) ||
           !tlb::type_unpack_cell(record.state_update, block::gen::t_HASH_UPDATE_Account, expected_account) ||
           !transaction_type(record.description, type)) {
         failure = td::Status::Error("original transaction");
@@ -267,9 +337,10 @@ td::Result<std::string> apply_block(Original &block_input, const Cell &prev_inpu
       }
       why = {"transaction_context_mismatch"};
       const auto align = block::ConfigInfo::get_lt_align();
+      const auto current_account = vm::load_cell_slice(current).prefetch_ref(0);
       if (record.account_addr != ab.account_addr || record.now != info.gen_utime ||
-          record.lt - record.lt % align != info.start_lt || account.total_state.is_null() ||
-          expected_account.old_hash != account.total_state->get_hash().bits()) {
+          record.lt - record.lt % align != info.start_lt ||
+          expected_account.old_hash != current_account->get_hash().bits()) {
         failure = td::Status::Error("transaction identity, time, logical time or pre-state differs");
         return false;
       }
@@ -277,33 +348,33 @@ td::Result<std::string> apply_block(Original &block_input, const Cell &prev_inpu
         failure = td::Status::Error("too many transactions");
         return false;
       }
-      account.now_ = record.now;
       why = {"execution_refused"};
-      auto result = emulator.emulate_transaction(std::move(account), record.r1.in_msg->prefetch_ref(), record.now,
-                                                 record.lt, type);
+      auto shard_account = conformance::boc_to_base64(current);
+      if (shard_account.is_error() ||
+          !transaction_emulator_set_unixtime(emulator.get(), static_cast<std::uint32_t>(record.now)) ||
+          !transaction_emulator_set_lt(emulator.get(), static_cast<std::uint64_t>(record.lt))) {
+        failure = td::Status::Error("the transaction emulator refused the transaction context");
+        return false;
+      }
+      auto result = emulate(emulator.get(), shard_account.ok(), record.r1.in_msg->prefetch_ref(), type);
       if (result.is_error()) {
         failure = result.move_as_error();
         return false;
       }
-      auto *success = dynamic_cast<emulator::TransactionEmulator::EmulationSuccess *>(result.ok().get());
-      if (success == nullptr) {
-        failure = td::Status::Error("the transaction was not accepted");
-        return false;
-      }
-      executed.push_back({hash0(success->transaction), hash0(success->account.total_state)});
-      if (success->transaction->get_hash(0) != original->get_hash(0)) {
+      auto emulated = result.move_as_ok();
+      const auto new_account = vm::load_cell_slice(emulated.shard_account).prefetch_ref(0);
+      executed.push_back({hash0(emulated.transaction), hash0(new_account)});
+      if (emulated.transaction->get_hash(0) != original_tx->get_hash(0)) {
         why = {"transaction_mismatch"};
         failure = td::Status::Error("re-executed transaction differs from the block's");
         return false;
       }
-      if (expected_account.new_hash != success->account.total_state->get_hash().bits()) {
+      if (expected_account.new_hash != new_account->get_hash().bits()) {
         why = {"account_hash_mismatch"};
         failure = td::Status::Error("re-executed account differs from the transaction's new hash");
         return false;
       }
-      last_transaction = success->transaction;
-      last_lt = record.lt;
-      account = std::move(success->account);
+      current = std::move(emulated.shard_account);
       return true;
     });
     if (!ran) {
@@ -313,7 +384,7 @@ td::Result<std::string> apply_block(Original &block_input, const Cell &prev_inpu
       }
       return false;
     }
-    if (!new_state_holds(new_accounts, key, account, original_state, last_transaction, last_lt)) {
+    if (!new_state_holds(new_accounts, key, original, current)) {
       why = {"new_state_mismatch"};
       failure = td::Status::Error("the new state's account differs from the re-executed account");
       return false;
