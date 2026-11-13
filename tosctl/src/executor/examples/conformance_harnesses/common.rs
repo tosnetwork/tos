@@ -170,7 +170,11 @@ fn savelist(save: &SaveList) -> String {
 
 /// Named as the C++ VM names its continuation classes. As there, only ordinary continuations and
 /// envelopes carry control data; the code a continuation carries is not part of the text.
-fn continuation_text(cont: &ContinuationData, depth: usize) -> anyhow::Result<String> {
+fn continuation_text(
+    cont: &ContinuationData,
+    depth: usize,
+    budget: &mut usize,
+) -> anyhow::Result<String> {
     let name = match &cont.type_of {
         ContinuationType::Ordinary => "vmc_std",
         ContinuationType::Envelope(_) => "vmc_envelope",
@@ -190,7 +194,7 @@ fn continuation_text(cont: &ContinuationData, depth: usize) -> anyhow::Result<St
         "cont:{name}:nargs={}:save={}:stack=[{}]",
         cont.nargs,
         savelist(&cont.savelist),
-        stack_items_text(&cont.stack, depth)?.join(" ")
+        items_text(&cont.stack, depth, budget)?.join(" ")
     ))
 }
 
@@ -198,8 +202,14 @@ fn continuation_text(cont: &ContinuationData, depth: usize) -> anyhow::Result<St
 /// instead of recursing without limit.
 const MAX_TEXT_DEPTH: usize = 512;
 
-fn entry_text(item: &StackItem, depth: usize) -> anyhow::Result<String> {
+/// Values are shared, so a shallow result can still expand without limit; one rendering (a final
+/// stack) visits at most this many values, each counted every time it is visited, as in C++.
+const MAX_TEXT_VALUES: usize = 1 << 20;
+
+fn entry_text(item: &StackItem, depth: usize, budget: &mut usize) -> anyhow::Result<String> {
     anyhow::ensure!(depth <= MAX_TEXT_DEPTH, "final stack value nested too deep");
+    anyhow::ensure!(*budget > 0, "final stack value too large");
+    *budget = budget.saturating_sub(1);
     let next = depth.saturating_add(1);
     Ok(match item {
         StackItem::None => "null".to_string(),
@@ -212,11 +222,11 @@ fn entry_text(item: &StackItem, depth: usize) -> anyhow::Result<String> {
             b.references().len(),
             b.as_ref().clone().into_cell()?.repr_hash()
         ),
-        StackItem::Continuation(cont) => continuation_text(cont, next)?,
+        StackItem::Continuation(cont) => continuation_text(cont, next, budget)?,
         StackItem::Tuple(items) => {
             let items = items
                 .iter()
-                .map(|item| entry_text(item, next))
+                .map(|item| entry_text(item, next, budget))
                 .collect::<anyhow::Result<Vec<_>>>()?;
             format!("({})", items.join(" "))
         }
@@ -225,5 +235,10 @@ fn entry_text(item: &StackItem, depth: usize) -> anyhow::Result<String> {
 
 /// Canonical texts, bottom of the stack first.
 pub fn stack_items_text(stack: &Stack, depth: usize) -> anyhow::Result<Vec<String>> {
-    stack.iter().map(|item| entry_text(item, depth)).collect()
+    let mut budget = MAX_TEXT_VALUES;
+    items_text(stack, depth, &mut budget)
+}
+
+fn items_text(stack: &Stack, depth: usize, budget: &mut usize) -> anyhow::Result<Vec<String>> {
+    stack.iter().map(|item| entry_text(item, depth, budget)).collect()
 }

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
-"""The canonical text of a result value is bounded: a tuple nested 512 deep is reported, one nested 513 deep
-is refused (harness_error), never a crash. Usage: depth_limit.py <target> (a line-protocol vm target)."""
+"""The canonical text of a result value is bounded in depth and in size, never a crash: a tuple nested 512
+deep is reported and one nested 513 deep is refused (harness_error); a shared tuple built by k rounds of
+DUP; 2 TUPLE renders 2^(k+1) - 1 values, so k = 19 (1,048,575 values) is reported and k = 20 and k = 30
+(2^31 - 1 values of text from a 91-byte program) are refused at the 2^20-value budget.
+Usage: depth_limit.py <target> (a line-protocol vm target)."""
 
 from __future__ import annotations
 
@@ -22,6 +25,15 @@ def boc(data: bytes) -> str:
 def context(depth: int) -> str:
     # NULL; PUSHINT depth; PUSHCONT { 1 TUPLE }; REPEAT -> a null wrapped in `depth` one-element tuples.
     code = bytes([0x6D, 0x81]) + depth.to_bytes(2, "big") + bytes([0x92, 0x6F, 0x01, 0xE4])
+    return vm_context(code)
+
+
+def shared(rounds: int) -> str:
+    # NULL, then `rounds` times DUP; 2 TUPLE: a value of depth `rounds` whose text has 2^(rounds+1) - 1 values.
+    return vm_context(bytes([0x6D]) + bytes([0x20, 0x6F, 0x02]) * rounds)
+
+
+def vm_context(code: bytes) -> str:
     ctx = {
         "code": boc(code),
         "global_version": 16,
@@ -35,26 +47,45 @@ def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print(__doc__, file=sys.stderr)
         return 2
-    done = subprocess.run(
-        [argv[0], "vm"],
-        input=context(512) + "\n" + context(513) + "\n",
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    try:
+        done = subprocess.run(
+            [argv[0], "vm"],
+            input="".join(
+                c + "\n" for c in (context(512), context(513), shared(19), shared(20), shared(30))
+            ),
+            capture_output=True,
+            text=True,
+            timeout=240,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        print("target failed: no answer within 240 s (unbounded result text)")
+        return 1
     lines = done.stdout.splitlines()
-    if done.returncode != 0 or len(lines) != 2:
+    if done.returncode != 0 or len(lines) != 5:
         print(
             f"target failed: rc {done.returncode}, {len(lines)} lines, {done.stderr.strip()[-500:]}"
         )
         return 1
-    at_limit, past_limit = json.loads(lines[0]), json.loads(lines[1])
+    answers = [json.loads(line) for line in lines]
+
+    def reported(answer: dict[str, object]) -> bool:
+        stack = answer.get("stack")
+        return answer.get("exit_code") == 0 and isinstance(stack, list) and len(stack) == 1
+
+    def refused(answer: dict[str, object]) -> bool:
+        return set(answer) == {"harness_error"}
+
     ok = (
-        at_limit.get("exit_code") == 0
-        and len(at_limit.get("stack", [])) == 1
-        and set(past_limit) == {"harness_error"}
+        reported(answers[0])
+        and refused(answers[1])
+        and reported(answers[2])
+        and refused(answers[3])
+        and refused(answers[4])
     )
-    print(f"depth 512: {lines[0][:80]}\ndepth 513: {lines[1][:80]}\n{'OK' if ok else 'FAILED'}")
+    for name, line in zip(("depth 512", "depth 513", "shared 19", "shared 20", "shared 30"), lines):
+        print(f"{name}: {line[:80]}")
+    print("OK" if ok else "FAILED")
     return 0 if ok else 1
 
 

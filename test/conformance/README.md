@@ -59,6 +59,10 @@ The `vm` final stack is a list, bottom first, of canonical item texts: `null`, d
 `cell:<hash>`, `slice:<cell hash>:<bit from>-<bit to>:<ref from>-<ref to>`,
 `builder:<bits>:<refs>:<hash>`, `cont:<type>[:nargs=..:save=..:stack=[..]]` and `(...)` for tuples — the
 form of `test/rescue-fee-gate/vm-endstate.cpp`. A continuation's code is not part of the effect.
+The text is bounded: a value nested deeper than 512 tuples or continuations, or a final stack whose text
+would visit more than 2^20 values (shared values count every time; a tuple of the same tuple nested 30 times
+is 2^31 - 1 values), is a `harness_error`. Both bounds are part of the protocol: a target refuses at the same
+point (`migrate/depth_limit.py` checks both sides of each).
 
 A `txn` error carries no message in its effect: two implementations may word an error differently, so only
 the outcome class is compared.

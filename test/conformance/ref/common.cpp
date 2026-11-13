@@ -85,24 +85,32 @@ std::string savelist(const vm::ControlRegs &save) {
 // Result values nest without a bound in the VM itself, so their text is refused past this depth instead of
 // recursing without limit; the tosctl adapter refuses at the same depth (each tuple or continuation adds one).
 constexpr int kMaxTextDepth = 512;
+// Values are shared, so a shallow result can still expand without limit (a tuple of the same tuple, nested
+// thirty times, is 2^30 values of text). One rendering (a final stack, or one value of it) visits at most this
+// many values, each counted every time it is visited; the tosctl adapter refuses at the same count.
+constexpr std::size_t kMaxTextValues = std::size_t{1} << 20;
 
-std::string entry_text(const vm::StackEntry &e, int depth);
+struct TextBudget {
+  std::size_t values_left = kMaxTextValues;
+};
 
-std::string stack_items_text(const vm::Stack &stack, int depth) {
+std::string entry_text(const vm::StackEntry &e, int depth, TextBudget &budget);
+
+std::string stack_items_text(const vm::Stack &stack, int depth, TextBudget &budget) {
   std::string out;
   for (int i = static_cast<int>(stack.depth()) - 1; i >= 0; --i) {
-    out += (out.empty() ? "" : " ") + entry_text(stack[i], depth);
+    out += (out.empty() ? "" : " ") + entry_text(stack[i], depth, budget);
   }
   return out;
 }
 
 // Not compared: the code a continuation carries and its codepage.
-std::string continuation_text(const td::Ref<vm::Continuation> &cont, int depth) {
+std::string continuation_text(const td::Ref<vm::Continuation> &cont, int depth, TextBudget &budget) {
   std::ostringstream os;
   os << "cont:" << cont->type();
   if (auto data = cont->get_cdata()) {
     os << ":nargs=" << data->nargs << ":save=" << savelist(data->save) << ":stack=["
-       << (data->stack.is_null() ? "" : stack_items_text(*data->stack, depth)) << ']';
+       << (data->stack.is_null() ? "" : stack_items_text(*data->stack, depth, budget)) << ']';
   }
   return os.str();
 }
@@ -240,10 +248,14 @@ td::Result<vm::StackEntry> parse_stack_item(td::JsonValue &value, int depth) {
 }
 
 namespace {
-std::string entry_text(const vm::StackEntry &e, int depth) {
+std::string entry_text(const vm::StackEntry &e, int depth, TextBudget &budget) {
   if (depth > kMaxTextDepth) {
     throw std::runtime_error("final stack value nested too deep");
   }
+  if (budget.values_left == 0) {
+    throw std::runtime_error("final stack value too large");
+  }
+  --budget.values_left;
   switch (e.type()) {
     case vm::StackEntry::t_null:
       return "null";
@@ -264,11 +276,11 @@ std::string entry_text(const vm::StackEntry &e, int depth) {
       return os.str();
     }
     case vm::StackEntry::t_vmcont:
-      return continuation_text(e.as_cont(), depth + 1);
+      return continuation_text(e.as_cont(), depth + 1, budget);
     case vm::StackEntry::t_tuple: {
       std::string out = "(";
       for (const auto &item : *e.as_tuple()) {
-        out += (out.size() > 1 ? " " : "") + entry_text(item, depth + 1);
+        out += (out.size() > 1 ? " " : "") + entry_text(item, depth + 1, budget);
       }
       return out + ")";
     }
@@ -279,14 +291,16 @@ std::string entry_text(const vm::StackEntry &e, int depth) {
 }  // namespace
 
 std::string stack_entry_text(const vm::StackEntry &entry) {
-  return entry_text(entry, 0);
+  TextBudget budget;
+  return entry_text(entry, 0, budget);
 }
 
 std::string stack_json(const vm::Stack &stack) {
+  TextBudget budget;
   std::string out = "[";
   const int depth = static_cast<int>(stack.depth());
   for (int i = depth - 1; i >= 0; --i) {
-    out += (i == depth - 1 ? "" : ",") + json_quote(stack_entry_text(stack[i]));
+    out += (i == depth - 1 ? "" : ",") + json_quote(entry_text(stack[i], 0, budget));
   }
   return out + "]";
 }
