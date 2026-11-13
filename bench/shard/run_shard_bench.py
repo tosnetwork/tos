@@ -128,9 +128,37 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--drain-wait", type=int, default=600, help="seconds to wait for the queue to drain"
     )
+    p.add_argument(
+        "--max-split",
+        type=int,
+        default=None,
+        help="basechain max_split: load may split from --split up to this depth (organic run); "
+        "default --split (fixed layout)",
+    )
+    p.add_argument(
+        "--testnet-basechain",
+        action="store_true",
+        help="ConfigParam 12 as the canonical genesis (gen-zerostate.fif): max_split 2 unless "
+        "--max-split is given, split/merge timings 100/100/30/1000 s, persistent-state split depth 4",
+    )
+    p.add_argument(
+        "--merge-wait",
+        type=int,
+        default=0,
+        help="organic run: seconds after the load window to keep scanning for the merge back to "
+        "2^split shards (0: do not wait)",
+    )
     a = p.parse_args()
     if not 0 <= a.split <= 4:
         p.error("--split must be in [0, 4]")
+    if a.max_split is None:
+        a.max_split = max(a.split, 2) if a.testnet_basechain else a.split
+    if not a.split <= a.max_split <= 4:
+        p.error("--max-split must be in [--split, 4]")
+    if a.merge_wait < 0 or (a.merge_wait and a.max_split == a.split):
+        p.error(
+            "--merge-wait needs a non-negative value and an organic run (--max-split > --split)"
+        )
     if not 1 <= a.chains <= hopbench.MAX_CHAINS:
         p.error("--chains must be in [1, 255]")
     if not 0 <= a.forks <= 12:
@@ -171,6 +199,7 @@ class ShardScanner:
     def __init__(self, pool: chain.ClientPool):
         self.pool = pool
         self.last: dict[int, int] = {}
+        self.seen: set[tuple[int, int]] = set()
         self.blocks: list[hopbench.ScannedBlock] = []
         self.shard_sets: list[tuple[float, list[str]]] = []
         self._stop = asyncio.Event()
@@ -199,23 +228,45 @@ class ShardScanner:
                 await asyncio.sleep(0.25)
         raise AssertionError("unreachable")
 
+    MAX_WALK_BLOCKS = 100_000  # one poll's walk; a larger one means the frontier was lost
+
     async def _walk(self, shard: int, head) -> None:
-        stop_at = self.last.get(shard)
+        """Every block from `head` back to the scanned frontier, across split and merge.
+
+        A predecessor may be in another shard: a child's first block points at its parent
+        (split), a merged block at both children. Each one is followed until it reaches a
+        block at or below the last scanned seqno of its own shard, so the children's first
+        blocks and the parent's last blocks since the previous poll are all recorded once.
+        """
         found = []
-        block = head
-        while stop_at is None or block.seqno > stop_at:
+        stack = [head]
+        while stack:
+            block = stack.pop()
+            key = (block.shard, block.seqno)
+            last = self.last.get(block.shard)
+            if key in self.seen or (last is not None and block.seqno <= last):
+                continue
+            if len(found) >= self.MAX_WALK_BLOCKS:
+                raise RuntimeError(
+                    f"shard walk from {hopbench.shard_label(shard)} found no frontier"
+                )
             header = await self._header(block)
+            self.seen.add(key)
             found.append(
                 hopbench.ScannedBlock(
-                    shard, block.seqno, int(header.gen_utime), bytes(block.root_hash)
+                    block.shard, block.seqno, int(header.gen_utime), bytes(block.root_hash)
                 )
             )
-            prev = [p for p in header.prev_blocks if p.workchain == 0 and p.shard == shard]
-            if stop_at is None or not prev:
-                break  # a shard first seen now, or the start of a split
-            block = prev[0]
+            stack.extend(p for p in header.prev_blocks if p.workchain == 0)
         self.blocks.extend(found)
-        self.last[shard] = max(head.seqno, stop_at or 0)
+        for b in found:
+            self._advance(b.shard, int(b.seqno))
+        self._advance(shard, int(head.seqno))
+
+    def _advance(self, shard: int, seqno: int) -> None:
+        current = self.last.get(shard)
+        if current is None or seqno > current:
+            self.last[shard] = seqno
 
     async def run(self, poll: float = 0.3) -> None:
         if not self.last:
@@ -226,7 +277,10 @@ class ShardScanner:
             if labels != self.shard_sets[-1][1]:
                 self.shard_sets.append((time.time(), labels))
                 log.warning("basechain shard set changed: %s", labels)
-            await asyncio.gather(*(self._walk(shard, head) for shard, head in heads.items()))
+            # One shard at a time: after a split both children walk back into the same
+            # parent blocks, and `seen` keeps each of them once.
+            for shard, head in heads.items():
+                await self._walk(shard, head)
             try:
                 await asyncio.wait_for(self._stop.wait(), poll)
             except TimeoutError:
@@ -234,6 +288,55 @@ class ShardScanner:
 
     def stop(self) -> None:
         self._stop.set()
+
+
+TESTNET_SPLIT_MERGE_TIMINGS = (100, 100, 30, 1000)  # crypto/smartcont/gen-zerostate.fif
+TESTNET_PERSISTENT_STATE_SPLIT_DEPTH = 4
+
+
+async def wait_merge(scanner: ShardScanner, split: int, timeout: float) -> float | None:
+    """When the basechain is back at exactly 2^split shards after having split, or None.
+
+    A layout that never split is not a merge; it returns None at the timeout."""
+    want = 1 << split
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        heads = await scanner.heads()
+        split_seen = any(len(labels) > want for _, labels in scanner.shard_sets)
+        if (
+            split_seen
+            and len(heads) == want
+            and all(hopbench.shard_depth(s) == split for s in heads)
+        ):
+            return time.time()
+        await asyncio.sleep(2)
+    return None
+
+
+def organic_summary(
+    shard_sets: list[tuple[float, list[str]]],
+    split: int,
+    load_start: float,
+    load_end: float,
+    merged_at: float | None,
+    merge_wait: int,
+) -> dict[str, Any]:
+    """The layout history of an organic run, relative to the load start, and the split/merge times."""
+    want = 1 << split
+    history = [{"t": round(t - load_start, 1), "shards": labels} for t, labels in shard_sets]
+    first_split = next(
+        (round(t - load_start, 1) for t, labels in shard_sets if len(labels) > want), None
+    )
+    peak = max((len(labels) for _, labels in shard_sets), default=want)
+    return {
+        "history": history,
+        "first_split_after_load_start_s": first_split,
+        "peak_shards": peak,
+        "load_window_s": round(load_end - load_start, 1),
+        "merged": merged_at is not None,
+        "merge_after_load_end_s": None if merged_at is None else round(merged_at - load_end, 1),
+        "merge_wait_s": merge_wait,
+    }
 
 
 async def wait_split(scanner: ShardScanner, split: int, timeout: float) -> list[int]:
@@ -435,6 +538,10 @@ async def main(a: argparse.Namespace) -> int:
             network.config.auth_network_tag = hashlib.sha256(b"tos-shard-bench").digest()
         network.config.shard_validators = a.validators
         network.config.split = a.split
+        network.config.max_split = a.max_split
+        if a.testnet_basechain:
+            network.config.split_merge_timings = TESTNET_SPLIT_MERGE_TIMINGS
+            network.config.persistent_state_split_depth = TESTNET_PERSISTENT_STATE_SPLIT_DEPTH
         network.config.production_block_limits = a.block_limits == "production"
         if a.block_limits == "dev":
             network.config.block_limit_mul = a.block_limit_mul
@@ -544,6 +651,7 @@ async def main(a: argparse.Namespace) -> int:
                 "start",
             )
             started = await chain_now(pool)
+            t_load = time.time()
             lo, hi = started + a.warmup, started + a.warmup + a.duration
             temps: list[float] = []
             log.info(
@@ -560,6 +668,18 @@ async def main(a: argparse.Namespace) -> int:
                 if t_now:
                     temps.append(max(t_now))
                 await asyncio.sleep(5)
+            organic = None
+            if a.max_split > a.split:
+                # The scanner keeps walking while the run waits for the merge, so the layout
+                # history and the block walk both cover it.
+                load_end = time.time()
+                merged_at = (
+                    await wait_merge(scanner, a.split, a.merge_wait) if a.merge_wait else None
+                )
+                organic = organic_summary(
+                    scanner.shard_sets, a.split, t_load, load_end, merged_at, a.merge_wait
+                )
+                log.info("organic layout: %s", json.dumps(organic))
             scanner.stop()
             await scan_task
             await asyncio.sleep(3)  # the last collation records reach session-logs
@@ -643,6 +763,9 @@ async def main(a: argparse.Namespace) -> int:
                 "parameters": {
                     "validators": a.validators,
                     "split": a.split,
+                    "max_split": a.max_split,
+                    "testnet_basechain": a.testnet_basechain,
+                    "merge_wait": a.merge_wait,
                     "accounts": a.accounts,
                     "chains": a.chains,
                     "forks": a.forks,
@@ -668,6 +791,7 @@ async def main(a: argparse.Namespace) -> int:
                 "chain_config": chain_config,
                 "result": summary,
                 "t2": t2,
+                "organic": organic,
             }
             (a.out / "results.json").write_text(json.dumps(report, indent=2) + "\n")
             log.info(

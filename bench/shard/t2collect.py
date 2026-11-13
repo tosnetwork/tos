@@ -31,6 +31,7 @@ import asyncio
 import base64
 import json
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from pathlib import Path
@@ -379,6 +380,79 @@ async def queue_boundary(rpc: PacedRpc) -> QueueBoundary:
         return QueueBoundary(None, None)
     empty = all(int(s.get("size", -1)) == 0 for s in rows)
     return QueueBoundary(seqno, empty)
+
+
+async def basechain_tops(rpc: PacedRpc) -> tuple[int, int] | None:
+    """(masterchain seqno, number of basechain shard tops) now, or None when unreadable."""
+    try:
+        info = await rpc.call("getMasterchainInfo")
+        seqno = int(info["last"]["seqno"])
+        shards = await rpc.call("getShards", {"seqno": seqno})
+        tops = [s for s in shards.get("shards", []) if int(s.get("workchain", -1)) == 0]
+    except (KeyError, TypeError, ValueError, RpcError, RateLimited):
+        return None
+    return (seqno, len(tops)) if tops else None
+
+
+class LayoutWatch:
+    """Polls the basechain shard count from the start of a burst, so a split that is over
+    before the merge wait begins is still seen."""
+
+    def __init__(self, rpc: PacedRpc, poll: float = 5.0):
+        self.rpc, self.poll = rpc, poll
+        self.rows: list[dict[str, Any]] = []
+        self._stop = asyncio.Event()
+
+    @property
+    def peak(self) -> int:
+        return max((r["shards"] for r in self.rows), default=1)
+
+    async def run(self) -> None:
+        while not self._stop.is_set():
+            reading = await basechain_tops(self.rpc)
+            if reading is not None and (not self.rows or self.rows[-1]["shards"] != reading[1]):
+                self.rows.append(
+                    {"time": time.time(), "mc_seqno": reading[0], "shards": reading[1]}
+                )
+            try:
+                await asyncio.wait_for(self._stop.wait(), self.poll)
+            except TimeoutError:
+                pass
+
+    def stop(self) -> None:
+        self._stop.set()
+
+
+async def wait_merged(
+    rpc: PacedRpc, timeout: float, poll: float = 5.0, split_seen: bool = False
+) -> dict[str, Any] | None:
+    """Wait until the basechain is one shard again after having split.
+
+    Returns the masterchain seqno and the wall time of the first one-shard reading
+    after a split, or None at the timeout. A basechain that never split is not a
+    merge, however long it stays at one shard."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    peak = 1
+    while True:
+        left = deadline - loop.time()
+        if left <= 0:
+            return None
+        try:
+            reading = await asyncio.wait_for(basechain_tops(rpc), left)
+        except TimeoutError:
+            return None
+        if loop.time() > deadline:
+            return None  # a reading that completed after the allowance proves nothing
+        if reading is not None:
+            seqno, count = reading
+            peak = max(peak, count)
+            split_seen = split_seen or count > 1
+            if split_seen and count == 1:
+                return {"mc_seqno": seqno, "time": time.time(), "peak_shards_seen": peak}
+        if loop.time() >= deadline:
+            return None
+        await asyncio.sleep(min(poll, max(0.0, deadline - loop.time())))
 
 
 async def wait_empty_queue(rpc: PacedRpc, timeout: float, poll: float = 2.0) -> QueueBoundary:
