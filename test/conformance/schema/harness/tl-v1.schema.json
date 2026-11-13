@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conformance/harness/tl-v1",
+  "title": "tl harness: TL wire-format verdict on boxed bytes",
+  "$defs": {
+    "context": {
+      "type": "object",
+      "required": ["schema", "kind", "bytes"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"enum": ["tos_api", "lite_api", "toslib_api"], "description": "TL schema of tl/generate/scheme the bytes are fetched with"},
+        "kind": {"enum": ["object", "function"], "description": "Fetch a boxed Object or a Function; toslib_api has objects only"},
+        "bytes": {"$ref": "../common-v1.schema.json#/$defs/hex", "description": "Boxed wire bytes, at most 1 MiB"}
+      }
+    },
+    "effects": {
+      "oneOf": [
+        {"type": "object", "required": ["outcome", "constructor", "bytes"], "additionalProperties": false,
+         "properties": {"outcome": {"const": "accepted"},
+                        "constructor": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647, "description": "Constructor id as a signed 32-bit integer"},
+                        "bytes": {"$ref": "../common-v1.schema.json#/$defs/hex", "description": "Canonical boxed re-serialization"}}},
+        {"type": "object", "required": ["outcome", "reason"], "additionalProperties": false,
+         "properties": {"outcome": {"const": "rejected"},
+                        "reason": {"enum": ["truncated", "trailing_data", "unknown_constructor", "oversize", "invalid_value"]}}}
+      ]
+    }
+  }
+}
