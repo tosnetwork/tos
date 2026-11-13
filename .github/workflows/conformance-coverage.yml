@@ -1,0 +1,77 @@
+name: Conformance coverage
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crypto/vm/**"
+      - "crypto/block/**"
+      - "crypto/pq/**"
+      - "emulator/**"
+      - "validator/**"
+      - "adnl/**"
+      - "keys/**"
+      - "overlay/**"
+      - "rldp2/**"
+      - "fec/**"
+      - "tdfec/**"
+      - "test/conformance/**"
+      - "test/rel02/**"
+      - ".github/actions/native-cache/**"
+      - ".github/workflows/conformance-coverage.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conformance-coverage-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    name: Coverage gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Check and prepare LLVM DNS on the ephemeral runner
+        run: |
+          python3 scripts/test_llvm_dns_fallback.py --controls
+          sudo python3 scripts/ensure-llvm-dns.py --ephemeral-runner
+      - name: Install the release toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config autoconf automake libtool libjemalloc-dev libgmp-dev libssl-dev gperf
+          sudo scripts/install-llvm-toolchain.sh 21
+          clang++-21 --version
+      - uses: ./.github/actions/native-cache
+        with:
+          profile: conformance-coverage
+          max-size: 2G
+      - name: Configure an instrumented build
+        run: |
+          flags="-fprofile-instr-generate -fcoverage-mapping"
+          cmake -S . -B build-cov -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
+            -DTOS_ARCH=x86-64-v2 -DPORTABLE=x86-64-v2 \
+            -DCMAKE_C_FLAGS="$flags" -DCMAKE_CXX_FLAGS="$flags" \
+            -DCMAKE_EXE_LINKER_FLAGS=-fprofile-instr-generate -DCMAKE_SHARED_LINKER_FLAGS=-fprofile-instr-generate \
+            -DCONFORMANCE_COVERAGE=ON
+      - name: Build the instrumented reference and replay tool
+        run: cmake --build build-cov --parallel "$(nproc)" --target conformance-ref-cli test-epoch-replay
+      - name: Run the coverage gate
+        env:
+          LLVM_PROFILE_FILE: /dev/null
+        run: ctest --test-dir build-cov -L '^coverage$' --no-tests=error --output-on-failure
+      - name: Keep the coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: conformance-coverage-report
+          path: build-cov/test/conformance/coverage-report.json
+          if-no-files-found: warn

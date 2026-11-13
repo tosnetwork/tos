@@ -1,0 +1,8 @@
+# VM instruction handlers no version-16 program can execute. Each line: handler<TAB>why.
+dictops.cpp:_ZN2vm15exec_dict_emptyEPNS_7VmStateE	defined but not registered in codepage 0 (DICTEMPTY is the ISNULL opcode)
+dictops.cpp:_ZN2vm16exec_load_optrefEPNS_7VmStateE	defined but not registered in codepage 0 (LDOPTREF is the LDDICT opcode)
+dictops.cpp:_ZN2vm19exec_preload_optrefEPNS_7VmStateE	defined but not registered in codepage 0 (PLDOPTREF is the PLDDICT opcode)
+contops.cpp:_ZN2vm17exec_bless_pop_c3EPNS_7VmStateE	its only caller, in exec_pop_ctr, is commented out
+debugops.cpp:_ZN2vm15exec_dump_stackEPNS_7VmStateE	debug instruction: runs only when the VM is built and started with debugging; a validator runs the no-op
+debugops.cpp:_ZN2vm15exec_dump_valueEPNS_7VmStateEj	debug instruction: runs only when the VM is built and started with debugging; a validator runs the no-op
+debugops.cpp:_ZN2vm16exec_dump_stringEPNS_7VmStateE	debug instruction: runs only when the VM is built and started with debugging; a validator runs the no-op

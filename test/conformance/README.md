@@ -1,0 +1,176 @@
+# Conformance vectors
+
+Shared, versioned test vectors that pin the observable behaviour of the C++ node, in the style of a
+multi-client conformance suite: a fixture is an input context plus the effects the C++ reference produced
+for it. The same fixtures check
+
+- the C++ node itself: a change that alters any effect fails `ctest -L conformance` until the fixtures are
+  regenerated in the same change, so every consensus-visible change shows up as a fixture diff in review;
+- any other implementation that exposes the same harness boundary (a Rust node, the `tosctl` VM).
+
+Expected effects come only from running the C++ reference. Hand-written expectations are not fixtures;
+authored assertions may be checked against the C++ fill before it is frozen, but they never replace it.
+
+## Layout
+
+```
+CMakeLists.txt                    reference library (every ref/*.cpp but the CLI) and the core ctests
+parts/<component>.cmake           further targets and tests, one file per component
+schema/fixture-v1.schema.json     fixture envelope; schema/common-v1.schema.json shared value types
+schema/harness/<h>-v1.schema.json context and effects of harness <h>
+ref/common.{h,cpp}                registry, JSON, BOC and stack helpers, the C entry points
+ref/harness-<h>.cpp               one harness, registered with CONFORMANCE_REGISTER_HARNESS
+ref/conformance-ref-cli.cpp       line-oriented wrapper around the library
+runner/conformance.py             create / run / regenerate / validate
+runner/harnesses/<h>.py           validator of harness <h>, discovered by name
+runner/test_*.py                  runner tests, including controls that make each check fail
+migrate/                          converters from older per-family formats, chain replay
+vectors/<h>/fixtures/<family>.jsonl and optional <family>.blobs.json
+```
+
+Adding a harness is three new files with the same name: `ref/harness-<h>.cpp`,
+`runner/harnesses/<h>.py` and `schema/harness/<h>-v1.schema.json`; a runner test fails when the schema and
+the validator disagree.
+
+## Harness boundary
+
+Each harness `H` has a C entry point `conformance_H_v1(context_json) -> effects_json` in
+`libconformance-ref`, and the CLI `conformance-ref-cli H` reads one context JSON per line on stdin and
+writes one effects JSON per line on stdout, in order. Another implementation joins by providing a program
+with the same command line and line protocol. A line `{"harness_error": "..."}` means the context was
+refused before execution (malformed input, unsupported value); the runner counts it separately and never
+treats it as equal to anything.
+
+| Harness | Context | Effects | C++ behind it |
+|---|---|---|---|
+| `vm` | code, optional c4 data, optional c7, initial stack, global version, flags, gas limit/max/credit, library collections, chksig_always_succeed, max_library_loads | exit code, gas used, steps, committed flag, committed c4/c5 hashes, final stack | `vm::VmState` |
+| `txn` | config, original ShardAccount, inbound message or tick/tock, now, lt, rand seed, libraries, previous blocks | `accepted` with transaction, account and ShardAccount hashes; `rejected` with the VM exit code; `error` | `transaction_emulator_*` (libemulator) |
+| `codec` | TL-B type (or raw BOC, VarUInteger, config) + bytes and decoding options | `accepted` with root hashes, re-serialization digest, facts; `rejected` with the first refusing stage | `block::gen`/`block::tlb`, BOC codec ([docs/codec.md](docs/codec.md)) |
+| `tl` | schema, object or function, bytes | constructor and canonical bytes, or a rejection reason | generated TL codecs ([docs/codec.md](docs/codec.md)) |
+| `fee` | storage, gas-purchase or forward-fee inputs with explicit prices | the computed values | `block::` fee functions ([docs/codec.md](docs/codec.md)) |
+| `crypto` | scheme, operation, inputs (27 operations: signature checks, hashes, quorum, session identity, PQ encodings) | verdict, bytes, integer, boolean or record | node crypto and consensus-identity code ([docs/crypto.md](docs/crypto.md)) |
+| `get_method` | masterchain state, account, time, lt, seed, method id, stack, gas | exit code, gas, final stack, missing library; or why nothing ran | the liteserver getter path ([docs/get_method.md](docs/get_method.md)) |
+| `block` | block, previous state, master context for shard blocks | block and new state hashes, ordered transaction and account hashes; or a rejection class | Merkle update application and re-execution ([docs/block.md](docs/block.md)) |
+| `consensus` | op: quorum, weights, protocol version, validator set, session, vote, finality, proof decoding, key-block context, proof links | derived values and verdicts with stable refusal classes | validator-session and PQ finality code ([docs/consensus.md](docs/consensus.md)) |
+| `validate` | candidate block id and bytes, collated data, producer, previous blocks, min/top masterchain, validator-set source, shard-signature skip, served states (complete or Merkle proofs) | `accepted` with `ok_from_utime_ms`; `rejected` or `error` with one of 15 fixed reason classes (or `unclassified`) | `ValidateQuery` on a test-only validator manager ([docs/validate.md](docs/validate.md)) |
+| `net` | op: key, signature and encryption inputs; ADNL address lists, messages, packets, datagrams, channels; pre-authentication admission; overlay ids, nodes, certificates, flags, privacy rules; FEC parameters, encode and decode; RLDP2 transfers (28 operations) | extracted fields, canonical bytes, derived ids and verdicts; refusals with one of 43 fixed classes (or `unclassified`) | ADNL, key, overlay, FEC and RLDP2 code ([docs/net.md](docs/net.md)) |
+
+The `vm` final stack is a list, bottom first, of canonical item texts: `null`, decimal integers, `NaN`,
+`cell:<hash>`, `slice:<cell hash>:<bit from>-<bit to>:<ref from>-<ref to>`,
+`builder:<bits>:<refs>:<hash>`, `cont:<type>[:nargs=..:save=..:stack=[..]]` and `(...)` for tuples — the
+form of `test/rescue-fee-gate/vm-endstate.cpp`. A continuation's code is not part of the effect.
+The text is bounded: a value nested deeper than 512 tuples or continuations, or a final stack whose text
+would visit more than 2^20 values (shared values count every time; a tuple of the same tuple nested 30 times
+is 2^31 - 1 values), is a `harness_error`. Both bounds are part of the protocol: a target refuses at the same
+point (`migrate/depth_limit.py` checks both sides of each).
+
+A `txn` error carries no message in its effect: two implementations may word an error differently, so only
+the outcome class is compared.
+
+## Fixtures
+
+One JSON object per line, `{"metadata": ..., "context": ..., "effects": ...}`. `metadata.reference_commit`
+is the commit of the C++ build that filled the effects (from the binary's own git metadata, refused when the
+tree had uncommitted changes); `metadata.source` says where the context came from (`authored`, `fuzz`,
+`replay`, or `migrated:<old family>`). Fixture ids are unique within a family.
+
+Any BOC field may be a reference `{"blob": "<sha256 of the BOC bytes>"}` into `<family>.blobs.json`
+(`{"<sha256>": "<base64>"}`). `create` moves every BOC longer than `--blob-threshold` characters (default
+2048) there, so configurations and large accounts are stored once per family. The runner inlines references
+before a context reaches a target; `validate` requires every reference to resolve, every blob to be used and
+every digest to match its content.
+
+## Coverage gate
+
+`coverage/handlers.py` measures what the vectors execute in the C++ reference: an instrumented build
+(`-fprofile-instr-generate -fcoverage-mapping`, `-DCONFORMANCE_COVERAGE=ON`, label `coverage`) runs every fixture and
+the REL-02 replay, and the gate fails when any VM instruction handler in `coverage/vm-handlers-covered.txt` is no longer
+executed, when a handler is unclassified, or when a source file's line coverage drops more than 0.5 points below its
+floor in `coverage/components.json` (floors are per file under the prefixes in `COMPONENTS`, so linking more files into
+the reference cannot dilute them; a floored file that is no longer measured fails). `vm-handlers-unreachable.txt` lists handlers no version-16 program can run (with the
+reason); `vm-handlers-gaps.txt` lists reachable ones not yet executed, printed on every run. Current baseline: 411 of
+421 handlers executed (7 unreachable, 3 gaps); line coverage crypto/vm 54.1%, crypto/pq 82.0%, transaction.cpp 66.2%,
+mc-config.cpp 55.6%, block.cpp 34.9%, emulator 82.0%, validate-query.cpp 42.4%, adnl 48.5%, keys 58.9%, overlay 4.5%,
+rldp2 55.9%, fec 79.6%, tdfec 85.2% (186 floored files).
+`.github/workflows/conformance-coverage.yml` runs it weekly and on changes to the VM, the block code, the emulator,
+the validator, the network code (adnl, keys, overlay, rldp2, fec, tdfec) or this suite. After adding vectors that reach more code, run
+`handlers.py baseline <report>` and commit the raised baseline. Measure with the workflow's configuration
+(`TOS_ARCH=x86-64-v2`, `PORTABLE=x86-64-v2`): code compiled per CPU feature level, such as
+`tdfec/td/fec/algebra/Simd.h`, takes other paths in a `native` build and measures differently.
+
+## Commands
+
+```
+# fill effects from the C++ reference for a file of contexts
+python3 test/conformance/runner/conformance.py create --reference build/test/conformance/conformance-ref-cli \
+    --harness vm --family vm-endstate --source migrated:rescue-fee-gate/vm-endstate contexts.jsonl out.jsonl
+
+# compare a target with the frozen effects (exit 0 only when every fixture compared equal)
+python3 test/conformance/runner/conformance.py run --target build/test/conformance/conformance-ref-cli \
+    test/conformance/vectors
+
+# refill every fixture with a new C++ build and list the fixtures whose effects changed
+python3 test/conformance/runner/conformance.py regenerate --reference build/test/conformance/conformance-ref-cli \
+    test/conformance/vectors
+
+# schema, uniqueness and provenance checks
+python3 test/conformance/runner/conformance.py validate test/conformance/vectors
+```
+
+`run` prints `compared N, equal N, mismatched M, refused R, skipped S` and fails on any mismatch, refusal or
+skip. Families of a harness the target does not list in `--info` are skipped, which also fails.
+
+## Changing behaviour on purpose
+
+When a C++ change is meant to alter an effect, run `regenerate` in the same change and commit the updated
+fixtures. The list it prints is the behaviour-change report for review; any entry the change did not intend
+is a regression.
+
+## Families
+
+All vectors live in this tree, under `vectors/<harness>/fixtures/`:
+
+| Harness | Families | Fixtures | Size |
+|---|---|---|---|
+| `block` | 1 | 26 | 0.6 MB |
+| `codec` | 13 | 5,040 | 9.2 MB |
+| `consensus` | 17 | 268 | 3.2 MB |
+| `crypto` | 20 | 9,508 | 10.0 MB |
+| `fee` | 3 | 6,723 | 3.6 MB |
+| `get_method` | 5 | 2,740 | 6.2 MB |
+| `net` | 23 | 1,245 | 5.2 MB |
+| `tl` | 3 | 174 | 1.2 MB |
+| `txn` | 56 | 62,054 | 177.9 MB |
+| `validate` | 3 | 638 | 14.8 MB |
+| `vm` | 34 | 163,788 | 118.1 MB |
+| total | 178 | 252,204 | 350.0 MB |
+
+Families whose name starts with `rtos-` (and the get_method families rebuilt from that implementation's
+test parameters) hold contexts converted from another implementation's tests; their effects come from the C++
+reference like every other fixture. Per-component tables are in `docs/`.
+
+## Components
+
+| Component | What it adds | Notes |
+|---|---|---|
+| VM families | 27 migrated VM families plus the chksig and library-load-limit families | [docs/vmfam.md](docs/vmfam.md) |
+| Transaction families | 56 migrated transaction families, captured at the native call | [docs/txnfam.md](docs/txnfam.md) |
+| Network wire layer | ADNL keys, packets, datagrams and channels, overlay records and certificates, FEC codes and RLDP2 transfers through the node's own code; 23 families, known answers from RFC 8032, `test/test-adnl.cpp` and the RTOS overlay vectors | [docs/net.md](docs/net.md) |
+| Block validation | the node's `ValidateQuery` offline: 610 archived blocks accepted, 28 authored defects rejected by class; a 2,000-masterchain-block epoch-6 slice (`history-replay`) | [docs/validate.md](docs/validate.md) |
+| Archive replay | offline whole-history replay of archived networks from their zero states | [docs/archive.md](docs/archive.md), [docs/archive-manifest.json](docs/archive-manifest.json) |
+| Fuzzing and diagnosis | differential fuzzing (in-process and line protocol), test-build VM step trace (`TOS_VM_STEP_TRACE`, default OFF), `debug_mismatch.py`, `minimize.py` | [docs/fuzz.md](docs/fuzz.md) |
+| tosctl VM target | the tosctl Rust VM and executor behind the line protocol | [docs/tosvm.md](docs/tosvm.md) |
+| Network scenarios | Black-box multi-node runs with per-node implementations | [docs/consensus.md](docs/consensus.md) |
+
+ctest labels: `conformance` (default; select with `-L '^conformance$'`), `history-replay` (retained archives),
+`rust-target` (configure with `-DCONFORMANCE_RUST_TARGET=ON`, needs cargo), `network-scenario` (starts validators;
+`CONFORMANCE_NETWORK=1`).
+
+## Chain replay
+
+`migrate/rel02.py chain <test-epoch-replay> <target> test/rel02/corpus` exports every transaction of the
+REL-02 corpus as a `txn` context (576: 172 ordinary, 202 tick, 202 tock) and requires the target to reproduce
+each on-chain transaction hash and new account hash. The chain is the oracle, so these contexts are not
+frozen as fixtures: the corpus already in the tree is the input, and history recorded on the network has to
+keep replaying after any change. ctest runs it against the reference as `conformance-rel02-chain`.
+

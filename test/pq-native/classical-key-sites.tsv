@@ -16,6 +16,7 @@ crypto/block/signature-set.cpp	1	guarded	classical signature verification; a pos
 crypto/block/validator-set.cpp	1	guarded	identity backfill for sets built directly by tests and tooling, classical descriptors only
 crypto/block/validator-session-members.cpp	2	guarded	the classical session member form, and the implicit ADNL address a post-quantum descriptor can never have
 utils/show-validator-set.cpp	1	guarded	display fallback for a tooling-built classical descriptor that carries no identity
+test/conformance/ref/harness-consensus.cpp	2	guarded	conformance test harness only: reads the key of descriptors the context itself declares classical (ed25519 field, mixed-set cases) and prints it only on the classical branch; post-quantum descriptors take the other branch
 # validator/consensus/bridge.cpp closed when the Simplex bus now reads the post-quantum
 # consensus key from the descriptor and refuses a classical one, so it no longer calls
 # classical_key(). The full-node and fast-sync overlay certificate roots now use the

@@ -27,6 +27,9 @@ crypto/block/signature-set.cpp	*	35	definition	the C++ factories, #11/#12 codecs
 crypto/block/signature-set.h	*	2	definition	the public classical verification boundary declarations
 lite-client/lite-client-common.cpp	*	1	reachable	the checked lite parser accepts classical history and PQ carriers; trusted carrier verification remains downstream
 sdk/js/packages/client/src/types.ts	*	2	reachable	the public client response model has only ordinary/simplex classical signature shapes; the API carrier unit owns it
+test/conformance/ref/harness-consensus.cpp	cpp_fetch	4	historical	conformance test harness decodes the signature sets of block proofs given as fixture contexts (archived and authored certificates) to report and verify them offline; no production carrier selection
+test/conformance/ref/harness-crypto.cpp	cpp_fetch	2	historical	conformance test harness decodes signature-set carriers given as fixture contexts to report the node verdict offline; no production carrier selection
+test/conformance/ref/harness-crypto.cpp	raw_tag_write	1	historical	conformance test harness builds a validators_ext#12 validator-set cell from fixture inputs; the 0x12 tag is the validator-set constructor, not a signature carrier
 test/pq-native/c04-real-state-proof-test.cpp	cpp_fetch	2	historical	test-only proof fixture parses valid and wrong-set #13 PQ cells; generic fetch marker does not emit a classical carrier
 test/pq-native/custom-overlay-relay-dedup-test.cpp	cpp_factory	1	historical	relay dedup test builds an ordinary set only as opaque evidence content to key finality forwarding; nothing verifies or emits it
 test/pq-native/n6-microbench-smoke.cpp	cpp_fetch	1	historical	benchmark fixture parses a PQ lite carrier through the checked adapter; no production carrier selection

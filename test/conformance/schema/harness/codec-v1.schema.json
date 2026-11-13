@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conformance/harness/codec-v1",
+  "title": "codec harness: decoding verdict for a bag of cells or a TL-B type",
+  "$defs": {
+    "context": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"enum": ["cell", "VarUInteger", "account_storage", "config", "ConfigParam", "ConfigParams", "Account", "AccountStorage", "Block", "BlockInfo", "Coins", "CurrencyCollection", "ExtraCurrencyCollection", "McStateExtra", "Message", "MessageRelaxed", "MsgAddressInt", "ShardAccount", "ShardState", "ShardStateUnsplit", "StateInit", "StorageUsed", "Transaction", "ValidatorDescr", "ValidatorSet"], "description": "What the input is decoded as (docs/codec.md)"},
+        "boc": {"$ref": "../common-v1.schema.json#/$defs/boc", "description": "The input bag of cells; cell accepts several roots, every other type exactly one"},
+        "bits": {"type": "string", "pattern": "^[01]{0,1023}$", "description": "The input as the data bits of one ordinary cell without references; instead of boc"},
+        "n": {"type": "integer", "minimum": 0, "maximum": 4294967295, "description": "VarUInteger width (1..32) or ConfigParam index"},
+        "op": {"enum": ["read", "write"], "description": "VarUInteger: decode bits (default) or encode value"},
+        "value": {"type": "string", "pattern": "^-?[0-9]{1,80}$", "description": "VarUInteger write: the integer to encode"},
+        "mode": {"type": "integer", "minimum": 0, "maximum": 31, "description": "BOC serialization mode of the re-serialized bag, default 0"},
+        "max_cells": {"type": "integer", "minimum": 1, "maximum": 16777216, "description": "Validation budget in visited cells, default 1024"},
+        "proof_child": {"type": "boolean", "description": "Decode the child of the Merkle proof root instead of the root (cells with pruned branches)"},
+        "path": {"type": "array", "maxItems": 64, "items": {"type": "integer", "minimum": 0, "maximum": 3}, "description": "Reference indices followed from the root (after proof_child) to the decoded cell"},
+        "now": {"type": "integer", "minimum": 0, "maximum": 4294967295, "description": "account_storage: unpack time"},
+        "special": {"type": "boolean", "description": "account_storage: special account, default false"},
+        "workchain": {"type": "integer", "minimum": -128, "maximum": 127, "description": "account_storage: expected workchain, default 0"},
+        "address": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "account_storage: expected account id (default zero); config, ConfigParams: configuration address"},
+        "relax": {"type": "boolean", "description": "config: relax the parameter 0 rule"},
+        "old_mparams": {"$ref": "../common-v1.schema.json#/$defs/boc", "description": "config: previous mandatory parameter set"},
+        "old_mparams_proof_child": {"type": "boolean", "description": "config: old_mparams travels under a Merkle proof"}
+      }
+    },
+    "effects": {
+      "oneOf": [
+        {"type": "object", "required": ["outcome", "root_hashes", "reserialized_sha256", "facts"], "additionalProperties": false,
+         "properties": {"outcome": {"const": "accepted"},
+                        "root_hashes": {"type": "array", "items": {"$ref": "../common-v1.schema.json#/$defs/hash"}},
+                        "reserialized_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the bag re-serialized by the C++ writer in mode"},
+                        "facts": {"$ref": "#/$defs/facts"}}},
+        {"type": "object", "required": ["outcome", "reason", "root_hashes", "facts"], "additionalProperties": false,
+         "properties": {"outcome": {"const": "rejected"},
+                        "reason": {"enum": ["boc", "roots", "tlb", "handwritten", "semantic", "range"], "description": "The first decoding stage that refused"},
+                        "root_hashes": {"type": "array", "items": {"$ref": "../common-v1.schema.json#/$defs/hash"}},
+                        "facts": {"$ref": "#/$defs/facts"}}}
+      ]
+    },
+    "facts": {
+      "type": "object",
+      "description": "Per-type observations (docs/codec.md)",
+      "additionalProperties": {"oneOf": [{"type": "null"}, {"type": "boolean"}, {"type": "integer"}, {"type": "string"}, {"type": "array", "items": {"type": "string"}}]}
+    }
+  }
+}

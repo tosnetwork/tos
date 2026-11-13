@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conformance/harness/fee-v1",
+  "title": "fee harness: fee and gas arithmetic from explicit prices",
+  "$defs": {
+    "u64": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,19})$", "description": "Unsigned 64-bit decimal"},
+    "u32": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+    "decimal": {"type": "string", "pattern": "^-?[0-9]{1,80}$"},
+    "context": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["storage", "gas_purchase", "forward"]},
+        "now": {"$ref": "#/$defs/u32"},
+        "last_paid": {"$ref": "#/$defs/u32"},
+        "cells": {"$ref": "#/$defs/u64"},
+        "bits": {"$ref": "#/$defs/u64"},
+        "special": {"type": "boolean"},
+        "masterchain": {"type": "boolean"},
+        "periods": {"type": "array", "maxItems": 64, "items": {"type": "object", "required": ["since", "bit_price", "cell_price", "mc_bit_price", "mc_cell_price"], "additionalProperties": false,
+          "properties": {"since": {"$ref": "#/$defs/u32"}, "bit_price": {"$ref": "#/$defs/u64"}, "cell_price": {"$ref": "#/$defs/u64"}, "mc_bit_price": {"$ref": "#/$defs/u64"}, "mc_cell_price": {"$ref": "#/$defs/u64"}}}},
+        "gas_price": {"$ref": "#/$defs/u64"},
+        "gas_limit": {"$ref": "#/$defs/u64"},
+        "flat_gas_limit": {"$ref": "#/$defs/u64"},
+        "flat_gas_price": {"$ref": "#/$defs/u64"},
+        "balance": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,38})$", "description": "Nanotomi, at most 128 bits"},
+        "lump_price": {"$ref": "#/$defs/u64"},
+        "bit_price": {"$ref": "#/$defs/u64"},
+        "cell_price": {"$ref": "#/$defs/u64"},
+        "ihr_factor": {"$ref": "#/$defs/u32"},
+        "first_frac": {"$ref": "#/$defs/u32"},
+        "next_frac": {"$ref": "#/$defs/u32"},
+        "ihr_disabled": {"type": "boolean"}
+      }
+    },
+    "effects": {
+      "oneOf": [
+        {"type": "object", "required": ["outcome", "fee"], "additionalProperties": false,
+         "properties": {"outcome": {"const": "storage"}, "fee": {"oneOf": [{"$ref": "#/$defs/decimal"}, {"type": "null"}]}}},
+        {"type": "object", "required": ["outcome", "threshold", "gas_bought", "fee", "simple_fee"], "additionalProperties": false,
+         "properties": {"outcome": {"const": "gas_purchase"}, "threshold": {"$ref": "#/$defs/decimal"}, "gas_bought": {"$ref": "#/$defs/decimal"}, "fee": {"$ref": "#/$defs/decimal"}, "simple_fee": {"$ref": "#/$defs/decimal"}}},
+        {"type": "object", "required": ["outcome", "fwd_fee", "fwd_fee_256", "ihr_fwd_fee", "ihr_fee", "first_part", "first_part_256", "next_part_256"], "additionalProperties": false,
+         "properties": {"outcome": {"const": "forward"}, "fwd_fee": {"$ref": "#/$defs/decimal"}, "fwd_fee_256": {"$ref": "#/$defs/decimal"}, "ihr_fwd_fee": {"$ref": "#/$defs/decimal"}, "ihr_fee": {"$ref": "#/$defs/decimal"}, "first_part": {"$ref": "#/$defs/decimal"}, "first_part_256": {"$ref": "#/$defs/decimal"}, "next_part_256": {"$ref": "#/$defs/decimal"}}}
+      ]
+    }
+  }
+}

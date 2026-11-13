@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conformance/harness/vm-v1",
+  "title": "vm harness: one program on the VM",
+  "$defs": {
+    "context": {
+      "type": "object",
+      "required": [
+        "code",
+        "global_version",
+        "gas",
+        "stack"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "../common-v1.schema.json#/$defs/boc"
+        },
+        "data": {
+          "$ref": "../common-v1.schema.json#/$defs/boc",
+          "description": "Initial c4; absent means the VM default"
+        },
+        "c7": {
+          "$ref": "../common-v1.schema.json#/$defs/stack_item",
+          "description": "Initial c7, a tuple; absent means the VM default"
+        },
+        "stack": {
+          "type": "array",
+          "description": "Initial stack, bottom first",
+          "maxItems": 255,
+          "items": {
+            "$ref": "../common-v1.schema.json#/$defs/stack_item"
+          }
+        },
+        "global_version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "flags": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "VmState flags, default 0"
+        },
+        "gas": {
+          "type": "object",
+          "required": [
+            "limit",
+            "max"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "limit": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "credit": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "libraries": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "../common-v1.schema.json#/$defs/boc"
+          },
+          "description": "Library collection dictionary roots"
+        },
+        "chksig_always_succeed": {
+          "type": "boolean",
+          "description": "VmState::set_chksig_always_succeed; default false"
+        },
+        "max_library_loads": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "VmState::set_max_library_loads; absent keeps the VM default"
+        }
+      }
+    },
+    "effects": {
+      "type": "object",
+      "required": [
+        "exit_code",
+        "gas_used",
+        "steps",
+        "committed",
+        "c4_hash",
+        "c5_hash",
+        "stack"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "exit_code": {
+          "type": "integer",
+          "description": "External exit code; out of gas is -14"
+        },
+        "gas_used": {
+          "type": "integer"
+        },
+        "steps": {
+          "type": "integer"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "c4_hash": {
+          "oneOf": [
+            {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "c5_hash": {
+          "oneOf": [
+            {
+              "$ref": "../common-v1.schema.json#/$defs/hash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stack": {
+          "$ref": "../common-v1.schema.json#/$defs/stack_text"
+        }
+      }
+    }
+  }
+}
