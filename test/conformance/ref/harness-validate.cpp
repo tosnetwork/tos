@@ -22,8 +22,33 @@ namespace {
 
 using conformance::validate::Verdict;
 
+// Input bounds, all checked on the encoded length before anything is decoded. A context is at most
+// 16 MiB of JSON (common.cpp), so it can carry at most 12 MiB of decoded bytes; each bound is below that,
+// so an oversize field is refused by name. The block and collated data bounds are the node's own
+// candidate limits (FullNode::max_block_size, the consensus max_collated_data_size default); larger
+// states are served as Merkle proofs of what the validation reads, as every frozen context does.
 constexpr std::size_t kMaxStates = 32;
-constexpr std::size_t kMaxBlockBytes = 32 << 20;
+constexpr std::size_t kMaxBlockBytes = 4 << 20;
+constexpr std::size_t kMaxCollatedBytes = 4 << 20;
+constexpr std::size_t kMaxStateBytes = 4 << 20;
+constexpr std::size_t kMaxStatesBytes = 8 << 20;
+
+// The number of bytes a base64 text decodes to, from its length alone (exact for valid base64; an
+// invalid text is refused by the decoder afterwards).
+std::size_t base64_decoded_size(td::Slice b64) {
+  std::size_t n = b64.size();
+  for (int pad = 0; pad < 2 && n > 0 && b64[n - 1] == '='; ++pad) {
+    --n;
+  }
+  return n / 4 * 3 + (n % 4 > 1 ? n % 4 - 1 : 0);
+}
+
+td::Status check_size(td::Slice b64, std::size_t limit, td::Slice where) {
+  if (base64_decoded_size(b64) > limit) {
+    return td::Status::Error(PSLICE() << where << ": larger than " << limit << " bytes");
+  }
+  return td::Status::OK();
+}
 
 td::Result<td::Bits256> hash_field(td::JsonObject &obj, td::Slice field) {
   TRY_RESULT(text, obj.get_required_string_field(field));
@@ -72,11 +97,12 @@ td::Result<tos::BlockIdExt> block_id_field(td::JsonObject &ctx, td::Slice field)
   return block_id(value, field);
 }
 
-td::Result<td::BufferSlice> base64_field(td::JsonObject &ctx, td::Slice field) {
+td::Result<td::BufferSlice> base64_field(td::JsonObject &ctx, td::Slice field, std::size_t limit) {
   TRY_RESULT(b64, ctx.get_required_string_field(field));
+  TRY_STATUS(check_size(b64, limit, field));
   TRY_RESULT(bytes, td::base64_decode(b64));
-  if (bytes.size() > kMaxBlockBytes) {
-    return td::Status::Error(PSLICE() << field << ": larger than " << kMaxBlockBytes << " bytes");
+  if (bytes.size() > limit) {
+    return td::Status::Error(PSLICE() << field << ": larger than " << limit << " bytes");
   }
   return td::BufferSlice(bytes);
 }
@@ -102,17 +128,29 @@ td::Result<std::vector<conformance::validate::ServedState>> states_field(td::Jso
   if (items.size() > kMaxStates) {
     return td::Status::Error(PSLICE() << "states: more than " << kMaxStates << " items");
   }
-  std::vector<conformance::validate::ServedState> states;
+  // Every size is checked before any state is decoded.
+  std::vector<std::string> encoded;
+  std::size_t total = 0;
   for (std::size_t i = 0; i < items.size(); ++i) {
     std::string where = PSTRING() << "states[" << i << "]";
     if (items[i].type() != td::JsonValue::Type::Object) {
       return td::Status::Error(PSLICE() << where << ": object required");
     }
+    TRY_RESULT(b64, items[i].get_object().get_required_string_field("state"));
+    TRY_STATUS(check_size(b64, kMaxStateBytes, where + ".state"));
+    total += base64_decoded_size(b64);
+    if (total > kMaxStatesBytes) {
+      return td::Status::Error(PSLICE() << "states: larger than " << kMaxStatesBytes << " bytes in total");
+    }
+    encoded.push_back(std::move(b64));
+  }
+  std::vector<conformance::validate::ServedState> states;
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    std::string where = PSTRING() << "states[" << i << "]";
     auto &item = items[i].get_object();
     TRY_RESULT(id_value, item.extract_required_field("block", td::JsonValue::Type::Object));
     TRY_RESULT(id, block_id(id_value, where + ".block"));
-    TRY_RESULT(b64, item.get_required_string_field("state"));
-    TRY_RESULT(root, state_root(b64, where + ".state"));
+    TRY_RESULT(root, state_root(encoded[i], where + ".state"));
     states.push_back({id, std::move(root)});
   }
   return states;
@@ -121,9 +159,9 @@ td::Result<std::vector<conformance::validate::ServedState>> states_field(td::Jso
 td::Result<std::string> run_validate(td::JsonObject &ctx) {
   conformance::validate::Request request;
   TRY_RESULT_ASSIGN(request.candidate, block_id_field(ctx, "block_id"));
-  TRY_RESULT_ASSIGN(request.data, base64_field(ctx, "block"));
+  TRY_RESULT_ASSIGN(request.data, base64_field(ctx, "block", kMaxBlockBytes));
   if (ctx.has_field("collated_data")) {
-    TRY_RESULT_ASSIGN(request.collated_data, base64_field(ctx, "collated_data"));
+    TRY_RESULT_ASSIGN(request.collated_data, base64_field(ctx, "collated_data", kMaxCollatedBytes));
   }
   TRY_RESULT_ASSIGN(request.created_by, hash_field(ctx, "created_by"));
   {

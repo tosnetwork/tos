@@ -36,6 +36,15 @@ Rejections go to the node's error log, which `ValidateQuery` requires: a private
 | `skip_shard_signatures` | `ValidateParams::is_fake`: shard top description signatures are not checked |
 | `states` | every state the manager serves: `{block, state}`, the state a complete one or a Merkle proof of it |
 
+Bounds (a `harness_error`, as in the other harnesses): at most 32 states; the block and the collated data
+at most 4 MiB each (the node's own candidate limits, `FullNode::max_block_size` and the consensus
+`max_collated_data_size`); a state at most 4 MiB and all states at most 8 MiB together. Every bound is
+checked on the base64 length before anything is decoded (a context is at most 16 MiB of JSON, so it
+cannot carry more than 12 MiB of decoded bytes). A larger state is served as a Merkle proof of what the
+validation reads, as every frozen context does. `conformance-validate-bounds`
+(`migrate/validate_bounds.py`) sends one context one byte over each bound, one at the block bound, and
+then a frozen context, which must still get its frozen effect.
+
 Effects: `accepted` with `ok_from_utime_ms` (`CandidateAccept::ok_from_utime`); `rejected` (a
 `CandidateReject`) or `error` (the validation stopped without a verdict) with a `reason` class from the
 fixed table in `validate-offline.cpp`: `input_unavailable`, `candidate_id_mismatch`, `shard_mismatch`,
