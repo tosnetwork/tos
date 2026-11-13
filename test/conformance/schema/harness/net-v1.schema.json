@@ -1,0 +1,1500 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conformance/harness/net-v1",
+  "title": "net harness: the network wire layer (ADNL, keys, overlay, FEC, RLDP2)",
+  "$defs": {
+    "context": {
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "enum": [
+            "public_key",
+            "private_key",
+            "sign",
+            "verify",
+            "encrypt",
+            "decrypt",
+            "shared_secret",
+            "adnl_id",
+            "adnl_address_list",
+            "adnl_message",
+            "adnl_packet",
+            "adnl_datagram",
+            "adnl_channel",
+            "preauth_source",
+            "preauth_gate",
+            "overlay_id",
+            "overlay_node",
+            "overlay_certificate",
+            "overlay_member_certificate",
+            "overlay_member_flags",
+            "overlay_privacy_rules",
+            "fec_type",
+            "fec_encode",
+            "fec_decode",
+            "rldp2_fec_helper",
+            "rldp2_budget",
+            "rldp2_receive",
+            "rldp2_send"
+          ],
+          "description": "operation; each op requires its own subset of the fields below (runner/harnesses/net.py OP_REQUIRED, OP_OPTIONAL)"
+        },
+        "address": {
+          "type": "object",
+          "required": [
+            "ip",
+            "port"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "ip": {
+              "type": "string",
+              "maxLength": 64,
+              "description": "numeric IPv4 or IPv6 address"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        },
+        "address_list": {
+          "$ref": "../common-v1.schema.json#/$defs/hex",
+          "description": "a boxed adnl.addressList"
+        },
+        "algorithm": {
+          "enum": [
+            "raptorq",
+            "online",
+            "round_robin"
+          ]
+        },
+        "authorized_keys": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "type": "object",
+            "required": [
+              "key",
+              "max_size"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "description": "32 bytes, lowercase hex"
+              },
+              "max_size": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              }
+            }
+          }
+        },
+        "budget": {
+          "type": "object",
+          "required": [
+            "max_decoders",
+            "max_bytes"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "max_decoders": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            },
+            "max_bytes": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            }
+          }
+        },
+        "certificate": {
+          "$ref": "../common-v1.schema.json#/$defs/hex",
+          "description": "a boxed overlay.Certificate or overlay.MemberCertificate"
+        },
+        "ciphertext": {
+          "$ref": "../common-v1.schema.json#/$defs/hex"
+        },
+        "contents": {
+          "$ref": "../common-v1.schema.json#/$defs/hex",
+          "description": "a boxed adnl.packetContents"
+        },
+        "data": {
+          "$ref": "../common-v1.schema.json#/$defs/hex"
+        },
+        "data_size": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            }
+          ],
+          "description": "rldp2_budget: decimal; otherwise an integer"
+        },
+        "datagram": {
+          "$ref": "../common-v1.schema.json#/$defs/hex",
+          "description": "a UDP payload: 32-byte destination (local id or channel id), then the ciphertext"
+        },
+        "default_mtu": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit decimal"
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "admit"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "admit": {
+                    "type": "object",
+                    "required": [
+                      "ip",
+                      "port"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "ip": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "description": "numeric IPv4 or IPv6 address"
+                      },
+                      "port": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 65535
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "release"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "release": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "index of the admit event whose ticket is released"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "fec_type": {
+          "$ref": "../common-v1.schema.json#/$defs/hex",
+          "description": "a boxed fec.Type as a peer announces it"
+        },
+        "flags": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "32 bytes, lowercase hex"
+        },
+        "is_any_sender": {
+          "type": "boolean"
+        },
+        "is_fec": {
+          "type": "boolean"
+        },
+        "issued_to": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "32 bytes, lowercase hex"
+        },
+        "local": {
+          "type": "object",
+          "required": [
+            "burst",
+            "period",
+            "in_flight_limit"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "burst": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4096
+            },
+            "period": {
+              "type": "number",
+              "minimum": 60,
+              "maximum": 1000000000.0,
+              "description": "seconds per token; long enough that no token refills while one context runs"
+            },
+            "in_flight_limit": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          }
+        },
+        "local_channel_key": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "the local channel's Ed25519 private key"
+        },
+        "local_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "32 bytes, lowercase hex"
+        },
+        "max_sources": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "max_unauth_size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "message": {
+          "$ref": "../common-v1.schema.json#/$defs/hex",
+          "description": "bytes signed or verified; for adnl_message a boxed adnl.Message"
+        },
+        "name": {
+          "$ref": "../common-v1.schema.json#/$defs/hex",
+          "description": "the overlay name an OverlayIdFull is built from"
+        },
+        "node": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "32 bytes, lowercase hex"
+            },
+            {
+              "$ref": "../common-v1.schema.json#/$defs/hex"
+            }
+          ],
+          "description": "overlay_node: a boxed overlay.node; overlay_member_certificate: the ADNL short id the certificate is for"
+        },
+        "now": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "original_sender": {
+          "type": "boolean"
+        },
+        "overlay_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "32 bytes, lowercase hex"
+        },
+        "packets": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "../common-v1.schema.json#/$defs/hex"
+          },
+          "description": "raw RLDP2 datagrams, fed in order"
+        },
+        "peer_channel_key": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "the peer's channel public key, as adnl.message.createChannel carries it"
+        },
+        "peer_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "32 bytes, lowercase hex"
+        },
+        "plumtree_enabled": {
+          "type": "boolean"
+        },
+        "private_key": {
+          "$ref": "../common-v1.schema.json#/$defs/hex",
+          "description": "a TL PrivateKey (boxed): the local node's own key"
+        },
+        "process": {
+          "type": "object",
+          "required": [
+            "burst",
+            "period",
+            "in_flight_limit"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "burst": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4096
+            },
+            "period": {
+              "type": "number",
+              "minimum": 60,
+              "maximum": 1000000000.0,
+              "description": "seconds per token; long enough that no token refills while one context runs"
+            },
+            "in_flight_limit": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          }
+        },
+        "public_key": {
+          "$ref": "../common-v1.schema.json#/$defs/hex",
+          "description": "a TL PublicKey (boxed), as received from a peer"
+        },
+        "received_symbols_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "regenerate": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 16777215
+          }
+        },
+        "requests": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "required": [
+              "transfer_id",
+              "max_size"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "transfer_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "description": "32 bytes, lowercase hex"
+              },
+              "max_size": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]{0,19})$",
+                "description": "unsigned 64-bit decimal"
+              }
+            }
+          }
+        },
+        "send": {
+          "$ref": "../common-v1.schema.json#/$defs/hex",
+          "description": "a boxed adnl.packetContents the channel encrypts and sends"
+        },
+        "signature": {
+          "$ref": "../common-v1.schema.json#/$defs/hex"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "source": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "32 bytes, lowercase hex"
+            },
+            {
+              "type": "object",
+              "required": [
+                "burst",
+                "period",
+                "in_flight_limit"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "burst": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 4096
+                },
+                "period": {
+                  "type": "number",
+                  "minimum": 60,
+                  "maximum": 1000000000.0,
+                  "description": "seconds per token; long enough that no token refills while one context runs"
+                },
+                "in_flight_limit": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                }
+              }
+            }
+          ],
+          "description": "preauth_gate: the per-source rate; overlay_privacy_rules: the broadcast source key hash"
+        },
+        "symbol_ids": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 16777215
+          }
+        },
+        "symbol_size": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            }
+          ],
+          "description": "rldp2_budget: decimal; otherwise an integer"
+        },
+        "symbols": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "data"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              },
+              "data": {
+                "$ref": "../common-v1.schema.json#/$defs/hex"
+              }
+            }
+          }
+        },
+        "symbols_count": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit decimal"
+            }
+          ],
+          "description": "rldp2_budget: decimal; otherwise an integer"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "an ADNL id in its 55-character text form"
+        },
+        "transfer_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "32 bytes, lowercase hex"
+        },
+        "unix_time": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        }
+      }
+    },
+    "effects": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "adnl_id_text",
+            "key_type",
+            "serialized",
+            "serialized_size",
+            "short_id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "public_key"
+            },
+            "adnl_id_text": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "key_type": {
+              "enum": [
+                "ed25519",
+                "aes",
+                "unenc",
+                "overlay",
+                "unknown"
+              ]
+            },
+            "serialized": {
+              "$ref": "../common-v1.schema.json#/$defs/hex"
+            },
+            "serialized_size": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "short_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "32 bytes, lowercase hex"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "key_type",
+            "public_key",
+            "short_id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "private_key"
+            },
+            "key_type": {
+              "enum": [
+                "ed25519",
+                "aes",
+                "unenc",
+                "overlay",
+                "unknown"
+              ]
+            },
+            "public_key": {
+              "$ref": "../common-v1.schema.json#/$defs/hex"
+            },
+            "short_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "32 bytes, lowercase hex"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "signature"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "signature"
+            },
+            "signature": {
+              "$ref": "../common-v1.schema.json#/$defs/hex"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "verified"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "ciphertext"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "ciphertext"
+            },
+            "ciphertext": {
+              "$ref": "../common-v1.schema.json#/$defs/hex"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "plaintext"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "plaintext"
+            },
+            "plaintext": {
+              "$ref": "../common-v1.schema.json#/$defs/hex"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "secret"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "secret"
+            },
+            "secret": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "32 bytes, lowercase hex"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "id",
+            "text"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "adnl_id"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "32 bytes, lowercase hex"
+            },
+            "text": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "address_list"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "address_list"
+            },
+            "address_list": {
+              "type": "object",
+              "description": "version, reinit_date, priority, expire_at, empty, public_only, has_reverse, addresses (each TL hex), quic, serialized_size, canonical"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "canonical",
+            "message"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "message"
+            },
+            "canonical": {
+              "oneOf": [
+                {
+                  "$ref": "../common-v1.schema.json#/$defs/hex"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "message": {
+              "type": "object",
+              "description": "type and size (the node's size accounting), and the fields of that type"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "packet"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "packet"
+            },
+            "packet": {
+              "type": "object",
+              "description": "the fields AdnlPacket extracted, to_sign, canonical re-serialization and signature_check"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "from_short",
+            "packet"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "received"
+            },
+            "from_short": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "32 bytes, lowercase hex"
+            },
+            "packet": {
+              "type": "object",
+              "description": "the fields AdnlPacket extracted, to_sign, canonical re-serialization and signature_check"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "in_id",
+            "out_id",
+            "received",
+            "sent"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "channel"
+            },
+            "in_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "32 bytes, lowercase hex"
+            },
+            "out_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "32 bytes, lowercase hex"
+            },
+            "received": {
+              "oneOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "{\"packet\": ...} or {\"reason\": <class>}, or null"
+            },
+            "sent": {
+              "oneOf": [
+                {
+                  "$ref": "../common-v1.schema.json#/$defs/hex"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "source"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "source"
+            },
+            "source": {
+              "type": "object",
+              "description": "{ip, port} of the pre-authentication source key"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "held",
+            "results",
+            "sources"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "gate"
+            },
+            "held": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "results": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "per event: admitted, released, or a refusal class"
+            },
+            "sources": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "public_key",
+            "short_id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "overlay_id"
+            },
+            "public_key": {
+              "$ref": "../common-v1.schema.json#/$defs/hex"
+            },
+            "short_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "32 bytes, lowercase hex"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "adnl_short_id",
+            "canonical",
+            "certificate",
+            "flags",
+            "overlay",
+            "receives_plumtree",
+            "receives_regular",
+            "signature_check",
+            "to_sign",
+            "version"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "overlay_node"
+            },
+            "adnl_short_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "32 bytes, lowercase hex"
+            },
+            "canonical": {
+              "oneOf": [
+                {
+                  "$ref": "../common-v1.schema.json#/$defs/hex"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "certificate": {
+              "type": "object"
+            },
+            "flags": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "overlay": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "32 bytes, lowercase hex"
+            },
+            "receives_plumtree": {
+              "type": "boolean"
+            },
+            "receives_regular": {
+              "type": "boolean"
+            },
+            "signature_check": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "\"valid\" / a verdict word, a refusal class ($defs/reason), or null"
+            },
+            "to_sign": {
+              "oneOf": [
+                {
+                  "$ref": "../common-v1.schema.json#/$defs/hex"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "version": {
+              "type": "integer",
+              "minimum": -2147483648,
+              "maximum": 2147483647
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "canonical",
+            "check",
+            "empty",
+            "issuer",
+            "to_sign"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "certificate"
+            },
+            "canonical": {
+              "oneOf": [
+                {
+                  "$ref": "../common-v1.schema.json#/$defs/hex"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "check": {
+              "oneOf": [
+                {
+                  "enum": [
+                    "allowed",
+                    "need_check",
+                    "forbidden"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "empty": {
+              "type": "boolean"
+            },
+            "issuer": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "32 bytes, lowercase hex"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "to_sign": {
+              "oneOf": [
+                {
+                  "$ref": "../common-v1.schema.json#/$defs/hex"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "certificate",
+            "expired"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "member_certificate"
+            },
+            "certificate": {
+              "type": "object"
+            },
+            "expired": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "public_flags",
+            "receives_plumtree",
+            "receives_regular",
+            "valid"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "member_flags"
+            },
+            "public_flags": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "receives_plumtree": {
+              "type": "boolean"
+            },
+            "receives_regular": {
+              "type": "boolean"
+            },
+            "valid": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "check",
+            "max_broadcast_size"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "privacy_rules"
+            },
+            "check": {
+              "oneOf": [
+                {
+                  "enum": [
+                    "allowed",
+                    "need_check",
+                    "forbidden"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "max_broadcast_size": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "canonical",
+            "decoder",
+            "parameters"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "fec_type"
+            },
+            "canonical": {
+              "oneOf": [
+                {
+                  "$ref": "../common-v1.schema.json#/$defs/hex"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "decoder": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "\"valid\" / a verdict word, a refusal class ($defs/reason), or null"
+            },
+            "parameters": {
+              "type": "object",
+              "required": [
+                "data_size",
+                "symbol_size",
+                "symbols_count"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "parameters",
+            "symbols"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "encoded"
+            },
+            "parameters": {
+              "type": "object",
+              "required": [
+                "data_size",
+                "symbol_size",
+                "symbols_count"
+              ]
+            },
+            "symbols": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "added",
+            "data",
+            "data_sha256",
+            "may_try_decode",
+            "reason",
+            "regenerated"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "decode"
+            },
+            "added": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "../common-v1.schema.json#/$defs/hex"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "data_sha256": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "32 bytes, lowercase hex"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "may_try_decode": {
+              "type": "boolean"
+            },
+            "reason": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "\"valid\" / a verdict word, a refusal class ($defs/reason), or null"
+            },
+            "regenerated": {
+              "oneOf": [
+                {
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "fec_symbols_count",
+            "left_fec_symbols_count"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "fec_helper"
+            },
+            "fec_symbols_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "left_fec_symbols_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "default_mtu",
+            "part_size",
+            "reservation_bytes",
+            "solver_bytes",
+            "symbol_size"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "budget"
+            },
+            "default_mtu": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "part_size": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "reservation_bytes": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit decimal"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "solver_bytes": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit decimal"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "symbol_size": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "completed_transfers",
+            "events",
+            "inbound_transfers"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "transfers"
+            },
+            "completed_transfers": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "events": {
+              "type": "array",
+              "description": "per datagram that caused any: index, received transfers, completed parts, rldp2.complete answers"
+            },
+            "inbound_transfers": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "outbound_transfers",
+            "packets"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "sent"
+            },
+            "outbound_transfers": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "packets": {
+              "type": "array",
+              "description": "datagrams emitted by the first run: framing fields and digests"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "outcome",
+            "reason"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "const": "refused"
+            },
+            "reason": {
+              "$ref": "#/$defs/reason"
+            }
+          }
+        }
+      ]
+    },
+    "reason": {
+      "enum": [
+        "address_list_oversize",
+        "adnl_id_checksum",
+        "adnl_id_encoding",
+        "adnl_id_length",
+        "adnl_id_prefix",
+        "channel_source_mismatch",
+        "ciphertext_short",
+        "datagram_short",
+        "degenerate_public_key",
+        "digest_mismatch",
+        "encryption_unsupported",
+        "fec_negative",
+        "fec_not_raptorq",
+        "fec_symbol_size_large",
+        "fec_symbol_size_small",
+        "fec_symbols_count",
+        "fec_too_many_symbols",
+        "invalid_signature",
+        "key_unusable",
+        "local_budget",
+        "need_more_symbols",
+        "not_ed25519",
+        "overlay_node_invalid",
+        "overlay_signature_invalid",
+        "packet_address_list_empty",
+        "packet_bad_flags",
+        "packet_message_flags",
+        "packet_source_mismatch",
+        "process_budget",
+        "rate_limited",
+        "signing_unsupported",
+        "source_limit",
+        "source_missing",
+        "source_unknown",
+        "symbol_id_range",
+        "symbol_length",
+        "tl_bad_length",
+        "tl_negative_flags",
+        "tl_trailing_data",
+        "tl_truncated",
+        "tl_unknown_constructor",
+        "unclassified",
+        "unknown_channel",
+        "unknown_destination"
+      ],
+      "description": "refusal classes of kReasonRules in ref/harness-net.cpp, and unclassified"
+    }
+  }
+}
