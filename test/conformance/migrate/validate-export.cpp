@@ -787,12 +787,14 @@ Cell edit_state(const Cell &state, const std::function<void(block::gen::ShardSta
 Cell rebuild_with_state(const Block &b, const Cell &prev_state,
                         const std::function<void(block::gen::BlockInfo::Record &)> &edit_info,
                         const std::function<void(block::gen::ShardStateUnsplit::Record &)> &edit_new_state) {
-  auto next = vm::MerkleUpdate::apply(prev_state, b.state_update);
+  // The previous state is read through a usage tree, so the generated update holds only the cells the
+  // archived update touches, as the collator's does.
+  auto tree = std::make_shared<vm::CellUsageTree>();
+  auto next = vm::MerkleUpdate::apply(vm::UsageCell::create(prev_state, tree->root_ptr()), b.state_update);
   if (next.is_error()) {
     die("state update of " + b.id.to_str());
   }
   auto changed = edit_state(next.ok(), edit_new_state);
-  auto tree = std::make_shared<vm::CellUsageTree>();
   auto update = vm::MerkleUpdate::generate(prev_state, changed, tree.get());
   if (update.is_error()) {
     die("cannot generate a state update for " + b.id.to_str());
@@ -1010,14 +1012,13 @@ std::string Exporter::mutate(const std::string &mutation, const Block &b, Inputs
   }
   if (mutation == "state_update_noop") {
     set_block(in, rebuild(b, [&](auto &blk, auto &, auto &) {
-                const auto &chain = b.info.not_master ? base_ : mc_;
-                const auto &prev = chain.at(b.info.seq_no - 1).second;
-                auto tree = std::make_shared<vm::CellUsageTree>();
-                auto update = vm::MerkleUpdate::generate(prev, prev, tree.get());
-                if (update.is_error()) {
-                  die("cannot generate a state update");
+                // The archived update's old side as both sides: the update leaves the state unchanged.
+                auto sides = vm::load_cell_slice_special(b.state_update);
+                Cell noop = vm::CellBuilder::create_merkle_update(sides.prefetch_ref(0), sides.prefetch_ref(0));
+                if (noop.is_null()) {
+                  die("cannot build a state update");
                 }
-                blk.state_update = update.move_as_ok();
+                blk.state_update = noop;
               }));
     return "state update leaves the previous state unchanged";
   }
