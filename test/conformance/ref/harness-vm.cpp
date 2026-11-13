@@ -1,5 +1,6 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
 // vm harness: one program on vm::VmState (schema/harness/vm-v1.schema.json).
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -28,6 +29,10 @@ td::Result<std::string> run_vm(td::JsonObject &ctx) {
   TRY_RESULT(gas_credit, gas.get_optional_long_field("credit", 0));
   if (gas_limit < 0 || gas_max < 0 || gas_credit < 0) {
     return td::Status::Error("gas values must be non-negative");
+  }
+  // GasLimits adds limit and credit unchecked; refuse contexts where that would overflow.
+  if (gas_limit > std::numeric_limits<long long>::max() - gas_credit) {
+    return td::Status::Error("gas limit plus credit exceeds 63 bits");
   }
   TRY_RESULT(data, conformance::optional_boc(ctx, "data"));
   td::Ref<vm::Tuple> c7;

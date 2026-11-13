@@ -67,6 +67,24 @@ Any BOC field may be a reference `{"blob": "<sha256 of the BOC bytes>"}` into `<
 before a context reaches a target; `validate` requires every reference to resolve, every blob to be used and
 every digest to match its content.
 
+## External vectors
+
+Most fixtures live in a separate repository, pinned by commit in `VECTORS`; the tree keeps a small seed set
+(`vectors/`) so the gate also runs without it. To run everything:
+
+```
+test/conformance/fetch-vectors.sh ../conformance-vectors        # clone and check out the pinned commit
+cmake -S . -B build -DCONFORMANCE_VECTORS_DIR=$PWD/../conformance-vectors
+ctest --test-dir build -L '^conformance$'
+```
+
+`conformance-vectors-pin` requires the checkout to be at the pinned commit, without local changes, with
+`MANIFEST.json` listing exactly the files present (`runner/vectors_pin.py check`). Without
+`CONFORMANCE_VECTORS_DIR`, `conformance-vectors-external` is reported as skipped. Updating vectors: change
+them in the vectors repository, run `runner/vectors_pin.py manifest <checkout>`, commit there, and update
+`VECTORS` in the same node change. Select the default lane with `-L '^conformance$'`; other lanes have their
+own labels.
+
 ## Commands
 
 ```

@@ -684,11 +684,18 @@ def crosscheck(build: Path, fixtures_dir: Path, scratch: Path) -> int:
     return 1 if failures else 0
 
 
-def authored(fixtures_dir: Path, scratch: Path) -> int:
+def authored(fixtures_dir: Path, scratch: Path, seed_dir: Path | None = None) -> int:
     scratch.mkdir(parents=True, exist_ok=True)
 
+    def family_path(family: str) -> Path:
+        # A family is in the vectors checkout or, like vm-endstate, in the in-tree seed set.
+        for directory in (fixtures_dir, seed_dir):
+            if directory is not None and (directory / f"{family}.jsonl").exists():
+                return directory / f"{family}.jsonl"
+        raise SystemExit(f"family {family} is in neither {fixtures_dir} nor {seed_dir}")
+
     def project_to(name: str, family: str, out: Path) -> Path:
-        fixtures = read_fixtures(fixtures_dir / f"{family}.jsonl")
+        fixtures = read_fixtures(family_path(family))
         projection = FAMILIES[name].projection
         out.write_text(
             tsv([f["metadata"]["fixture_id"], *projection(f["effects"])] for f in fixtures)
@@ -769,6 +776,7 @@ def main(argv: Sequence[str]) -> int:
     authored_parser = sub.add_parser("authored")
     authored_parser.add_argument("fixtures_dir", type=Path)
     authored_parser.add_argument("scratch", type=Path)
+    authored_parser.add_argument("--seed-dir", type=Path, default=None)
     tamper = sub.add_parser("tamper-control")
     tamper.add_argument("target", type=Path)
     tamper.add_argument("fixtures_dir", type=Path)
@@ -779,7 +787,7 @@ def main(argv: Sequence[str]) -> int:
     if args.command == "crosscheck":
         return crosscheck(args.build, args.fixtures_dir, args.scratch)
     if args.command == "authored":
-        return authored(args.fixtures_dir, args.scratch)
+        return authored(args.fixtures_dir, args.scratch, args.seed_dir)
     if args.command == "tamper-control":
         return tamper_control(args.target, args.fixtures_dir, args.scratch, args.names)
     if args.command == "families":
