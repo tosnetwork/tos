@@ -25,3 +25,10 @@ add_test(NAME conformance-validate-epoch6-slice
     --mc-limit ${CONFORMANCE_ARCHIVE_SLICE})
 set_tests_properties(conformance-validate-epoch6-slice PROPERTIES
   LABELS "history-replay" TIMEOUT 1800 SKIP_RETURN_CODE 77)
+
+# Oversize contexts are refused by their encoded length before anything is decoded, a context at the
+# block bound still runs, and the process keeps answering frozen contexts.
+add_test(NAME conformance-validate-bounds
+  COMMAND ${Python3_EXECUTABLE} -B ${CONFORMANCE_DIR}/migrate/validate_bounds.py $<TARGET_FILE:conformance-ref-cli>
+    ${CONFORMANCE_DIR}/vectors)
+set_tests_properties(conformance-validate-bounds PROPERTIES LABELS "conformance" TIMEOUT 300)

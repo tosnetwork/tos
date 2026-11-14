@@ -55,6 +55,12 @@ EXPECTED = {
     "created_by_other": ("rejected", "creator_mismatch"),
     "out_msg_removed": ("rejected", "message_invalid"),
 }
+# The same for validate/rel02-negative-input.
+EXPECTED_INPUT = {
+    "gen_catchain_seqno_other": ("rejected", "validator_set_mismatch"),
+    "gen_validator_list_hash_other": ("rejected", "validator_set_mismatch"),
+    "prev_state_accounts_pruned": ("error", "pruned_input"),
+}
 
 
 def context(**changes: Any) -> dict[str, Any]:
@@ -164,22 +170,52 @@ class PositiveFamilyTests(unittest.TestCase):
 
 
 class NegativeFamilyTests(unittest.TestCase):
-    """Authored assertions on the C++ fill of validate/rel02-negative."""
+    """Authored assertions on the C++ fill of validate/rel02-negative and rel02-negative-input."""
 
-    def test_every_defect_has_its_class(self) -> None:
-        fam = family("rel02-negative")
+    def check_family(
+        self,
+        name: str,
+        mutations: tuple[tuple[int, int, str], ...],
+        expected: dict[str, tuple[str, str]],
+    ) -> None:
+        fam = family(name)
         ids = {cast(str, f["metadata"]["fixture_id"]) for f in fam.fixtures}
-        wanted = {
-            f"{'mc' if wc == -1 else 'base'}-{seqno}:{m}" for wc, seqno, m in families.MUTATIONS
-        }
+        wanted = {f"{'mc' if wc == -1 else 'base'}-{seqno}:{m}" for wc, seqno, m in mutations}
         self.assertEqual(ids, wanted)
         for fixture in fam.fixtures:
             fixture_id = cast(str, fixture["metadata"]["fixture_id"])
             kind = fixture_id.split(":", 1)[1]
             with self.subTest(fixture=fixture_id):
                 effects = cast(dict[str, Any], fixture["effects"])
-                self.assertEqual((effects["outcome"], effects["reason"]), EXPECTED[kind])
-        self.assertEqual({m for _, _, m in families.MUTATIONS}, set(EXPECTED))
+                self.assertEqual((effects["outcome"], effects["reason"]), expected[kind])
+        self.assertEqual({m for _, _, m in mutations}, set(expected))
+
+    def test_every_defect_has_its_class(self) -> None:
+        self.check_family("rel02-negative", families.MUTATIONS, EXPECTED)
+
+    def test_every_input_defect_has_its_class(self) -> None:
+        self.check_family("rel02-negative-input", families.INPUT_MUTATIONS, EXPECTED_INPUT)
+
+    def test_pruned_context_carries_a_pruned_state(self) -> None:
+        """The pruned_input context is refused for a cell missing from its proof, not a missing state."""
+        fam = family("rel02-negative-input")
+        for fixture, ctx in zip(fam.fixtures, fam.contexts(), strict=True):
+            if cast(str, fixture["metadata"]["fixture_id"]).endswith(":prev_state_accounts_pruned"):
+                served = {json.dumps(s["block"], sort_keys=True) for s in ctx["states"]}
+                self.assertIn(json.dumps(ctx["prev"][0], sort_keys=True), served)
+                break
+        else:
+            self.fail("no prev_state_accounts_pruned fixture")
+
+    def test_every_reason_class_is_reached(self) -> None:
+        """Every class but unclassified is the effect of some frozen fixture."""
+        reached: set[str] = set()
+        for path in sorted(VECTORS.glob("*.jsonl")):
+            for fixture in c.load_family(path).fixtures:
+                effects = cast(dict[str, Any], fixture["effects"])
+                if "reason" in effects:
+                    reached.add(cast(str, effects["reason"]))
+        self.assertEqual(set(h.REASONS) - reached, {"unclassified"})
 
 
 class SliceCheckTests(unittest.TestCase):

@@ -19,6 +19,10 @@ target_link_libraries(conformance-ref PRIVATE emulator git)
 # against different globals (seen as wrong gas on two REL-02 elector transactions).
 set_target_properties(conformance-ref PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 target_link_options(conformance-ref PRIVATE -Wl,--exclude-libs,ALL)
+# The node's wall clock, td::Clocks::system(), goes through ref/net-node.cpp, which a net context can fix
+# (FixedClock); every other caller gets the real clock. The fuzz libraries (parts/fuzz.cmake) link the same.
+set(CONFORMANCE_CLOCK_WRAP -Wl,--wrap=_ZN2td6Clocks6systemEv)
+target_link_options(conformance-ref PRIVATE ${CONFORMANCE_CLOCK_WRAP})
 add_executable(conformance-ref-cli ${CONFORMANCE_REF_DIR}/conformance-ref-cli.cpp)
 target_link_libraries(conformance-ref-cli PRIVATE conformance-ref)
 

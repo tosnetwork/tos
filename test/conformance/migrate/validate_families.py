@@ -3,11 +3,15 @@
 """validate harness contexts from archived history (docs/validate.md).
 
     validate_families.py families <conformance-validate-export> <conformance-ref-cli> <vectors dir>
-                         --epoch5 ROOT=SHA256LIST --epoch6 ROOT=SHA256LIST --inputs DIR --corpus DIR
+                         --epoch5 ROOT=SHA256LIST [--epoch6 ROOT=SHA256LIST] --inputs DIR --corpus DIR
+                         [--family NAME ...]
         Export and fill the frozen families: rel02-chain (every REL-02 corpus block that has complete
-        history), epoch6-slice (EPOCH6_RANGES of the epoch-6 network) and rel02-negative (MUTATIONS of
-        two corpus blocks). The positive contexts must be accepted by the exporter before they are
-        filled; ``conformance.py create`` then fills every effect from the reference.
+        history), epoch6-slice (EPOCH6_RANGES of the epoch-6 network), rel02-negative (MUTATIONS of
+        three corpus blocks) and rel02-negative-input (INPUT_MUTATIONS: the served-state and
+        validator-set refusals). The positive contexts must be accepted by the exporter before they are
+        filled; ``conformance.py create`` then fills every effect from the reference. --family limits
+        the run to the named families (--epoch6 is needed only for epoch6-slice). Each family is
+        exported in its own run, so the Merkle proofs of one family never depend on another's contexts.
     validate_families.py slice <conformance-validate-export> <target> <work dir>
                          --packs ROOT=SHA256LIST --zerostate MC.boc --basestate BASE.boc --mc-limit N
         Export every block of masterchain 1..N (and the shard blocks referencing them) of one archived
@@ -86,6 +90,20 @@ MUTATIONS: tuple[tuple[int, int, str], ...] = (
     ),
     (-1, OUT_MSG_BLOCK, "out_msg_removed"),
 )
+# Defects of what the validation is given rather than of the block's contents, kept apart from MUTATIONS
+# so that adding them leaves the proofs of rel02-negative unchanged: a header that declares another
+# catchain seqno or validator list hash than the set computed from validator_set_from, and the previous
+# (masterchain) state of a masterchain block served as a Merkle proof without the accounts dictionary
+# the validation reads.
+INPUT_MUTATIONS: tuple[tuple[int, int, str], ...] = (
+    *(
+        (wc, seqno, m)
+        for wc, seqno in ((-1, MC_BLOCK), (0, BASE_BLOCK))
+        for m in ("gen_catchain_seqno_other", "gen_validator_list_hash_other")
+    ),
+    (-1, MC_BLOCK, "prev_state_accounts_pruned"),
+)
+FAMILIES = ("rel02-chain", "epoch6-slice", "rel02-negative", "rel02-negative-input")
 CORPUS_BLOCK = re.compile(r"^blocks/(-?\d+)-(\d+)\.boc$")
 
 
@@ -164,26 +182,45 @@ def create_family(
 
 def families(args: argparse.Namespace) -> int:
     inputs = Path(args.inputs)
+    selected = cast(list[str], args.family or list(FAMILIES))
+    if "epoch6-slice" in selected and not args.epoch6:
+        raise ExportError("epoch6-slice needs --epoch6")
     covered, excluded = rel02_targets(Path(args.corpus))
     print(
         f"REL-02: {len(covered)} blocks with complete history, {len(excluded)} without: {excluded}"
     )
+    exported: dict[str, tuple[str, list[Json]]] = {}
     with tempfile.TemporaryDirectory(prefix="conformance-validate-") as directory:
         work = Path(directory)
         e5_packs, _ = archive.verified_packs(args.epoch5, True, EPOCH5_HISTORY_END)
         e5 = (inputs / "epoch-5" / "zerostate.boc", inputs / "epoch-5" / "basestate0.boc")
-        rel02 = export(args.exporter, e5_packs, *e5, work, "rel02-chain", targets=tuple(covered))
-        require_accepted_by_exporter(rel02, "rel02-chain")
-        negative = export(args.exporter, e5_packs, *e5, work, "rel02-negative", mutations=MUTATIONS)
-        last = max(int(r.split("-")[1]) for r in EPOCH6_RANGES)
-        e6_packs, _ = archive.verified_packs(args.epoch6, True, last + 101)
-        e6 = (inputs / "epoch-6" / "zerostate.boc", inputs / "epoch-6" / "basestate0.boc")
-        slice6 = export(args.exporter, e6_packs, *e6, work, "epoch6-slice", ranges=EPOCH6_RANGES)
-        require_accepted_by_exporter(slice6, "epoch6-slice")
+        if "rel02-chain" in selected:
+            rel02 = export(
+                args.exporter, e5_packs, *e5, work, "rel02-chain", targets=tuple(covered)
+            )
+            require_accepted_by_exporter(rel02, "rel02-chain")
+            exported["rel02-chain"] = ("replay", rel02)
+        if "epoch6-slice" in selected:
+            last = max(int(r.split("-")[1]) for r in EPOCH6_RANGES)
+            e6_packs, _ = archive.verified_packs(args.epoch6, True, last + 101)
+            e6 = (inputs / "epoch-6" / "zerostate.boc", inputs / "epoch-6" / "basestate0.boc")
+            slice6 = export(
+                args.exporter, e6_packs, *e6, work, "epoch6-slice", ranges=EPOCH6_RANGES
+            )
+            require_accepted_by_exporter(slice6, "epoch6-slice")
+            exported["epoch6-slice"] = ("replay", slice6)
+        for name, mutations in (
+            ("rel02-negative", MUTATIONS),
+            ("rel02-negative-input", INPUT_MUTATIONS),
+        ):
+            if name in selected:
+                entries = export(args.exporter, e5_packs, *e5, work, name, mutations=mutations)
+                exported[name] = ("authored", entries)
     vectors = Path(args.vectors)
-    create_family(args.reference, vectors, "rel02-chain", "replay", rel02)
-    create_family(args.reference, vectors, "epoch6-slice", "replay", slice6)
-    create_family(args.reference, vectors, "rel02-negative", "authored", negative)
+    for name in FAMILIES:
+        if name in exported:
+            source, entries = exported[name]
+            create_family(args.reference, vectors, name, source, entries)
     return 0
 
 
@@ -250,9 +287,10 @@ def main(argv: list[str]) -> int:
     fam.add_argument("reference")
     fam.add_argument("vectors")
     fam.add_argument("--epoch5", required=True)
-    fam.add_argument("--epoch6", required=True)
+    fam.add_argument("--epoch6")
     fam.add_argument("--inputs", required=True)
     fam.add_argument("--corpus", required=True)
+    fam.add_argument("--family", action="append", choices=FAMILIES)
     sl = sub.add_parser("slice")
     sl.add_argument("exporter")
     sl.add_argument("target")

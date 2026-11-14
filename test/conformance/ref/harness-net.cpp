@@ -53,7 +53,6 @@ constexpr ReasonRule kReasonRules[] = {
     // Datagram routing and decryption.
     {"message too short", "datagram_short"},
     {"unknown dst", "unknown_destination"},
-    {"unknown channel", "unknown_channel"},
     {"message is too short", "ciphertext_short"},
     {"sha256 mismatch after decryption", "digest_mismatch"},
     // Keys and signatures.
@@ -90,6 +89,8 @@ constexpr ReasonRule kReasonRules[] = {
     {"local decrypt budget exceeded", "local_budget"},
     // Overlay.
     {"invalid overlay node flags or certificate", "overlay_node_invalid"},
+    {"in private overlay from unknown source", "overlay_unknown_source"},
+    {"broadcasts are not enabled", "broadcast_disabled"},
     // FEC parameters and symbols.
     {"symbol_size below floor", "fec_symbol_size_small"},
     {"symbol_size is too big", "fec_symbol_size_large"},
@@ -422,6 +423,7 @@ constexpr OpEntry kOps[] = {
     {"overlay_member_certificate", op_overlay_member_certificate},
     {"overlay_member_flags", op_overlay_member_flags},
     {"overlay_privacy_rules", op_overlay_privacy_rules},
+    {"overlay_broadcast", op_overlay_broadcast},
     {"fec_type", op_fec_type},
     {"fec_encode", op_fec_encode},
     {"fec_decode", op_fec_decode},

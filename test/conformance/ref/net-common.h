@@ -78,6 +78,7 @@ td::Result<std::string> op_preauth_gate(td::JsonObject &ctx);
 
 td::Result<std::string> op_overlay_id(td::JsonObject &ctx);
 td::Result<std::string> op_overlay_node(td::JsonObject &ctx);
+td::Result<std::string> op_overlay_broadcast(td::JsonObject &ctx);
 td::Result<std::string> op_overlay_certificate(td::JsonObject &ctx);
 td::Result<std::string> op_overlay_member_certificate(td::JsonObject &ctx);
 td::Result<std::string> op_overlay_member_flags(td::JsonObject &ctx);

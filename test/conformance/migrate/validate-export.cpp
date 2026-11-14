@@ -383,6 +383,7 @@ struct Inputs {
   BlockIdExt min_masterchain, top_masterchain, validator_set_from;
   bool skip_shard_signatures = false;
   std::map<BlockIdExt, Cell> states;  // every state the validation may ask for
+  std::map<BlockIdExt, Cell> fixed;   // states served as exactly this Merkle proof (not usage-tracked)
 };
 
 std::string collated_bytes(const std::vector<Cell> &roots) {
@@ -471,10 +472,21 @@ struct Pending {
   validate::Outcome outcome;
 };
 
+Cell virtualize(const Cell &proof, const std::string &what) {
+  auto virt = vm::MerkleProof::virtualize(proof);
+  if (virt.is_error()) {
+    die(what + ": proof does not virtualize: " + virt.error().to_string());
+  }
+  return virt.move_as_ok();
+}
+
 Pending first_run(const std::string &fixture_id, const std::string &note, Inputs in, Usage &usage) {
   std::map<BlockIdExt, Cell> tracked;
   for (const auto &[id, root] : in.states) {
     tracked[id] = usage.track(root);
+  }
+  for (const auto &[id, proof] : in.fixed) {
+    tracked[id] = virtualize(proof, fixture_id);
   }
   auto first = validate::run(request_of(in, tracked));
   if (first.is_error()) {
@@ -501,6 +513,10 @@ std::string finish(Pending &p, Usage &usage) {
     auto [proof, virt] = usage.proof(root->get_hash().bits());
     proofs[id] = proof;
     virtual_roots[id] = virt;
+  }
+  for (const auto &[id, proof] : p.in.fixed) {
+    proofs[id] = proof;
+    virtual_roots[id] = virtualize(proof, p.fixture_id);
   }
   auto second = validate::run(request_of(p.in, virtual_roots));
   if (second.is_error()) {
@@ -805,6 +821,21 @@ Cell rebuild_with_state(const Block &b, const Cell &prev_state,
   });
 }
 
+// Hashes of the cells of `cell` that `tree` saw loaded (the read set a usage-tree Merkle proof keeps).
+void collect_read(const Cell &cell, const vm::CellUsageTree &tree, vm::CellUsageTree::NodeId node,
+                  std::set<vm::Cell::Hash> &read) {
+  // Walked per usage node, not per distinct cell: a cell reached along two paths may be read further
+  // along one of them. The usage tree only has nodes for loaded paths, so the walk is bounded by it.
+  if (node == 0 || !tree.is_loaded(node)) {
+    return;
+  }
+  read.insert(cell->get_hash());
+  vm::CellSlice cs(vm::NoVm(), cell);
+  for (unsigned i = 0; i < cs.size_refs(); i++) {
+    collect_read(cs.prefetch_ref(i), tree, tree.get_child(node, i), read);
+  }
+}
+
 Cell dict_cell(vm::AugmentedDictionary &dict) {
   vm::CellBuilder cb;
   if (!dict.append_dict_to_bool(cb)) {
@@ -1021,6 +1052,57 @@ std::string Exporter::mutate(const std::string &mutation, const Block &b, Inputs
                 blk.state_update = noop;
               }));
     return "state update leaves the previous state unchanged";
+  }
+  if (mutation == "gen_catchain_seqno_other") {
+    set_block(in, rebuild(b, [&](auto &, auto &info, auto &) { info.gen_catchain_seqno += 1; }));
+    return "the header declares catchain seqno + 1 (not the validator set's)";
+  }
+  if (mutation == "gen_validator_list_hash_other") {
+    set_block(in, rebuild(b, [&](auto &, auto &info, auto &) { info.gen_validator_list_hash_short ^= 1; }));
+    return "the header declares a validator list hash with its lowest bit flipped (not the validator set's)";
+  }
+  if (mutation == "prev_state_accounts_pruned") {
+    // The previous state of a masterchain block (also the masterchain state its validation reads) is
+    // served as a Merkle proof of what validating the archived block reads of it, with the accounts
+    // dictionary cut off as well: the first read of an account meets a pruned branch. (For a shard block
+    // the same cut fails the state update first, which is not a read of a missing cell.)
+    if (b.info.not_master) {
+      die(mutation + " applies to masterchain blocks only");
+    }
+    const BlockIdExt target = in.prev[0];
+    auto it = in.states.find(target);
+    if (it == in.states.end()) {
+      die("no state of " + target.to_str() + " for " + b.id.to_str());
+    }
+    const Cell state = it->second;
+    auto tree = std::make_shared<vm::CellUsageTree>();
+    std::map<BlockIdExt, Cell> served = in.states;
+    served[target] = vm::UsageCell::create(state, tree->root_ptr());
+    auto run = validate::run(request_of(in, served));
+    if (run.is_error()) {
+      die(b.id.to_str() + ": " + run.error().to_string());
+    }
+    if (run.ok().verdict != validate::Verdict::accepted) {
+      die(b.id.to_str() + " is not accepted with complete states: " + run.ok().message);
+    }
+    std::set<vm::Cell::Hash> read;
+    collect_read(state, *tree, tree->root_id(), read);
+    block::gen::ShardStateUnsplit::Record record;
+    if (!tlb::unpack_cell(state, record)) {
+      die("cannot unpack the state of " + target.to_str());
+    }
+    const auto accounts = record.accounts->get_hash();
+    if (read.count(accounts) == 0) {
+      die("validating " + b.id.to_str() + " does not read the accounts of " + target.to_str());
+    }
+    auto proof = vm::MerkleProof::generate(
+        state, [&](const Cell &cell) { return cell->get_hash() == accounts || read.count(cell->get_hash()) == 0; });
+    if (proof.is_error()) {
+      die("pruned proof of " + target.to_str() + ": " + proof.error().to_string());
+    }
+    in.states.erase(target);
+    in.fixed[target] = proof.move_as_ok();
+    return "the previous state is a Merkle proof of what the validation reads, without the accounts dictionary";
   }
   if (mutation == "candidate_file_hash") {
     in.candidate.file_hash.as_slice()[0] ^= 1;
