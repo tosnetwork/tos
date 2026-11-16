@@ -36,7 +36,7 @@ the ones before it are already public.
 | 7 | contributions, in any order, each signed | participant | contribution 1 accepted; see participant-contribution-1/RECEIPT.json |
 | 8 | close contributions at the close height; apply the later beacon; independent signed PASS before final publication | project and independent verifier | independent signed PASS and project verification passed; final parameters published |
 
-## If you are going to contribute
+## Historical participant instructions (ceremony closed)
 
 **[`PARTICIPANT-GUIDE.md`](PARTICIPANT-GUIDE.md)** — every command, from an
 empty VPS to a published attestation. It assumes you have never seen this
