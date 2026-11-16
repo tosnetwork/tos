@@ -2,9 +2,10 @@
 
 > **HISTORICAL GUIDE — CEREMONY 2 IS CLOSED.** The 2026-10-19 contribution window ended at Bitcoin height 972111; no new contribution can be appended to this ceremony. For a future round, start at the [next-round participation entry point](../../doc/shielded-pool-next-ceremony-participate.md), which is **NOT OPEN** until an independently published new announcement names its source, roster, close and reward rules. Do not reuse any ceremony 2 input, source commit, deadline or beacon.
 
-Every command on this page can be copied and pasted. It assumes a fresh
-**Ubuntu 24.04** or **Debian 12** server and that you have never seen this
-repository before.
+The commands below are preserved for **historical audit and adaptation only**;
+do not run them against the closed ceremony 2. For a *new* ceremony, first obtain
+the new immutable announcement and follow the linked next-round entry point.
+These examples assume a fresh **Ubuntu 24.04** or **Debian 12** server.
 
 You need about **25 minutes**, most of it waiting, and no prior knowledge of
 the cryptography.
