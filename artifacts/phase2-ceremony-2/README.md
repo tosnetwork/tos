@@ -1,5 +1,7 @@
 # Phase-2 ceremony 2 — final parameters published; not deployed
 
+> **For potential new contributors:** this is the **completed historical ceremony 2**, not an active campaign. See the [next-round participant and reward guide](../../doc/shielded-pool-next-ceremony-participate.md), currently **NOT OPEN**, before inviting anyone to contribute. The historical close at Bitcoin height 972111 cannot be extended.
+
 **Status: ceremony 2 is complete. The independent participant's signed PASS
 has been verified and the project's own verification reproduces the same key
 and transcript digest. Final ceremony parameters are published here.
