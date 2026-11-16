@@ -1,6 +1,6 @@
 # Contributing to the ceremony, from a bare VPS
 
-> **HISTORICAL GUIDE — CEREMONY 2 IS CLOSED.** The 2026-10-19 contribution window ended at Bitcoin height 972111; no new contribution can be appended to this ceremony. For a future round, start at the [next-round participation entry point](../../doc/shielded-pool-next-ceremony-participate.md), which is **NOT OPEN** until an independently published new announcement names its source, roster, close and reward rules. Do not reuse any ceremony 2 input, source commit, deadline or beacon.
+> **HISTORICAL GUIDE — CEREMONY 2 IS CLOSED.** The 2026-10-19 contribution window ended at Bitcoin height 972111; no new contribution can be appended to this ceremony. [Ceremony 3 registration is open until 2026-11-23 07:42 UTC (16:42 JST)](https://github.com/tosnetwork/tos/issues/483), but its **cryptographic contribution phase is NOT OPEN**. Follow the [Ceremony 3 participant entry point](../../doc/shielded-pool-next-ceremony-participate.md) for current requirements; never reuse ceremony 2 inputs, source commit, deadline or beacon.
 
 The commands below are preserved for **historical audit and adaptation only**;
 do not run them against the closed ceremony 2. For a *new* ceremony, first obtain
