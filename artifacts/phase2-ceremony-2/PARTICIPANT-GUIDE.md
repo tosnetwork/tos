@@ -1,8 +1,11 @@
 # Contributing to the ceremony, from a bare VPS
 
-Every command on this page can be copied and pasted. It assumes a fresh
-**Ubuntu 24.04** or **Debian 12** server and that you have never seen this
-repository before.
+> **HISTORICAL GUIDE — CEREMONY 2 IS CLOSED.** The 2026-10-19 contribution window ended at Bitcoin height 972111; no new contribution can be appended to this ceremony. [Ceremony 3 registration is open until 2026-11-23 07:42 UTC (16:42 JST)](https://github.com/tosnetwork/tos/issues/483), but its **cryptographic contribution phase is NOT OPEN**. Follow the [Ceremony 3 participant entry point](../../doc/shielded-pool-next-ceremony-participate.md) for current requirements; never reuse ceremony 2 inputs, source commit, deadline or beacon.
+
+The commands below are preserved for **historical audit and adaptation only**;
+do not run them against the closed ceremony 2. For a *new* ceremony, first obtain
+the new immutable announcement and follow the linked next-round entry point.
+These examples assume a fresh **Ubuntu 24.04** or **Debian 12** server.
 
 You need about **25 minutes**, most of it waiting, and no prior knowledge of
 the cryptography.

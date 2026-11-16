@@ -1,5 +1,7 @@
 # Phase-2 ceremony 2 — final parameters published; not deployed
 
+> **For potential new contributors:** this is the **completed historical ceremony 2**, not an active campaign. [Ceremony 3 registration is OPEN](https://github.com/tosnetwork/tos/issues/483) from 2026-11-16 07:42 UTC to 2026-11-23 07:42 UTC; its **cryptographic contribution phase is NOT OPEN**. See the [Ceremony 3 participation and reward guide](../../doc/shielded-pool-next-ceremony-participate.md). This ceremony's historical close at Bitcoin height 972111 cannot be extended.
+
 **Status: ceremony 2 is complete. The independent participant's signed PASS
 has been verified and the project's own verification reproduces the same key
 and transcript digest. Final ceremony parameters are published here.
@@ -34,7 +36,7 @@ the ones before it are already public.
 | 7 | contributions, in any order, each signed | participant | contribution 1 accepted; see participant-contribution-1/RECEIPT.json |
 | 8 | close contributions at the close height; apply the later beacon; independent signed PASS before final publication | project and independent verifier | independent signed PASS and project verification passed; final parameters published |
 
-## If you are going to contribute
+## Historical participant instructions (ceremony closed)
 
 **[`PARTICIPANT-GUIDE.md`](PARTICIPANT-GUIDE.md)** — every command, from an
 empty VPS to a published attestation. It assumes you have never seen this
