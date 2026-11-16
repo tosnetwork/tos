@@ -1,43 +1,53 @@
-# TOS Shielded-Pool Trusted Setup — Next-Round Participant Guide
+# TOS Shielded-Pool Trusted Setup — Ceremony 3 Participant Guide
 
-> **NOT OPEN — onboarding information only (2026-11-16).**
-> No new ceremony is announced by this document. **Do not generate or submit a contribution yet.**
-> The [2026-10-19 ceremony 2](../artifacts/phase2-ceremony-2/README.md) is **complete and closed**.
-> Its old announcement, roster, source commit, Bitcoin closing/beacon heights,
-> and ceremony data must **not** be reused.
-> This document is not an announcement, an extension of an old deadline, or an
-> authorization for reward payment.
+> **CEREMONY 3 REGISTRATION OPEN; CRYPTOGRAPHIC CONTRIBUTIONS NOT OPEN (2026-11-16).**
+> Independent contributor **registration** is open through
+> [GitHub Issue #483](https://github.com/tosnetwork/tos/issues/483) from
+> **2026-11-16 07:42:00 UTC (16:42 JST)** to
+> **2026-11-23 07:42:00 UTC (16:42 JST)** — precisely seven days.
+> **Do not generate, submit, or accept a cryptographic contribution yet.**
+> The [2026-10-19 ceremony 2](../artifacts/phase2-ceremony-2/README.md) is
+> complete and closed. Its source commit, roster, inputs, close and beacon
+> **must not be reused**. Registration does not guarantee a 300 TOS payment.
 
-This page is the prospective **participant entry point**, not a replacement for
-immutable historic ceremony records. It will be usable for a new round only
-after the operator publicly publishes the new, complete announcement **before
-any contribution**. The [ceremony 2 technical guide](../artifacts/phase2-ceremony-2/PARTICIPANT-GUIDE.md)
-is a reference for the tool's mechanics, **not** an active registration or
-contribution target.
+This is the **Ceremony 3 participant entry point**, consistent with the
+[public registration announcement, Issue #483](https://github.com/tosnetwork/tos/issues/483).
+Issue #483 is an **official registration notice**, not the immutable
+cryptographic-parameter announcement. A separate fixed-parameter announcement,
+fresh opening data, and audited contribution deadlines must be public **before
+the first actual contribution**. The
+[ceremony 2 technical guide](../artifacts/phase2-ceremony-2/PARTICIPANT-GUIDE.md)
+is historical reference material only, not an active contribution target.
 
-## 1. Current round identifier, announcement and deadlines
+## 1. Ceremony 3 identity, registration window and outstanding commitments
 
-| Field | Status / required value |
+| Field | Verified status / required value |
 | --- | --- |
-| New ceremony number and protocol/circuit identifier | **TBD — not assigned or approved**. Do not assume the next round is called "ceremony 3". |
-| Participation status | **CLOSED / NOT OPEN** until an independent, complete announcement is public |
-| Canonical announcement URL (immutable commit) | **TBD** |
-| Pinned TOS source commit (full SHA) and build/toolchain requirements | **TBD** |
-| Public opening parameters: phase-1 slice, starting-key and transcript digests | **TBD** |
-| Participant roster URL and pinned roster SHA-256 | **TBD** |
-| Registration policy and deadline | **TBD**, must be published before opening |
-| Contribution opening and close (UTC time and/or exact Bitcoin height) | **TBD**; a relative promise such as "this week" is not a deadline |
-| Future beacon block height and encoding | **TBD**; must be publicly fixed before it is mined |
-| Public reporting channel and operator-verification procedure | **TBD** |
-| Reward eligibility, payment network, claim channel and payout schedule | **TBD**, see section 5 |
+| Ceremony number | **Ceremony 3** (public recruitment identifier; cryptographic protocol/circuit must be pinned separately) |
+| Independent contributor registration | **OPEN** — [Issue #483](https://github.com/tosnetwork/tos/issues/483) |
+| Registration starts (UTC / JST) | **2026-11-16 07:42:00 UTC / 2026-11-16 16:42:00 JST** |
+| Registration closes (UTC / JST) | **2026-11-23 07:42:00 UTC / 2026-11-23 16:42:00 JST** |
+| Registration policy and submission channel | Follow [Issue #483](https://github.com/tosnetwork/tos/issues/483): publicly controlled SSH/GPG signing identity, own public repository, truthful independence declaration and GitHub comment |
+| Cryptographic contribution status | **NOT OPEN** — registration is not permission to generate randomness or submit a transcript |
+| Immutable cryptographic ceremony announcement (commit URL) | **TBD — not yet published**. Issue #483 is not this announcement |
+| Full pinned source commit, protocol/circuit and build/toolchain | **TBD — required before contributions** |
+| Fresh opening phase-1, starting-key and transcript digests | **TBD — required before contributions** |
+| Public contributor roster and published per-revision hashes | **TBD — must define append-only registration binding before contributions** |
+| Cryptographic contribution opening and fixed close (UTC and/or exact Bitcoin height) | **TBD — not the registration deadline above** |
+| Future Bitcoin beacon height and encoding | **TBD — fixed before the future block is mined** |
+| Public input/handoff, operator-verification and independent final-audit process | **TBD — required before contributions** |
+| 300 TOS claim channel, funding, payment network, eligibility and payout timing | **TBD — see section 5** |
 
-**Stop condition:** any TBD item needed to establish the ceremony's identity,
-precedence, valid submission window, public verification or reward eligibility
-means **do not contribute**. In particular, an operator message, a copied
-command, or the historical five-contribution record is not a replacement for
-the canonical new announcement. An announcement must be independently observable
-before the first contribution; it must not be rewritten to move a deadline or
-change the roster after opening.
+**Stop condition:** register now if eligible, but **do not contribute** while
+the cryptographic announcement, source/circuit, verified opening, exact
+contribution close and future beacon remain TBD. A registration comment, copied
+command or historical contribution record cannot substitute for these items.
+The registration deadline is fixed by Issue #483's GitHub creation timestamp;
+do not silently extend it. A separate immutable cryptographic announcement must
+be independently observable **before the first contribution**, and its fixed
+contribution-close rule must never be extended after publication. A dynamic
+participant roster is acceptable only if its public, append-only registration
+and per-contribution revision rules are precommitted and auditable.
 
 ## 2. What an independent contributor prepares in advance
 
@@ -64,7 +74,7 @@ managed environment or operator-supplied precompiled binary. A signature can
 prove key possession and message integrity; it **cannot** prove the true
 independence of a person or the destruction of a secret.
 
-## 3. How to participate **after** the new announcement is published
+## 3. How to contribute **after** the separate cryptographic announcement is published
 
 These are gates, not an invitation to start early:
 
@@ -124,14 +134,16 @@ A completed contribution is **not** proof that a ceremony is finalised or
 deployable. No project-side verification can replace a required independent
 PASS, and deployment still has its separate acceptance gate.
 
-## 5. Proposed contributor reward: 300 TOS (terms pending)
+## 5. Announced community offer: 300 TOS per verified contribution (claim terms pending)
 
-An outreach message states: **"300 TOS for each completed contribution that
-passes operator verification."** This is the current *proposed campaign
-wording*, **not yet a verified, funded or approved payout policy in this
-repository**. Do not imply an automatic on-chain transfer or guaranteed
-payment. Before recruiting contributors for rewards, the operator must
-publish an immutable campaign policy specifying:
+The [Ceremony 3 registration notice, Issue #483](https://github.com/tosnetwork/tos/issues/483)
+quotes the community offer: **"300 TOS for each completed contribution that
+passes operator verification."** This is a public recruitment offer, **not a
+verified or funded payout mechanism**. Registering alone is not reward-eligible;
+the cryptographic contribution phase is still closed. The operator must
+publish binding eligibility and payment terms **before accepting any
+reward-eligible contribution**. Do not imply an automatic on-chain transfer or
+a guaranteed payment merely for registering. The missing policy must specify:
 
 - Which new ceremony is eligible; when participation opens/closes; whether a
   person may receive more than one reward; and what counts as independent.
@@ -149,19 +161,26 @@ publish an immutable campaign policy specifying:
   refusal will be recorded.
 - How a participant receives a receipt and checks final payout independently.
 
-**Until those terms and the new announcement are public, the 300 TOS offer
-must not be represented as currently claimable.** Never ask contributors to
-pay an activation fee or reveal wallet recovery words.
+**The 300 TOS amount is publicly advertised, but cannot currently be claimed.**
+Only a completed, independently sourced and signed contribution that passes
+the published operator checks may become reward-eligible, subject to the
+announced claim terms. No payment should be described as funded, due or sent
+without evidence. Never ask contributors for an activation fee, private key or
+wallet recovery words.
 
 ## 6. Operator publication checklist
 
-Before marking this guide **OPEN**, publish an immutable announcement and
-public receipt/archival evidence; fix the roster and its SHA-256; publish
-the exact code and circuit commitments; choose a verifiably future beacon and
-fixed contribution-close condition; name independent verification and refusal
-rules; and publish the full reward/claim policy. Then replace the TBD entries
-above with **exact canonical links and values** in a separately reviewable
-documentation change.
+**Registration is already OPEN under Issue #483.** Before changing the
+*cryptographic contribution status* from **NOT OPEN** to **OPEN**, publish a
+separate immutable announcement with independently observed publication
+precedence; bind the announced source/circuit and fresh opening hashes; define
+the publicly auditable registration/roster revision policy and its signature
+verification; choose a genuinely future Bitcoin beacon and fixed
+contribution-close condition; name independent final verification and refusal
+rules; and publish funded reward/claim terms. Replace the cryptographic TBD
+fields above with **exact canonical links and values** in a separately
+reviewed change. Do not treat the registration deadline as a contribution
+deadline or silently alter the historical ceremony 2 record.
 
 Do not edit or reinterpret the immutable [ceremony 2 announcement](../artifacts/phase2-ceremony-2/ANNOUNCEMENT.md)
 or append contributions to the closed 2026-10-19 transcript.
