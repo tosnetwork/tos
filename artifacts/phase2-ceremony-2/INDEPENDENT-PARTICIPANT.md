@@ -1,5 +1,7 @@
 # Independent participant: contribute once, then verify independently
 
+> **HISTORICAL — not an open invitation.** Ceremony 2 completed in October 2026. The [next-round participant entry point](../../doc/shielded-pool-next-ceremony-participate.md) currently states **NOT OPEN**; it requires a new canonical announcement and deadlines before anyone contributes. Do not reuse ceremony 2's pinned keys, roster, source, or closing heights.
+
 You are both a contributor and the independent verifier. Setup security requires
 at least one contributor to destroy unpredictable secret randomness; verification
 alone cannot prove destruction. Independence means the project neither controls
