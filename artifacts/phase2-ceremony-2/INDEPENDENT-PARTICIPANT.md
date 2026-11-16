@@ -1,6 +1,6 @@
 # Independent participant: contribute once, then verify independently
 
-> **HISTORICAL — not an open invitation.** Ceremony 2 completed in October 2026. The [next-round participant entry point](../../doc/shielded-pool-next-ceremony-participate.md) currently states **NOT OPEN**; it requires a new canonical announcement and deadlines before anyone contributes. Do not reuse ceremony 2's pinned keys, roster, source, or closing heights.
+> **HISTORICAL — ceremony 2 is closed.** Ceremony 3 [independent contributor registration](https://github.com/tosnetwork/tos/issues/483) is **OPEN** from 2026-11-16 07:42 UTC to 2026-11-23 07:42 UTC, but cryptographic contributions are **NOT OPEN** until a new immutable parameter announcement. Follow the [Ceremony 3 entry point](../../doc/shielded-pool-next-ceremony-participate.md) rather than reusing ceremony 2's pinned keys, roster, source or close.
 
 You are both a contributor and the independent verifier. Setup security requires
 at least one contributor to destroy unpredictable secret randomness; verification
