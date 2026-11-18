@@ -1,8 +1,9 @@
-# SHA-256 SHA-NI transform import
+# Hardware SHA-256 transform import
 
 Source: https://github.com/bitcoin/bitcoin
-Revision: `a773e1e33b349dc819b5a0edc1c7a4839dc73b48` (the transform file last changed in
-`bdb8eadcdc193f398ebad83911d3297b5257e721`).
+Revision: `a773e1e33b349dc819b5a0edc1c7a4839dc73b48` (the x86-64 transform file last changed in
+`bdb8eadcdc193f398ebad83911d3297b5257e721`, the ARMv8 one in
+`86718e4589682529932050dc08998fbb7bd86cef`).
 License: MIT (see COPYING).
 Imported files are byte-for-byte copies; SHA256SUMS records the import boundary. Each file's Git
 blob id equals the upstream blob id at the revision above.
@@ -10,7 +11,8 @@ blob id equals the upstream blob id at the revision above.
 | Imported file | Upstream path |
 |---|---|
 | `sha256_x86_shani.cpp` | `src/crypto/sha256_x86_shani.cpp` |
-| `attributes.h` | `src/attributes.h` (its only non-standard include; defines `ALWAYS_INLINE`) |
+| `sha256_arm_shani.cpp` | `src/crypto/sha256_arm_shani.cpp` (includes only standard headers and `<arm_neon.h>`) |
+| `attributes.h` | `src/attributes.h` (the only non-standard include of `sha256_x86_shani.cpp`; defines `ALWAYS_INLINE`) |
 | `COPYING` | `COPYING` |
 
 Why: the SLH-DSA verifier spends nearly all of its time in SHA-256 compressions. Its SHA-NI path
