@@ -42,7 +42,7 @@ running unrelated workloads.
 | Resource | Testnet / development minimum | Recommended production configuration (aligned with mainnet-scale networks) |
 |----------|-----------------------|---------------------------------------|
 | CPU | 2 physical or virtual cores | 16 dedicated cores (32 threads preferred); 8 cores / 16 threads is the lower baseline of the reference implementation |
-| CPU instruction set | x86-64 with SHA (SHA-NI), SSSE3, SSE4.1 and SSE4.2 visible to the host or guest; see [CPU instruction set](#cpu-instruction-set) | Same as testnet; validators without SHA-NI are not allowed |
+| CPU instruction set | x86-64 with SHA (SHA-NI), SSSE3, SSE4.1 and SSE4.2 visible to the host or guest; arm64 is not allowed for a validator; see [CPU instruction set](#cpu-instruction-set) | Same as testnet; validators without SHA-NI are not allowed |
 | Memory | 4 GB RAM | 128 GB RAM |
 | Storage | 100 GB SSD | 2 × 1.92 TB enterprise NVMe SSD; target at least 250k read IOPS and 83k write IOPS per device |
 | Network | 10 Mbps symmetric bandwidth; a public IPv4 address is strongly preferred | 1 Gbps symmetric bandwidth with a fixed public IP |
@@ -69,6 +69,15 @@ for the SHA-NI SHA-256 backend: 4,500 gas plus its cell loads, against roughly
 about three times as long. A validator using it would spend far more time on
 these checks than the gas they pay for, and could fall behind on blocks full of
 them.
+
+An arm64 host is not allowed as a validator. The only accelerated SHA-256
+backend is the x86-64 SHA-NI one; on arm64 the verifier uses the portable
+backend, at the cost described above. The arm64 binaries of a release,
+`validator-engine` included, are for full nodes, the wallet services, DHT
+servers and tools, which follow the chain and do not have to keep a validator's
+block deadlines. Allowing arm64 validators needs an accelerated arm64 backend
+and its measurements on the production hardware class first, because the price
+of the check must hold on the slowest permitted validator.
 
 The backend is chosen at run time from CPUID (`crypto/pq/slhdsa-sha256.c`). Linux
 x86-64 builds with GCC or Clang include the SHA-NI backend by default
