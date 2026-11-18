@@ -409,8 +409,8 @@ name (`validator-engine`, ..., `dht-server`, `tos-rpc`, `tos-wallet-index`,
 checks the zip against that digest and each binary against its member, or
 against `SHA256SUMS`, which the same publisher job writes.
 `release-provenance.json` records the digest of each artifact zip and, under
-`assets`, the SHA-256 of every other published file (releases after
-`v2026.11`).
+`assets`, the SHA-256 of every published asset, that is every file except
+itself and `SHA256SUMS` (releases after `v2026.11`).
 
 The node binaries are plain ELF executables, not AppImages, built by
 `.github/workflows/build-tos-linux-node-binaries.yml` with
