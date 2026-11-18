@@ -142,6 +142,9 @@ Differences from Linux, by design:
 - The conformance reference library needs GNU ld's `--wrap` and is not built.
 - File durability uses `F_FULLFSYNC`, birth time comes from `stat`, and the
   node data tools read process descriptors through libproc instead of `/proc`.
+- The `native` feature of `node-data-sync` runs the database engine in a
+  Linux sandbox (network namespace, bind mounts, parent-death signal) and is
+  built on Linux only; its default features build and pass on macOS.
 - Run Rust tests with `TMPDIR=/private/tmp`: the default macOS temporary
   directory is reached through the `/var` symlink and is not root-owned, and
   the node data tools refuse such a path.

@@ -788,7 +788,9 @@ fn remove_child(parent: i32, name: &std::ffi::CStr, remaining: &mut usize) -> Re
         {
             return Ok(());
         }
-        Err(error) => return Err(error.context("refusing unsafe cleanup child")),
+        // One message carrying the cause, as callers and operators read it:
+        // "refusing unsafe cleanup child: <the refusal>".
+        Err(error) => return Err(anyhow::anyhow!("refusing unsafe cleanup child: {error:#}")),
     };
     let meta = file.metadata()?;
     if meta.is_dir() {
