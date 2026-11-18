@@ -502,6 +502,12 @@ The publisher then:
    for a maintainer to inspect: deleting an immutable release makes its tag
    unusable for good, and such a failure says nothing about the tag.
 
+GitHub's release listing can lag a write by a moment, so a step that expects
+a draft or a published release reads the listing again, up to ten times six
+seconds apart, before it refuses (`LISTING_ATTEMPTS` in
+`scripts/release-artifacts.py`). The first check, which expects no release,
+reads it once.
+
 Runs for the same tag are serialized: both publishers share the workflow
 concurrency group `publish-release-<tag>` with `cancel-in-progress: false`.
 A second run waits for the first and is then refused at step 2, because the

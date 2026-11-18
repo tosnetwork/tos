@@ -41,6 +41,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -315,6 +316,13 @@ def resolve_remote_tag(api: Api, *, repo: str, tag: str) -> str:
 
 
 RELEASE_STATES = ("none", "draft", "published")
+# GitHub's release listing can lag a write by a moment: a draft created, filled
+# or published one step earlier may not be listed, or be listed in its earlier
+# state. A step that expects a release therefore reads the listing again, this
+# many times at most, before it refuses.
+LISTING_ATTEMPTS = 10
+LISTING_WAIT_SECONDS = 6.0
+_sleep = time.sleep
 
 
 def staged_digests(assets_dir: Path) -> dict[str, tuple[int, str]]:
@@ -341,11 +349,32 @@ def check_release_state(
     """
     if state not in RELEASE_STATES:
         raise ReleaseError(f"release state {state!r} is not one of {list(RELEASE_STATES)}")
-    releases = [
-        release
-        for release in api.get_all(f"repos/{repo}/releases?per_page=100")
-        if release.get("tag_name") == tag
-    ]
+
+    def listed() -> list[dict[str, Any]]:
+        return [
+            release
+            for release in api.get_all(f"repos/{repo}/releases?per_page=100")
+            if release.get("tag_name") == tag
+        ]
+
+    expected = staged_digests(assets_dir) if assets_dir is not None else None
+
+    def as_expected(found: list[dict[str, Any]]) -> bool:
+        if len(found) != 1 or bool(found[0].get("draft")) != (state == "draft"):
+            return False
+        if expected is None:
+            return True
+        return {asset.get("name") for asset in found[0].get("assets") or []} == set(expected)
+
+    releases = listed()
+    if state != "none":
+        # Only a listing that may still be catching up is read again: more
+        # than one release for the tag is refused at once.
+        for _ in range(LISTING_ATTEMPTS - 1):
+            if as_expected(releases) or len(releases) > 1:
+                break
+            _sleep(LISTING_WAIT_SECONDS)
+            releases = listed()
     if state == "none":
         if releases:
             kinds = ", ".join(
@@ -364,9 +393,8 @@ def check_release_state(
     if is_draft != (state == "draft"):
         actual = "a draft" if is_draft else "published"
         raise ReleaseError(f"the release for {tag} is {actual}, expected {state}")
-    if assets_dir is None:
+    if expected is None:
         return
-    expected = staged_digests(assets_dir)
     uploaded = {asset.get("name"): asset for asset in release.get("assets") or []}
     if set(uploaded) != set(expected):
         raise ReleaseError(
