@@ -346,6 +346,9 @@ def check_release_state(
                SHA-256, and a digest GitHub reports must be well formed and
                agree. Name and size alone never stand in for the content.
     published  exactly one release for the tag, published, likewise complete
+
+    For draft and published the listing is read again, LISTING_ATTEMPTS times
+    at most, while it may still be catching up with the write just made.
     """
     if state not in RELEASE_STATES:
         raise ReleaseError(f"release state {state!r} is not one of {list(RELEASE_STATES)}")
@@ -373,6 +376,11 @@ def check_release_state(
         for _ in range(LISTING_ATTEMPTS - 1):
             if as_expected(releases) or len(releases) > 1:
                 break
+            print(
+                f"the release listing does not show the {state} release for {tag} yet "
+                f"({len(releases)} listed); reading it again in {LISTING_WAIT_SECONDS:g} s",
+                file=sys.stderr,
+            )
             _sleep(LISTING_WAIT_SECONDS)
             releases = listed()
     if state == "none":
