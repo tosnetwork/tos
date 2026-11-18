@@ -485,8 +485,9 @@ plain node-recipe binaries, and the AppImage versions remain inside the zip.
 
 Byte-identical output across hosts has been observed for the node binaries
 of this recipe on the testnet hosts. Two builds of `tosctl` from one checkout
-are byte-identical; the binary embeds the paths of the checkout and of the
-cargo registry, so builds from different paths differ. It has not been verified across GitHub-hosted runners, so the
+are byte-identical; the binary embeds the path of the cargo registry, so a
+build under another cargo home directory is not expected to match. Neither
+has been verified across GitHub-hosted runners, so the
 release makes no reproducibility claim; compare a host build's SHA-256 with
 the release's `SHA256SUMS` before relying on it.
 
