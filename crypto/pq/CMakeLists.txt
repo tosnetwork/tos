@@ -55,7 +55,10 @@ set_target_properties(tos_pq_consensus_signer PROPERTIES POSITION_INDEPENDENT_CO
 target_compile_features(tos_pq_consensus_signer PUBLIC cxx_std_20)
 target_include_directories(tos_pq_consensus_signer PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" PRIVATE "${TOS_MLDSA_SOURCE_DIR}/mldsa")
 target_compile_definitions(tos_pq_consensus_signer PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
-target_link_libraries(tos_pq_consensus_signer PUBLIC tos_pq_consensus PRIVATE tos_pq_consensus_signer_backend OpenSSL::Crypto)
+# consensus-key-file.h includes OpenSSL headers, so every consumer needs them from the
+# OpenSSL this links, not from whatever the system search path holds.
+target_link_libraries(tos_pq_consensus_signer PUBLIC tos_pq_consensus OpenSSL::Crypto
+                      PRIVATE tos_pq_consensus_signer_backend)
 
 # The engine's exclusive hold on the consensus key files it signs with. Only the engine
 # links it; the operator tools that read a seed offline do not take the lock.
@@ -75,8 +78,8 @@ target_include_directories(tos_pq_consensus_signer_test_clock PUBLIC "${CMAKE_CU
                            PRIVATE "${TOS_MLDSA_SOURCE_DIR}/mldsa")
 target_compile_definitions(tos_pq_consensus_signer_test_clock PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h"
                            PUBLIC TOS_PQ_SIGNER_TEST_CLOCK=1)
-target_link_libraries(tos_pq_consensus_signer_test_clock PUBLIC tos_pq_consensus
-                      PRIVATE tos_pq_consensus_signer_backend OpenSSL::Crypto)
+target_link_libraries(tos_pq_consensus_signer_test_clock PUBLIC tos_pq_consensus OpenSSL::Crypto
+                      PRIVATE tos_pq_consensus_signer_backend)
 
 
 # Provisioning for the node's consensus key. It links the same library the node loads

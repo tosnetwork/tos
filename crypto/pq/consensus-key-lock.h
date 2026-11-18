@@ -47,4 +47,9 @@ std::variant<std::shared_ptr<const ValidatorPQKeyStore>, std::string> load_locke
 // filesystem where every process that opens the file shares one kernel lock table.
 bool consensus_key_lock_supported_filesystem(std::uint64_t f_type) noexcept;
 
+// The same judgement on macOS, where statfs(2) names the filesystem in f_fstypename and
+// marks a local mount with MNT_LOCAL instead of giving a stable magic number. `local` is
+// whether MNT_LOCAL is set.
+bool consensus_key_lock_supported_darwin_filesystem(std::string_view type_name, bool local) noexcept;
+
 }  // namespace tos::pq

@@ -19,7 +19,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <climits>
 #include <dlfcn.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #include <fcntl.h>
 #include <fstream>
 #include <memory>
@@ -95,6 +99,18 @@ constexpr int kLoaded = 0;
 constexpr int kHeldElsewhere = 3;
 constexpr int kOtherRefusal = 4;
 
+// The path of this test binary, for re-executing it as a child.
+std::string self_executable() {
+#if defined(__APPLE__)
+  char buffer[PATH_MAX];
+  std::uint32_t size = sizeof(buffer);
+  assert(_NSGetExecutablePath(buffer, &size) == 0);
+  return std::string(buffer);
+#else
+  return "/proc/self/exe";
+#endif
+}
+
 std::string scratch_directory() {
   std::string pattern = "/tmp/tos-consensus-key-lock-XXXXXX";
   char* made = mkdtemp(pattern.data());
@@ -116,7 +132,7 @@ int child_verdict(const std::string& path) {
   const pid_t pid = ::fork();
   assert(pid >= 0);
   if (pid == 0) {
-    ::execl("/proc/self/exe", "test-consensus-key-lock", "--child", path.c_str(), static_cast<char*>(nullptr));
+    ::execl(self_executable().c_str(), "test-consensus-key-lock", "--child", path.c_str(), static_cast<char*>(nullptr));
     std::_Exit(99);
   }
   int status = 0;
@@ -148,7 +164,7 @@ std::pair<pid_t, int> hold_elsewhere(const std::string& path) {
     ::dup2(from_child[1], 1);
     ::close(to_child[1]);
     ::close(from_child[0]);
-    ::execl("/proc/self/exe", "test-consensus-key-lock", "--hold", path.c_str(), static_cast<char*>(nullptr));
+    ::execl(self_executable().c_str(), "test-consensus-key-lock", "--hold", path.c_str(), static_cast<char*>(nullptr));
     std::_Exit(99);
   }
   ::close(to_child[0]);
@@ -179,7 +195,7 @@ int child_verdict_within(const std::string& path, int seconds) {
   const pid_t pid = ::fork();
   assert(pid >= 0);
   if (pid == 0) {
-    ::execl("/proc/self/exe", "test-consensus-key-lock", "--child", path.c_str(), static_cast<char*>(nullptr));
+    ::execl(self_executable().c_str(), "test-consensus-key-lock", "--child", path.c_str(), static_cast<char*>(nullptr));
     std::_Exit(99);
   }
   for (int waited = 0; waited < seconds * 100; ++waited) {
@@ -341,6 +357,20 @@ int main(int argc, char** argv) {
                                0x00C36400ULL, 0x01161970ULL, 0x7461636FULL, 0x5346414FULL}) {
     assert(!consensus_key_lock_supported_filesystem(remote));
   }
+  // macOS names its filesystems: local Apple ones are supported; network mounts, FUSE
+  // mounts and anything without MNT_LOCAL are refused.
+  for (const char* local : {"apfs", "hfs"}) {
+    assert(consensus_key_lock_supported_darwin_filesystem(local, true));
+    assert(!consensus_key_lock_supported_darwin_filesystem(local, false));
+  }
+  for (const char* other : {"smbfs", "nfs", "afpfs", "webdav", "macfuse", "osxfuse", "msdos", "exfat", "devfs", "",
+                            "apfs ", "APFS"}) {
+    assert(!consensus_key_lock_supported_darwin_filesystem(other, true));
+  }
+#if defined(__APPLE__)
+  // A key on the scratch directory's local volume is accepted by the real statfs path,
+  // which the loads above already exercised.
+#else
   // A key on a refused filesystem is refused before anything is read. /proc is one the
   // engine never uses for a key, and the only refused filesystem a test can reach without
   // mounting one.
@@ -349,6 +379,7 @@ int main(int argc, char** argv) {
     assert(std::holds_alternative<std::string>(loaded));
     assert(std::get<std::string>(loaded).find("filesystem") != std::string::npos);
   }
+#endif
 
   ::unlink(key.c_str());
   ::rmdir(dir.c_str());
