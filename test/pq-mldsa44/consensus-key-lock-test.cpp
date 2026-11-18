@@ -14,12 +14,12 @@
 #undef NDEBUG  // the build is Release, and an assert that is compiled out proves nothing
 #include <atomic>
 #include <cassert>
+#include <climits>
 #include <csignal>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <climits>
 #include <dlfcn.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -363,8 +363,8 @@ int main(int argc, char** argv) {
     assert(consensus_key_lock_supported_darwin_filesystem(local, true));
     assert(!consensus_key_lock_supported_darwin_filesystem(local, false));
   }
-  for (const char* other : {"smbfs", "nfs", "afpfs", "webdav", "macfuse", "osxfuse", "msdos", "exfat", "devfs", "",
-                            "apfs ", "APFS"}) {
+  for (const char* other :
+       {"smbfs", "nfs", "afpfs", "webdav", "macfuse", "osxfuse", "msdos", "exfat", "devfs", "", "apfs ", "APFS"}) {
     assert(!consensus_key_lock_supported_darwin_filesystem(other, true));
   }
 #if defined(__APPLE__)
