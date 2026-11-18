@@ -71,13 +71,15 @@ these checks than the gas they pay for, and could fall behind on blocks full of
 them.
 
 An arm64 host is not allowed as a validator. The only accelerated SHA-256
-backend is the x86-64 SHA-NI one; on arm64 the verifier uses the portable
-backend, at the cost described above. The arm64 binaries of a release,
+backend is the x86-64 SHA-NI one; an arm64 build contains the portable backend
+only. Its verification time has not been measured on arm64 hardware, so the
+price of the check is not known to hold there. The arm64 binaries of a release,
 `validator-engine` included, are for full nodes, the wallet services, DHT
-servers and tools, which follow the chain and do not have to keep a validator's
-block deadlines. Allowing arm64 validators needs an accelerated arm64 backend
-and its measurements on the production hardware class first, because the price
-of the check must hold on the slowest permitted validator.
+servers and tools, which follow the chain and neither produce nor validate
+block candidates, so they do not have to keep a validator's block deadlines.
+Allowing arm64 validators needs an accelerated arm64 backend and its
+measurements on the production hardware class first, because the price of the
+check must hold on the slowest permitted validator.
 
 The backend is chosen at run time from CPUID (`crypto/pq/slhdsa-sha256.c`). Linux
 x86-64 builds with GCC or Clang include the SHA-NI backend by default
