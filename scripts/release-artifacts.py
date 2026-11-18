@@ -17,7 +17,8 @@ downloaded zip must match before anything is unpacked.
              from (and, with --provenance, the one the staged provenance names);
              then refuse unless the tag's releases are in --release-state: none
              before the draft is created, draft (with --assets, carrying
-             exactly the staged files) before publication, published after
+             exactly the staged files) before publication, published after.
+             Exit status 3 means the tag moved; 1 is any other refusal
 
 A tag is a mutable pointer unless the repository's tag ruleset forbids moving
 it. The publishing job therefore runs check-tag immediately before each step
@@ -59,6 +60,18 @@ MAX_TAG_NESTING = 8
 
 class ReleaseError(Exception):
     pass
+
+
+class TagMoved(ReleaseError):
+    """The tag resolves to a commit other than the one the assets were built from."""
+
+
+# check-tag exits with this status, and no other, when the tag moved: the one
+# refusal after which a published release must be withdrawn. Any other refusal
+# (a failed listing or download, a release not yet shown as published) says
+# nothing about the tag, and deleting an immutable release makes its tag
+# unusable for good.
+TAG_MOVED_STATUS = 3
 
 
 class Api(Protocol):
@@ -447,7 +460,7 @@ def check_tag(
                 )
     current = resolve_remote_tag(api, repo=repo, tag=tag)
     if current != tag_sha:
-        raise ReleaseError(
+        raise TagMoved(
             f"tag {tag} now names commit {current}, not {tag_sha} that the assets were "
             f"built from; the tag moved after the assets were collected"
         )
@@ -578,6 +591,9 @@ def main(argv: list[str] | None = None) -> int:
                 config, release_set=args.release_set, artifacts=args.artifacts, out=args.out
             ):
                 print(name)
+    except TagMoved as error:
+        print(f"RELEASE_ARTIFACTS_REFUSED: {error}", file=sys.stderr)
+        return TAG_MOVED_STATUS
     except ReleaseError as error:
         print(f"RELEASE_ARTIFACTS_REFUSED: {error}", file=sys.stderr)
         return 1

@@ -495,8 +495,12 @@ The publisher then:
    agree; name and size alone are never accepted), then **publishes it once**
    (`--release-state draft --assets`);
 5. checks the tag again and that the release is published and complete
-   (`--release-state published --assets`); on failure it deletes the release
-   and fails.
+   (`--release-state published --assets`) and fails on any refusal. It
+   deletes the release only if the tag no longer names the commit the assets
+   were built from (`check-tag` exit status 3). Any other failure of this
+   check, such as a failed listing or download, leaves the release in place
+   for a maintainer to inspect: deleting an immutable release makes its tag
+   unusable for good, and such a failure says nothing about the tag.
 
 Runs for the same tag are serialized: both publishers share the workflow
 concurrency group `publish-release-<tag>` with `cancel-in-progress: false`.
