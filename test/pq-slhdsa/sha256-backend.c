@@ -194,7 +194,8 @@ static void cpu_probe(void)
 #define HARDWARE_BACKEND "armv8-sha2"
 /* The probe accepts the ARMv8 SHA2 path exactly when AT_HWCAP carries all four bits of the
  * extensions the transform is compiled for: AES, PMULL, SHA1 and SHA2 (bits 3 to 6 of the
- * aarch64 Linux hardware capabilities). No other bit decides it, and no one of them suffices. */
+ * aarch64 Linux hardware capabilities; macOS composes the same bits from its hw.optional.arm
+ * sysctls). No other bit decides it, and no one of them suffices. */
 static void cpu_probe(void)
 {
   const unsigned long aes = 1ul << 3, pmull = 1ul << 4, sha1 = 1ul << 5, sha2 = 1ul << 6;
