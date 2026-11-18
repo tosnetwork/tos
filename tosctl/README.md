@@ -632,6 +632,26 @@ price and storage fee from the quoted on-chain policy and checks additions for
 overflow. The execution allowance funds the receiver's computation and outbound
 messages; unused value is returned rather than counted as service revenue.
 
+Once the wallet message is signed, and before it is broadcast, `send` prints
+one line:
+
+```text
+Wallet message seqno=<n> valid_until=<unix> hash=sha256:<64 hex>
+```
+
+The fields are read back from the signed body:
+- `seqno` is the wallet seqno the message consumes;
+- `valid_until` is the time after which the wallet refuses the message, or
+  `none` for a V1R3 wallet;
+- `hash` is the external message's hash, the one the error messages name.
+
+A program that must later decide whether the message can still execute, such
+as a retry after an ambiguous outcome, reads this line instead of assuming the
+wallet's message lifetime. The line is printed before the broadcast, and
+standard output is line-buffered, so a run whose output lacks it broadcast
+nothing. A declined confirmation returns before signing and prints no line.
+The existing output lines are unchanged.
+
 A refund protects other callers' remaining prices and locked storage fees, but
 does not require the operator's 1 TOS reserve to stay funded. A service below that
 reserve refuses new work and withdrawals until separately topped up. If rent has

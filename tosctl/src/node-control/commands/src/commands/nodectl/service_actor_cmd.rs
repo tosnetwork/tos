@@ -6,13 +6,13 @@
  */
 
 use super::agent_cmd::{
-    confirm, parse_required_hash, send_wallet_message, send_wallet_message_with_state_init,
-    validate_tos_amount,
+    build_wallet_message_boc, confirm, confirm_prepared_wallet_message, parse_required_hash,
+    send_wallet_message_with_state_init, validate_tos_amount,
 };
 use super::native_registry_cmd::read_controller_seed;
 use super::output_format::OutputFormat;
 use super::utils::{
-    get_wallet_config, load_config_vault_rpc_client, make_wallet, save_config,
+    DEPLOY_TIMEOUT, get_wallet_config, load_config_vault_rpc_client, make_wallet, save_config,
     try_create_rpc_client, wallet_info,
 };
 use anyhow::Context;
@@ -28,8 +28,10 @@ use common::{
 use contracts::service_actor::protocol_constants::{
     ADMISSION_GAS_ALLOWANCE, MINIMUM_OPERATING_RESERVE, PAYOUT_GAS_ALLOWANCE,
 };
+use contracts::wallet::wallet_contract::SignedWalletMessage;
 use contracts::{
     PendingRequestData, RefundData, ServiceActorContract, ServiceActorData, ServiceActorInit,
+    WalletContract,
 };
 use futures_util::{StreamExt, stream};
 use std::{path::Path, str::FromStr};
@@ -1415,13 +1417,12 @@ impl ServiceActorSendCmd {
         }
         let wallet =
             make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
-        send_wallet_message(
+        send_announced_wallet_message(
             &wallet,
             rpc_client.clone(),
             destination_service.clone(),
             amount_nanotos,
             body,
-            true,
             owner_info.seqno,
             &owner_address,
         )
@@ -1481,6 +1482,45 @@ impl ServiceActorSendCmd {
         }
         Ok(())
     }
+}
+
+/// The line printed for every Service Actor wallet message once it is signed
+/// and before it is broadcast. A caller that must later decide whether the
+/// message can still execute reads the seqno it consumes, the time the
+/// wallet stops accepting it and its exact hash from this line. The line is
+/// printed before the broadcast, and stdout is line-buffered, so a run whose
+/// output lacks it broadcast nothing.
+fn wallet_message_line(signed: &SignedWalletMessage) -> String {
+    let valid_until = match signed.valid_until {
+        Some(value) => value.to_string(),
+        None => "none".to_string(),
+    };
+    format!(
+        "Wallet message seqno={} valid_until={} hash=sha256:{}",
+        signed.seqno,
+        valid_until,
+        hex::encode(signed.hash)
+    )
+}
+
+/// Signs one wallet message, prints its `wallet_message_line`, then
+/// broadcasts it and confirms that exact message, as `send_wallet_message`
+/// does.
+async fn send_announced_wallet_message(
+    wallet: &WalletContract,
+    rpc_client: std::sync::Arc<chain_rpc_client::v2::client_json_rpc::ClientJsonRpc>,
+    destination: MsgAddressInt,
+    amount: u64,
+    body: chain_block::Cell,
+    seqno: Option<u32>,
+    owner_address: &MsgAddressInt,
+) -> anyhow::Result<()> {
+    let boc =
+        build_wallet_message_boc(wallet, destination.clone(), amount, body, true, seqno).await?;
+    let signed = wallet.signed_message(&chain_block::read_single_root_boc(&boc)?)?;
+    println!("{}", wallet_message_line(&signed));
+    confirm_prepared_wallet_message(rpc_client, &boc, owner_address, &destination, DEPLOY_TIMEOUT)
+        .await
 }
 
 impl ServiceActorBuildStateCmd {
@@ -1747,5 +1787,69 @@ mod attestor_cli_tests {
             contracts::service_actor::verify_service_response(&public_key, &signature, &[0x43; 32])
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod wallet_message_line_tests {
+    use super::*;
+
+    #[test]
+    fn the_wallet_message_line_names_seqno_valid_until_and_hash() {
+        let signed =
+            SignedWalletMessage { seqno: 7, valid_until: Some(1_900_000_120), hash: [0xab; 32] };
+        assert_eq!(
+            wallet_message_line(&signed),
+            format!(
+                "Wallet message seqno=7 valid_until=1900000120 hash=sha256:{}",
+                "ab".repeat(32)
+            )
+        );
+        let unbounded = SignedWalletMessage { valid_until: None, ..signed };
+        assert!(wallet_message_line(&unbounded).contains(" valid_until=none "));
+    }
+
+    /// The send command signs exactly one wallet message and prints its line
+    /// once, after signing and before the broadcast; a declined confirmation
+    /// returns before anything is signed, so it prints no line.
+    #[test]
+    fn the_send_command_prints_the_line_once_per_signed_message() {
+        let source = include_str!("service_actor_cmd.rs");
+        let helper = source
+            .split_once("async fn send_announced_wallet_message(")
+            .unwrap()
+            .1
+            .split_once("impl ServiceActorBuildStateCmd {")
+            .unwrap()
+            .0;
+        assert_eq!(helper.matches("build_wallet_message_boc(").count(), 1);
+        assert_eq!(helper.matches("wallet_message_line(").count(), 1);
+        assert_eq!(helper.matches("confirm_prepared_wallet_message(").count(), 1);
+        let built = helper.find("build_wallet_message_boc(").unwrap();
+        let printed = helper.find("println!(\"{}\", wallet_message_line(").unwrap();
+        let broadcast = helper.find("confirm_prepared_wallet_message(").unwrap();
+        assert!(built < printed && printed < broadcast);
+        assert!(!helper.contains("send_boc("));
+
+        let send = source
+            .split_once("impl ServiceActorSendCmd {")
+            .unwrap()
+            .1
+            .split_once("/// The line printed for every Service Actor wallet message")
+            .unwrap()
+            .0;
+        assert_eq!(send.matches("send_announced_wallet_message(").count(), 1);
+        assert!(!send.contains("send_wallet_message("));
+        assert!(!send.contains("build_wallet_message_boc("));
+        assert!(!send.contains("send_boc("));
+        let declined = send.find("if !self.yes && !confirm(").unwrap();
+        let signed = send.find("send_announced_wallet_message(").unwrap();
+        assert!(declined < signed);
+        // The existing report line is unchanged and follows the send.
+        let reported = send.find("\"{} Service Actor {} message submitted to {}\"").unwrap();
+        assert!(signed < reported);
+        // The only other wallet message of this file, the deployment, is not
+        // a Service Actor message and prints no line.
+        assert_eq!(source.matches("println!(\"{}\", wallet_message_line(").count(), 1);
     }
 }

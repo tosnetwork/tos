@@ -8,9 +8,9 @@
  */
 use crate::{ContractProvider, Wallet, smart_contract::SmartContract};
 use chain_block::{
-    BuilderData, Cell, CurrencyCollection, ExternalInboundMessageHeader, IBitstring,
-    InternalMessageHeader, Message, MsgAddressExt, MsgAddressInt, OutAction, OutActions,
-    Serializable, SliceData, StateInit, base64_decode, read_single_root_boc,
+    BuilderData, Cell, CurrencyCollection, Deserializable, ExternalInboundMessageHeader,
+    IBitstring, InternalMessageHeader, Message, MsgAddressExt, MsgAddressInt, OutAction,
+    OutActions, Serializable, SliceData, StateInit, base64_decode, read_single_root_boc,
 };
 use common::{WalletVersion, signer::Signer, time_format};
 use std::sync::Arc;
@@ -34,6 +34,19 @@ pub const V5R1_CODE_B64: &str = "te6cckECKgEACc8AART/APSkE/S88sgLAQIBIAIDAgFIBAU
 
 const SEND_MODE: u8 = 3;
 const V4_OP_SIMPLE_SEND: u8 = 0;
+
+/// What a signed external message of a wallet commits to, read back from its
+/// signing body: the seqno it consumes and the time after which the wallet
+/// refuses it. A caller that must decide later whether the message can still
+/// execute records these instead of assuming the wallet's lifetime.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignedWalletMessage {
+    pub seqno: u32,
+    /// The body's valid_until; `None` for V1R3, whose body has no expiry.
+    pub valid_until: Option<u32>,
+    /// Representation hash of the external message cell.
+    pub hash: [u8; 32],
+}
 
 pub struct WalletContract {
     signer: Box<dyn Signer>,
@@ -74,6 +87,57 @@ impl WalletContract {
 
     pub fn global_id(&self) -> i32 {
         self.global_id
+    }
+
+    /// Reads the seqno and valid_until back from an external message this
+    /// wallet signed. The body must carry this wallet's network identity and
+    /// subwallet id, so a message of another wallet or network is refused
+    /// rather than misread.
+    pub fn signed_message(&self, message: &Cell) -> anyhow::Result<SignedWalletMessage> {
+        let parsed = Message::construct_from_cell(message.clone())?;
+        anyhow::ensure!(parsed.is_inbound_external(), "not an inbound external message");
+        let mut body = parsed
+            .body()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("the external message has no body"))?;
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(message.hash(0).as_slice());
+        let (seqno, valid_until) = match self.version {
+            WalletVersion::V1R3 => {
+                body.move_by(512)?;
+                (body.get_next_u32()?, None)
+            }
+            WalletVersion::V3R2 | WalletVersion::V4R2 => {
+                body.move_by(512)?;
+                anyhow::ensure!(
+                    body.get_next_i32()? == self.global_id,
+                    "the body is signed for another network"
+                );
+                anyhow::ensure!(
+                    body.get_next_u32()? == self.subwallet_id,
+                    "the body is of another subwallet"
+                );
+                let valid_until = body.get_next_u32()?;
+                (body.get_next_u32()?, Some(valid_until))
+            }
+            WalletVersion::V5R1 => {
+                anyhow::ensure!(
+                    body.get_next_u32()? == Self::V5_PREFIX_SIGNED_EXTERNAL,
+                    "the body is not a signed external request"
+                );
+                anyhow::ensure!(
+                    body.get_next_i32()? == self.global_id,
+                    "the body is signed for another network"
+                );
+                anyhow::ensure!(
+                    body.get_next_u32()? == self.subwallet_id,
+                    "the body is of another wallet id"
+                );
+                let valid_until = body.get_next_u32()?;
+                (body.get_next_u32()?, Some(valid_until))
+            }
+        };
+        Ok(SignedWalletMessage { seqno, valid_until, hash })
     }
 
     pub fn calculate_address(
@@ -469,5 +533,154 @@ mod tests {
             )
             .unwrap()
         );
+    }
+
+    struct TestSigner(ed25519_dalek::SigningKey);
+
+    #[async_trait::async_trait]
+    impl Signer for TestSigner {
+        async fn public_key(&self) -> anyhow::Result<Vec<u8>> {
+            Ok(self.0.verifying_key().to_bytes().to_vec())
+        }
+
+        async fn sign(&self, message: &[u8]) -> anyhow::Result<Vec<u8>> {
+            use ed25519_dalek::Signer as _;
+            Ok(self.0.sign(message).to_bytes().to_vec())
+        }
+    }
+
+    /// Every message here is built with an explicit seqno, so no chain is
+    /// consulted.
+    struct NoProvider;
+
+    #[async_trait::async_trait]
+    impl ContractProvider for NoProvider {
+        async fn get_method(
+            &self,
+            _address: String,
+            method: &str,
+            _stack: Vec<tl_api::tos::tvm::StackEntry>,
+        ) -> anyhow::Result<common::tvm_stack_parser::TvmStackParser> {
+            anyhow::bail!("no get-method {method} in this test")
+        }
+
+        async fn balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+            anyhow::bail!("no balance in this test")
+        }
+    }
+
+    async fn test_wallet(
+        version: WalletVersion,
+        global_id: i32,
+        subwallet_id: u32,
+    ) -> WalletContract {
+        WalletContract::new(
+            Box::new(TestSigner(ed25519_dalek::SigningKey::from_bytes(&[0x42; 32]))),
+            version,
+            subwallet_id,
+            0,
+            global_id,
+            Arc::new(NoProvider),
+        )
+        .await
+        .unwrap()
+    }
+
+    fn destination() -> MsgAddressInt {
+        MsgAddressInt::from_str(
+            "0:0c8f77db9d7cb91eb5ae3654c45a34b47b01db344ef001ac632c2b9b6e79d8c9",
+        )
+        .unwrap()
+    }
+
+    /// The seqno and valid_until read back are the ones the body was signed
+    /// with, for every wallet version, and the hash is the message cell's.
+    #[tokio::test]
+    async fn signed_message_reads_back_the_signed_seqno_and_valid_until() {
+        for version in
+            [WalletVersion::V1R3, WalletVersion::V3R2, WalletVersion::V4R2, WalletVersion::V5R1]
+        {
+            let wallet = test_wallet(version, 42, 698_983_191).await;
+            let before = time_format::now() as u32;
+            let message = wallet
+                .build_message(
+                    destination(),
+                    1,
+                    BuilderData::new().into_cell().unwrap(),
+                    true,
+                    Some(7),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            let after = time_format::now() as u32;
+            let signed = wallet.signed_message(&message).unwrap();
+            assert_eq!(signed.seqno, 7, "{version:?}");
+            assert_eq!(signed.hash.as_slice(), message.hash(0).as_slice(), "{version:?}");
+            match (version, signed.valid_until) {
+                (WalletVersion::V1R3, None) => {}
+                (WalletVersion::V1R3, Some(value)) => panic!("V1R3 has no expiry, read {value}"),
+                (_, Some(valid_until)) => assert!(
+                    valid_until >= before + WalletContract::LIFETIME
+                        && valid_until <= after + WalletContract::LIFETIME,
+                    "{version:?}: valid_until {valid_until} outside the signing window"
+                ),
+                (_, None) => panic!("{version:?} lost its valid_until"),
+            }
+        }
+    }
+
+    /// A message of another network, subwallet or wallet version is refused
+    /// rather than misread.
+    #[tokio::test]
+    async fn signed_message_refuses_a_message_of_another_wallet() {
+        for version in [WalletVersion::V3R2, WalletVersion::V4R2, WalletVersion::V5R1] {
+            let signer = test_wallet(version, 42, 698_983_191).await;
+            let message = signer
+                .build_message(
+                    destination(),
+                    1,
+                    BuilderData::new().into_cell().unwrap(),
+                    true,
+                    Some(7),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            let other_network = test_wallet(version, 43, 698_983_191).await;
+            assert!(
+                other_network.signed_message(&message).is_err(),
+                "{version:?}: another network"
+            );
+            let other_subwallet = test_wallet(version, 42, 1).await;
+            assert!(
+                other_subwallet.signed_message(&message).is_err(),
+                "{version:?}: another subwallet"
+            );
+        }
+        let v5 = test_wallet(WalletVersion::V5R1, 42, 698_983_191).await;
+        let v4_message = test_wallet(WalletVersion::V4R2, 42, 698_983_191)
+            .await
+            .build_message(
+                destination(),
+                1,
+                BuilderData::new().into_cell().unwrap(),
+                true,
+                Some(7),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(v5.signed_message(&v4_message).is_err(), "a V4R2 body read as V5R1");
+        let internal = Message::with_int_header_and_body(
+            InternalMessageHeader::default(),
+            SliceData::load_cell(BuilderData::new().into_cell().unwrap()).unwrap(),
+        )
+        .serialize()
+        .unwrap();
+        assert!(v5.signed_message(&internal).is_err(), "an internal message was read");
     }
 }
