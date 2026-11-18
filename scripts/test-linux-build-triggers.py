@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Every Linux build workflow has a trigger that can fire in this repository.
+"""Every Linux and macOS build workflow has a trigger that can fire in this repository.
 
 The workflows inherited with the tree named branches this repository does not
 have (master, testnet), so the full arm64 build, both AppImage builds and the
 other platforms never ran, and nothing said so. Linux x86-64 and arm64 are the
-supported platforms; a build of either that cannot start is not coverage.
+supported platforms, and macOS on Apple silicon is built from source; a build
+of any of them that cannot start is not coverage.
 
-Checked for each .github/workflows/build-tos-linux-*.yml:
+Checked for each .github/workflows/build-tos-linux-*.yml and build-tos-macos-*.yml:
 - a push or pull_request branch filter names only branches that exist here;
 - at least one automatic trigger can fire: a push to such a branch, a pull
   request, a version tag or a schedule (dispatch alone does not count);
-- the full shared builds run on every push to main, unfiltered by path:
+- the full shared builds, Linux and macOS, run on every push to main, unfiltered by path:
   every list of what the build reads missed something, so neither a paths
   nor a paths-ignore filter is accepted.
 
@@ -31,6 +32,11 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
 BRANCHES = {"main"}
 SHARED_BUILDS = ("build-tos-linux-x86-64-shared.yml", "build-tos-linux-arm64-shared.yml")
+# The macOS full build also runs on pull requests, so its triggers are not pinned
+# to the Linux shared builds' exact set; it must still run on every push to main.
+MACOS_SHARED_BUILD = "build-tos-macos-15-arm64-shared.yml"
+MAIN_BUILDS = (*SHARED_BUILDS, MACOS_SHARED_BUILD)
+PATTERNS = ("build-tos-linux-*.yml", "build-tos-macos-*.yml")
 EVENTS = {"push", "pull_request", "workflow_dispatch", "workflow_call", "schedule"}
 LIST_KEYS = {"branches", "branches-ignore", "tags", "paths", "paths-ignore", "types"}
 
@@ -144,7 +150,7 @@ def problems(name: str, on: dict) -> list[str]:
         automatic = True
     if not automatic:
         found.append(f"{name}: no automatic trigger can fire here (dispatch or workflow_call only)")
-    if name in SHARED_BUILDS:
+    if name in MAIN_BUILDS:
         push = on.get("push") or {}
         if push.get("branches") != ["main"]:
             found.append(f"{name}: does not run on every push to main")
@@ -156,9 +162,9 @@ def problems(name: str, on: dict) -> list[str]:
 
 def tree_problems(workflows: Path = WORKFLOWS) -> list[str]:
     found = []
-    files = sorted(workflows.glob("build-tos-linux-*.yml"))
+    files = sorted(path for pattern in PATTERNS for path in workflows.glob(pattern))
     if not files:
-        return [f"no build-tos-linux-*.yml under {workflows}"]
+        return [f"no build-tos-linux-*.yml or build-tos-macos-*.yml under {workflows}"]
     for path in files:
         try:
             on = parse_on(path.read_text())
@@ -166,7 +172,7 @@ def tree_problems(workflows: Path = WORKFLOWS) -> list[str]:
             found.append(f"{path.name}: cannot read its triggers: {exc}")
             continue
         found += problems(path.name, on)
-    for name in SHARED_BUILDS:
+    for name in MAIN_BUILDS:
         if not (workflows / name).exists():
             found.append(f"{name} is missing")
     return found
@@ -212,6 +218,15 @@ class TreeTest(unittest.TestCase):
                 "workflow_dispatch": None,
                 "workflow_call": None,
             },
+            MACOS_SHARED_BUILD: {
+                "pull_request": {
+                    "branches": ["main"],
+                    "types": ["opened", "reopened", "synchronize", "ready_for_review"],
+                },
+                "push": {"branches": ["main"]},
+                "workflow_dispatch": None,
+                "workflow_call": None,
+            },
             "build-tos-linux-x86-64-werror.yml": {
                 "push": {"branches": ["main"]},
                 "pull_request": {
@@ -222,11 +237,11 @@ class TreeTest(unittest.TestCase):
                 "workflow_call": None,
             },
         }
-        files = sorted(WORKFLOWS.glob("build-tos-linux-*.yml"))
+        files = sorted(path for pattern in PATTERNS for path in WORKFLOWS.glob(pattern))
         self.assertEqual(
             {p.name for p in files},
             set(expected) | set(SHARED_BUILDS),
-            "a Linux build workflow was added or removed",
+            "a Linux or macOS build workflow was added or removed",
         )
         for path in files:
             on = parse_on(path.read_text())
@@ -286,11 +301,11 @@ class ParserTest(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
-            for name in SHARED_BUILDS:
+            for name in MAIN_BUILDS:
                 (Path(d) / name).write_text("on: [push]\n")
             found = tree_problems(Path(d))
         self.assertTrue(all("cannot read its triggers" in p for p in found), found)
-        self.assertEqual(len(found), 2)
+        self.assertEqual(len(found), len(MAIN_BUILDS))
 
 
 class RuleTest(unittest.TestCase):
@@ -330,6 +345,14 @@ class RuleTest(unittest.TestCase):
             self.assertEqual(found, [f"{name}: its push trigger is filtered by {key}"], key)
         found = problems(name, {"push": {"tags": ["v*"]}, "workflow_dispatch": None})
         self.assertEqual(found, [f"{name}: does not run on every push to main"])
+
+    def test_the_macos_build_runs_on_every_push_to_main(self) -> None:
+        name = MACOS_SHARED_BUILD
+        self.assertEqual(problems(name, {"pull_request": None, "push": {"branches": ["main"]}}), [])
+        found = problems(name, {"pull_request": None})
+        self.assertEqual(found, [f"{name}: does not run on every push to main"])
+        found = problems(name, {"push": {"branches": ["main"], "paths": ["doc/**"]}})
+        self.assertEqual(found, [f"{name}: its push trigger is filtered by paths"])
 
 
 if __name__ == "__main__":

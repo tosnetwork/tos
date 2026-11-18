@@ -117,7 +117,7 @@ cannot run here.
   runner CPU (`-j"$(nproc)"`); test invocations are not changed.
 - `timeout-minutes` and `concurrency` are not enforced.
 - Not replayed, because they need GitHub itself: jobs on arm64 runners and
-  the macOS leg of the wallet C API workflow; reusable workflow calls;
+  the macOS leg of the wallet C API workflow and the macOS build; reusable workflow calls;
   artifact downloads between workflows, including jobs that compare results across architectures;
   steps that need real Docker; registry logins and image pushes; jobs gated on
   `workflow_dispatch` or `push` (they are reported as skipped by their `if:`).

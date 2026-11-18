@@ -2543,8 +2543,9 @@ target_link_libraries(test-tl-cli-fixtures PRIVATE tl_api tl_lite_api tl_toslib_
 add_test(NAME test-tl-cli-fixtures COMMAND test-tl-cli-fixtures --verify ${CMAKE_CURRENT_SOURCE_DIR}/test/tl-cli/fixtures.tsv)
 
 # Tests a macOS development build cannot run, by reason. They stay registered
-# and run unchanged on Linux; on macOS, `ctest -LE "linux-only|loopback-aliases|gnu-tools"`
-# leaves them out (BUILD.md, macOS Development Build).
+# and run unchanged on Linux; on macOS,
+# `ctest -LE "linux-only|loopback-aliases|gnu-tools|macos-known-failure"` leaves them out
+# (BUILD.md, macOS Development Build).
 #   linux-only:       the harness reads /proc, uses LD_PRELOAD, or drives a Linux
 #                     container entrypoint.
 #   loopback-aliases: binds sources such as 127.0.0.2, which Linux routes on lo and
@@ -2560,3 +2561,11 @@ endforeach()
 foreach(_t pending-finality-retry-policy-source n6-live-finality-overlay n6-lite-framed-tcp n6-scale-sweep-minimum-bft)
   set_property(TEST ${_t} APPEND PROPERTY LABELS "gnu-tools")
 endforeach()
+# Tests whose preconditions do not hold on macOS: loopback socket buffers cannot
+# be pinned as small as the slow-reader case needs, and the heap budget is
+# calibrated against glibc's allocator. They run unchanged on Linux.
+if(APPLE)
+  foreach(_t test-http-server-limits test-rldp2-decoder-heap)
+    set_property(TEST ${_t} APPEND PROPERTY LABELS "macos-known-failure")
+  endforeach()
+endif()

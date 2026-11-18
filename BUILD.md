@@ -15,8 +15,10 @@ scripts or release artifacts, and no macOS release artifacts.
 
 macOS on Apple silicon is built from source: see
 [macOS Development Build](#macos-development-build). It can run a node and a
-validator ([macOS validators](doc/Validator.md#macos-validators)), but it is
-not tested in CI and not released.
+validator ([macOS validators](doc/Validator.md#macos-validators)). CI builds
+and tests it on every pull request and push to `main`
+(`.github/workflows/build-tos-macos-15-arm64-shared.yml`), but it is not
+released.
 
 One exception is not a node platform: `.github/workflows/quantum-mobile-native.yml`
 also runs on macOS. It compiles and runs the post-quantum native C API in
@@ -106,7 +108,8 @@ BOC, its hashes, and a release manifest.
 
 ## macOS Development Build
 
-For Apple silicon, including a validator host. Every third-party library is built from
+For Apple silicon, including a validator host. `assembly/native/build-macos-shared.sh -t`
+runs the steps below, as CI does. Every third-party library is built from
 `third-party/`, so Homebrew provides only the build tools:
 
 ```bash
@@ -153,10 +156,13 @@ Run the C++ tests without the ones macOS cannot host:
 
 ```bash
 cd build-macos
-TMPDIR=/private/tmp ctest -j"$(sysctl -n hw.ncpu)" -LE 'linux-only|loopback-aliases|gnu-tools'
+TMPDIR=/private/tmp ctest -j"$(sysctl -n hw.ncpu)" -LE 'linux-only|loopback-aliases|gnu-tools|macos-known-failure'
 ```
 
-The labels mark tests that stay Linux-only, not failures of the code they test:
+CI aliases the loopback sources and runs the `loopback-aliases` tests too, serially:
+`ctest --timeout 1800 -LE 'linux-only|gnu-tools|macos-known-failure'`.
+
+The labels mark tests that macOS cannot host, not failures of the code they test:
 
 - `linux-only`: the harness reads `/proc`, uses `LD_PRELOAD`, or drives a Linux
   container entrypoint.
@@ -165,11 +171,10 @@ The labels mark tests that stay Linux-only, not failures of the code they test:
   reboot. QUIC admission uses `127.0.0.2` to `127.0.0.39`:
   `for i in $(seq 2 39); do sudo ifconfig lo0 alias 127.0.0.$i up; done`.
 - `gnu-tools`: the test needs GNU grep (`grep -P`) or `flock(1)`.
-
-Two tests still fail on macOS because their preconditions do not hold there:
-`test-http-server-limits` cannot pin loopback socket buffers as small as its
-slow-reader case requires, and `test-rldp2-decoder-heap` is calibrated against
-glibc's allocator, which rounds less than the macOS one.
+- `macos-known-failure` (set on macOS only): the test's preconditions do not
+  hold there. `test-http-server-limits` cannot pin loopback socket buffers as
+  small as its slow-reader case requires, and `test-rldp2-decoder-heap` is
+  calibrated against glibc's allocator, which rounds less than the macOS one.
 
 ## Rust Workspace
 
