@@ -65,11 +65,11 @@ jobs:
           TAG_SHA: ${{ steps.tag.outputs.sha }}
         run: |
           python3 scripts/release-artifacts.py collect \
-            --repo "$GITHUB_REPOSITORY" --set full --tag "$TAG" --tag-sha "$TAG_SHA" --out artifacts
+            --repo "$GITHUB_REPOSITORY" --set full --tag "$TAG" --tag-sha "$TAG_SHA" --out release-inputs
 
       - name: Stage release assets
         run: |
-          python3 scripts/release-artifacts.py stage --set full --artifacts artifacts --out stage
+          python3 scripts/release-artifacts.py stage --set full --artifacts release-inputs --out stage
           cp recent_changelog.md stage-notes.md
 
       - name: Hand the staged assets to the publishing job
@@ -90,8 +90,8 @@ jobs:
   #              published, is refused and never added to;
   #   draft      before the upload;
   #   draft + the staged files, exactly, before publication;
-  #   published + the staged files, after publication; on failure the
-  #              release is deleted and the job fails.
+  #   published + the staged files, after publication; the job fails on
+  #              any refusal, and deletes the release only if the tag moved.
   # The tag ruleset and release immutability in doc/tos-release-policy.md
   # close the window between the last check and publication.
   publish:
@@ -157,11 +157,17 @@ jobs:
 
       - name: Check the published release, and withdraw it if the tag moved
         run: |
-          set -euo pipefail
-          if ! python3 guard/scripts/release-artifacts.py check-tag --repo "$GITHUB_REPOSITORY" --set full \
+          set -uo pipefail
+          status=0
+          python3 guard/scripts/release-artifacts.py check-tag --repo "$GITHUB_REPOSITORY" --set full \
             --tag "$TAG" --tag-sha "$TAG_SHA" --provenance release/stage/release-provenance.json \
-            --release-state published --assets release/stage; then
-            echo "::error::the published release for $TAG failed its final check; deleting the release" >&2
+            --release-state published --assets release/stage || status=$?
+          if [ "$status" -eq 3 ]; then
+            echo "::error::$TAG no longer names the commit its assets were built from; deleting the release" >&2
             gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
+            exit 1
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "::error::the final check of the published release for $TAG failed, but the tag did not move; the release is left in place for inspection" >&2
             exit 1
           fi

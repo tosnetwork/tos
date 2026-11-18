@@ -750,7 +750,10 @@ class CheckTagTest(unittest.TestCase):
                 )
         finally:
             release_artifacts.GhApi = original
-        self.assertEqual(status, 1)
+        # A moved tag has its own exit status: it is the only refusal after
+        # which the publisher deletes a published release.
+        self.assertEqual(status, release_artifacts.TAG_MOVED_STATUS)
+        self.assertEqual(status, 3)
         self.assertIn("RELEASE_ARTIFACTS_REFUSED: tag v2026.10 now names commit", stderr.getvalue())
 
 
@@ -1011,6 +1014,42 @@ class RepositoryConfigTest(unittest.TestCase):
                 f'collect \\\n            --repo "$GITHUB_REPOSITORY" --set {release_set}', text
             )
             self.assertNotIn("--set ", text.replace(f"--set {release_set} ", ""), workflow)
+
+    def test_release_workflows_delete_a_release_only_when_the_tag_moved(self) -> None:
+        # Deleting an immutable release makes its tag unusable for good, so a
+        # transient failure of the final check must not reach the delete.
+        workflows = HERE.parent / ".github" / "workflows"
+        for workflow in ("create-release.yml", "create-tol-release.yml"):
+            text = (workflows / workflow).read_text()
+            self.assertEqual(text.count("gh release delete"), 1, workflow)
+            before, after = text.split("gh release delete")
+            # The delete sits in the branch taken for status 3 alone, and
+            # that status comes from the final check-tag.
+            checked = before.rsplit("|| status=$?", 1)
+            self.assertEqual(len(checked), 2, workflow)
+            self.assertIn("--release-state published --assets", checked[0][-200:], workflow)
+            conditions = re.findall(r"^ +(if .*)$", checked[1], flags=re.M)
+            self.assertEqual(conditions, ['if [ "$status" -eq 3 ]; then'], workflow)
+            self.assertNotIn("fi\n", checked[1], workflow)
+            self.assertIn('if [ "$status" -ne 0 ]; then', after, workflow)
+
+    def test_release_workflows_write_into_directories_the_checkout_lacks(self) -> None:
+        # collect and stage refuse an existing --out, and both run at the
+        # root of a checkout of the tag: a name the repository already has
+        # (as artifacts/ is) fails every release before anything is collected.
+        root = HERE.parent
+        for workflow in ("create-release.yml", "create-tol-release.yml"):
+            text = (root / ".github" / "workflows" / workflow).read_text()
+            outs = re.findall(r"--out (\S+)", text)
+            self.assertEqual(len(outs), 2, workflow)
+            for out in outs:
+                self.assertRegex(out, r"^[a-z][a-z-]*$", workflow)
+                self.assertFalse(
+                    (root / out).exists(), f"{workflow}: --out {out} exists in the tree"
+                )
+            collected, staged = outs
+            self.assertIn("stage --set", text, workflow)
+            self.assertIn(f"--artifacts {collected} --out {staged}", text, workflow)
 
 
 class PqToolPackagingTest(unittest.TestCase):
