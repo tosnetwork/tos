@@ -409,8 +409,8 @@ name (`validator-engine`, ..., `dht-server`, `tos-rpc`, `tos-wallet-index`,
 checks the zip against that digest and each binary against its member, or
 against `SHA256SUMS`, which the same publisher job writes.
 `release-provenance.json` records the digest of each artifact zip and, under
-`assets`, the SHA-256 of every other published file (releases after
-`v2026.11`).
+`assets`, the SHA-256 of every published asset, that is every file except
+itself and `SHA256SUMS` (releases after `v2026.11`).
 
 The node binaries are plain ELF executables, not AppImages, built by
 `.github/workflows/build-tos-linux-node-binaries.yml` with
@@ -590,8 +590,8 @@ and it names no tag: its source commit and ref are those of `main` when the
 publisher ran, not the tag commit, so `--source-digest <tag commit>` does not
 match. The tag is bound through `release-provenance.json`, which is itself
 attested and records the tag, the tag commit, the build run and artifact
-digest of each input, and under `assets` the SHA-256 of every other published
-file.
+digest of each input, and under `assets` the SHA-256 of every published asset
+(every file except itself and `SHA256SUMS`).
 
 The publisher must be dispatched from `main`; its first step refuses any other
 ref. That refusal is a guard against a mistake, not a control: a copy of the
