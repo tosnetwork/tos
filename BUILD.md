@@ -13,9 +13,10 @@ The node and its tools are built, tested in CI and released for Linux only, on
 x86-64 and arm64. There are no Windows, Android or WebAssembly builds, build
 scripts or release artifacts, and no macOS release artifacts.
 
-macOS on Apple silicon is a local development build only: see
-[macOS Development Build](#macos-development-build). It is not tested in CI,
-not released, and not a platform for running a validator.
+macOS on Apple silicon is built from source: see
+[macOS Development Build](#macos-development-build). It can run a node and a
+validator ([macOS validators](doc/Validator.md#macos-validators)), but it is
+not tested in CI and not released.
 
 One exception is not a node platform: `.github/workflows/quantum-mobile-native.yml`
 also runs on macOS. It compiles and runs the post-quantum native C API in
@@ -105,7 +106,7 @@ BOC, its hashes, and a release manifest.
 
 ## macOS Development Build
 
-For local development on Apple silicon. Every third-party library is built from
+For Apple silicon, including a validator host. Every third-party library is built from
 `third-party/`, so Homebrew provides only the build tools:
 
 ```bash
@@ -134,8 +135,10 @@ build with `TOS_BUILD_DIR=$PWD/build-macos` and `scripts/localnet-jsonrpc.py`.
 
 Differences from Linux, by design:
 
-- The SLH-DSA hardware SHA-256 backends are Linux only; macOS uses the
-  portable compression.
+- The SLH-DSA verifier uses the ARMv8 SHA2 backend, as on Linux arm64; the
+  configure output prints `TOS_SLHDSA_ARMV8_SHA2=ON`. A build directory
+  configured before this backend was available keeps `OFF` in its cache;
+  configure it again with `-DTOS_SLHDSA_ARMV8_SHA2=ON`.
 - The conformance reference library needs GNU ld's `--wrap` and is not built.
 - File durability uses `F_FULLFSYNC`, birth time comes from `stat`, and the
   node data tools read process descriptors through libproc instead of `/proc`.
