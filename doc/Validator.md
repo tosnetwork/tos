@@ -42,7 +42,7 @@ running unrelated workloads.
 | Resource | Testnet / development minimum | Recommended production configuration (aligned with mainnet-scale networks) |
 |----------|-----------------------|---------------------------------------|
 | CPU | 2 physical or virtual cores | 16 dedicated cores (32 threads preferred); 8 cores / 16 threads is the lower baseline of the reference implementation |
-| CPU instruction set | x86-64 with SHA (SHA-NI), SSSE3, SSE4.1 and SSE4.2 visible to the host or guest; arm64 is not allowed for a validator; see [CPU instruction set](#cpu-instruction-set) | Same as testnet; validators without SHA-NI are not allowed |
+| CPU instruction set | Hardware SHA-256 visible to the host or guest: x86-64 with SHA (SHA-NI), SSSE3, SSE4.1 and SSE4.2, or arm64 with AES, PMULL, SHA1 and SHA2; see [CPU instruction set](#cpu-instruction-set) | Same as testnet; a validator on the portable SHA-256 backend is not allowed |
 | Memory | 4 GB RAM | 128 GB RAM |
 | Storage | 100 GB SSD | 2 × 1.92 TB enterprise NVMe SSD; target at least 250k read IOPS and 83k write IOPS per device |
 | Network | 10 Mbps symmetric bandwidth; a public IPv4 address is strongly preferred | 1 Gbps symmetric bandwidth with a fixed public IP |
@@ -61,53 +61,73 @@ growth; do not provision a disk that is already close to full.
 
 ### CPU instruction set
 
-Every validator, on testnet and in production, must run on an x86-64 CPU that
-exposes SHA (SHA-NI), SSSE3, SSE4.1 and SSE4.2. Validators without SHA-NI are
-not allowed. The SLH-DSA rescue check (TVM `PQCHECKSIG_SUITE` suite 3) is priced
-for the SHA-NI SHA-256 backend: 4,500 gas plus its cell loads, against roughly
-210-360 µs for an adversarially chosen signature. The portable backend takes
-about three times as long. A validator using it would spend far more time on
-these checks than the gas they pay for, and could fall behind on blocks full of
-them.
+Every validator, on testnet and in production, must verify with a hardware
+SHA-256 backend. That means one of:
 
-An arm64 host is not allowed as a validator. Linux arm64 builds with GCC or
-Clang include an accelerated SHA-256 backend by default
-(`TOS_SLHDSA_ARMV8_SHA2` in `crypto/pq/CMakeLists.txt`): it uses the ARMv8 SHA2
-instructions when the kernel reports the AES, PMULL, SHA1 and SHA2 extensions,
-and the portable backend otherwise, and
-the test programs name it `armv8-sha2`. Its verification time has not been
-measured on production-class arm64 hardware, so the price of the check is not
-known to hold there. The pull-request checks print the time of
-`bench-pq-slhdsa-verify` on a shared arm64 runner; that figure is indicative
-only, because the runner is not the production hardware class and the fixture
-signatures are not adversarially chosen. The arm64 binaries of a release,
-`validator-engine` included, are for full nodes, the wallet services, DHT
-servers and tools, which follow the chain and neither produce nor validate
-block candidates, so they do not have to keep a validator's block deadlines.
-The rule stands until the arm64 backend has been measured on the production
-hardware class, because the price of the check must hold on the slowest
-permitted validator.
+- an x86-64 CPU that exposes SHA (SHA-NI), SSSE3, SSE4.1 and SSE4.2;
+- an arm64 CPU that exposes the AES, PMULL, SHA1 and SHA2 extensions.
 
-On x86-64 the backend is chosen at run time from CPUID
-(`crypto/pq/slhdsa-sha256.c`). Linux x86-64 builds with GCC or Clang include
-the SHA-NI backend by default
-(`TOS_SLHDSA_SHA_NI` in `crypto/pq/CMakeLists.txt`). A CPU that supports the
+A validator on the portable backend is not allowed, on either architecture.
+
+The reason is the price of the SLH-DSA rescue check (TVM `PQCHECKSIG_SUITE`
+suite 3): 4,500 gas plus its cell loads, which covers about 409 µs of
+verification ([GlobalVersions.md](GlobalVersions.md)). A price must hold on the
+slowest permitted validator, for a signature chosen to maximise the verifier's
+work. That input is `test/pq-slhdsa/slh-worst-case-vectors.txt`: 3,174 SHA-256
+compressions against 2,214 for an honest signature, the bound for the parameter
+set being 3,894. Measured for it:
+
+| Host | Hardware backend | Portable backend |
+|---|---|---|
+| x86-64 server, measuring host of the price, through the VM loop | 211-212 µs (`sha-ni`) | about 590 µs |
+| x86-64 testnet VPS class, estimated from that host | about 360 µs | about 1.0-1.1 ms |
+| x86-64 cloud VM (Xeon 6975P), shared CI runner | 242 µs (`sha-ni`) | 625 µs |
+| arm64 cloud VM (Neoverse-N2), shared CI runner | 188 µs (`armv8-sha2`) | 587 µs |
+
+The last two rows are the median of `bench-pq-slhdsa-verify` on the runners of
+the pull-request checks, which print it on every run. Scaled to the bound of
+3,894 compressions the arm64 figure is about 231 µs. The portable backend
+exceeds what the price covers on every host measured; a validator using it
+would spend more time on these checks than the gas they pay for, and could fall
+behind on blocks full of them.
+
+arm64 was first allowed on these measurements. They cover one arm64 CPU
+generation on a shared cloud VM, the hardware class production uses, and no
+older arm64 core. A validator on any CPU not in the table shows that it stays
+within the price with step 4 of the receipt below.
+
+The backend is chosen at run time (`crypto/pq/slhdsa-sha256.c`): from CPUID on
+x86-64, from the kernel's hardware capabilities on arm64. Linux builds with GCC
+or Clang include the backend of their architecture by default
+(`TOS_SLHDSA_SHA_NI` and `TOS_SLHDSA_ARMV8_SHA2` in `crypto/pq/CMakeLists.txt`),
+and a release's node build refuses to finish without it and names both
+switches in its build record (`slhdsa_sha256`). A CPU that supports the
 instructions does not prove that the deployed binary uses them: a build with
-`TOS_SLHDSA_SHA_NI=OFF`, or a hypervisor that hides the flags from the guest,
-silently falls back to the portable backend. The node does not check this at
-startup. Each validator therefore keeps a deployment receipt with:
+the switch off, or a hypervisor that hides the flags from the guest, silently
+falls back to the portable backend. The node does not check this at startup.
+Each validator therefore keeps a deployment receipt with:
 
-1. The CPU flags the validator host sees:
+1. The CPU flags the validator host sees. On x86-64,
    `grep -o -w -E 'sha_ni|ssse3|sse4_1|sse4_2' /proc/cpuinfo | sort -u` must
-   print all four.
+   print all four; on arm64,
+   `grep -o -w -E 'aes|pmull|sha1|sha2' /proc/cpuinfo | sort -u` must print all
+   four.
 2. The binary identity: the SHA-256 of the deployed `validator-engine`, the
-   source commit, and `TOS_SLHDSA_SHA_NI` from that build's `CMakeCache.txt`.
-3. The backend actually used: `TOS_REQUIRE_SHA_NI=1 test-pq-slhdsa-vectors
-   test/pq-slhdsa/slh-verify-vectors.txt`, run on the validator host, prints
-   `SLH-DSA SHA-256 backend: sha-ni` and fails if any other backend is
-   selected. Record how this test binary corresponds to the deployed one: the
-   same build directory, commit and configuration. A test program built
-   separately does not show which backend the deployed binary uses.
+   source commit, and the backend switch of its build: the `slhdsa_sha256`
+   line of a release's build record, or `TOS_SLHDSA_SHA_NI` /
+   `TOS_SLHDSA_ARMV8_SHA2` from a host build's `CMakeCache.txt`.
+3. The backend actually used: `test-pq-slhdsa-vectors
+   test/pq-slhdsa/slh-verify-vectors.txt`, run on the validator host with
+   `TOS_REQUIRE_SHA_NI=1` (x86-64) or `TOS_REQUIRE_ARMV8_SHA2=1` (arm64),
+   prints `SLH-DSA SHA-256 backend: sha-ni` or `armv8-sha2` and fails if any
+   other backend is selected. Record how this test binary corresponds to the
+   deployed one: the same commit and configuration. A test program built
+   otherwise does not show which backend the deployed binary uses.
+4. The time: `bench-pq-slhdsa-verify test/pq-slhdsa/slh-worst-case-vectors.txt
+   2000`, on the validator host while it is otherwise idle. The median of the
+   hardware backend's `verify` line must be below 330 µs, which is 409 µs
+   scaled from the 3,174 compressions of this input to the bound of 3,894. A
+   host above it is not allowed as a validator, whatever its architecture.
 
 Repeat the receipt after every hardware, hypervisor or binary change.
 

@@ -106,6 +106,14 @@ cached() { sed -n "s/^$1:[A-Z]*=//p" "$BUILD/CMakeCache.txt"; }
 [ "$(cached TOS_ARCH)" = "$CPU" ] || die "TOS_ARCH is not $CPU"
 [ "$(cached PORTABLE)" = "$CPU" ] || die "PORTABLE is not $CPU"
 [ "$(basename "$(cached CMAKE_CXX_COMPILER)")" = clang++-21 ] || die "the C++ compiler is not clang++-21"
+# The SLH-DSA check is priced for a hardware SHA-256 backend (doc/Validator.md).
+# A node binary built without the one for its architecture would verify with
+# the portable backend on every CPU, so it is not a validator's binary.
+case "$(uname -m)" in
+  x86_64) SLHDSA_BACKEND=TOS_SLHDSA_SHA_NI ;;
+  *) SLHDSA_BACKEND=TOS_SLHDSA_ARMV8_SHA2 ;;
+esac
+[ "$(cached "$SLHDSA_BACKEND")" = ON ] || die "$SLHDSA_BACKEND is not ON"
 JEMALLOC_LIB=$(cached JEMALLOC_LIBRARIES)
 [ -n "$JEMALLOC_LIB" ] || die "CMake found no jemalloc library"
 
@@ -157,6 +165,7 @@ install -m 0755 "$TOSCTL" "$OUT/tosctl"
   echo "architecture $(uname -m)"
   echo "compiler $(clang++-21 --version | head -1)"
   echo "flags CMAKE_BUILD_TYPE=Release TOS_ARCH=$CPU PORTABLE=$CPU TOS_USE_JEMALLOC=ON"
+  echo "slhdsa_sha256 TOS_SLHDSA_SHA_NI=$(cached TOS_SLHDSA_SHA_NI) TOS_SLHDSA_ARMV8_SHA2=$(cached TOS_SLHDSA_ARMV8_SHA2)"
   echo "$RUSTC_VERSION"
   echo "$CARGO_VERSION"
   echo "rust_flags RUSTFLAGS=$TOSCTL_RUSTFLAGS CC=clang-21 cargo build --release --locked -p tosctl"
