@@ -95,8 +95,9 @@ The figures below are the time of the verification alone
 The reference row was measured when the price was set, with honest signatures,
 and is scaled here to this input; the other rows are measured with it, the
 last two on the runners of the pull-request checks, which print them on every
-run. The arm64 hardware backend is faster than the reference class, and the
-portable backend is slower than it on every host, by a factor of about three.
+run. The arm64 hardware backend is faster than the reference class. The portable
+backend is slower than the reference class on every host, and about three
+times slower than the hardware backend of the same host.
 A validator on the portable backend would spend far more time on these checks
 than the gas they pay for, and could fall behind on blocks full of them.
 
@@ -140,9 +141,11 @@ Each validator therefore keeps a deployment receipt with:
    2000`, on the validator host while it is otherwise idle. Run it twice and
    record the second run: the first can read high while the CPU leaves a
    low-power state. The median of the hardware backend's `verify` line must
-   not exceed 360 µs, the upper end of what the price was set for. A host
-   above it is slower than the reference class and is not allowed as a
-   validator, whatever its architecture.
+   not exceed 360 µs. That is the upper figure of the price's statement,
+   which timed the whole instruction; the benchmark times the verification
+   alone, so the bound leaves about a tenth of margin over the reference
+   class's 315-326 µs. A host above it is slower than the reference class and
+   is not allowed as a validator, whatever its architecture.
 
 A release does not ship the two test programs of steps 3 and 4. Build them
 from a checkout of the release commit, the post-quantum library alone:
