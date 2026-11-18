@@ -54,6 +54,7 @@
 #include "json-rpc-http-policy.h"
 #include "json-rpc-server-internal.h"
 #include "json-rpc-server.h"
+#include "send-without-waiting.h"
 
 namespace {
 
@@ -100,7 +101,12 @@ class PortReservation {
 
 size_t open_fd_count() {
   size_t count = 0;
+#if defined(__APPLE__)
+  // macOS lists a process's own descriptors under /dev/fd; Linux under /proc.
+  DIR *dir = ::opendir("/dev/fd");
+#else
   DIR *dir = ::opendir("/proc/self/fd");
+#endif
   CHECK(dir != nullptr);
   while (::readdir(dir) != nullptr) {
     ++count;
@@ -231,7 +237,7 @@ class Client {
   // Returns false once the connection is closed by the server.
   bool send_some(const std::string &stream, size_t &offset) {
     while (offset < stream.size()) {
-      auto n = ::send(fd_, stream.data() + offset, stream.size() - offset, MSG_NOSIGNAL | MSG_DONTWAIT);
+      auto n = send_without_waiting(fd_, stream.data() + offset, stream.size() - offset);
       if (n < 0) {
         return errno == EAGAIN || errno == EWOULDBLOCK;
       }
@@ -680,17 +686,19 @@ void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
   options.per_ip_rate_requests = 0;
   options.per_ip_ingress_requests = 0;
   with_json_rpc(options, [with_key, trickle](int port) {
-    auto baseline_mem = td::BufferAllocator::get_buffer_mem();
-    Client client(port, 4096);
-    ASSERT_TRUE(client.connect());
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    auto fds_connected = open_fd_count();
-    // 400 batches: about 12 MB of requests asking for about 14 MB of replies.
+    // 400 batches: about 12 MB of requests asking for about 14 MB of replies. Built before
+    // connecting: the deadline runs from the connection, and on a slow host building the
+    // stream can take longer than the deadline itself.
     std::string stream;
     auto request = fat_batch(with_key);
     for (int i = 0; i < 400; i++) {
       stream += request;
     }
+    auto baseline_mem = td::BufferAllocator::get_buffer_mem();
+    Client client(port, 4096);
+    ASSERT_TRUE(client.connect());
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    auto fds_connected = open_fd_count();
     size_t offset = 0;
     auto start = Clock::now();
     auto give_up = start + std::chrono::seconds(20);
@@ -728,8 +736,9 @@ void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
     }
     LOG(WARNING) << "peak buffer memory over baseline: " << (peak_mem - baseline_mem) << " bytes; sent " << offset
                  << " bytes; released " << released_after << " s after the stall was seen";
-    // The stall was real: the server held well over a megabyte of replies
-    // for this client.
+    // The stall was real: the client sent megabytes of requests, and the server held well
+    // over a megabyte of replies for it.
+    ASSERT_TRUE(offset > (1u << 20));
     ASSERT_TRUE(stalled);
     ASSERT_TRUE(peak_mem > baseline_mem + (1 << 20));
     // Released by the deadline plus tolerance, counted from the moment the

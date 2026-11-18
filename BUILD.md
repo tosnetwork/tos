@@ -115,6 +115,7 @@ runs the steps below, as CI does. Every third-party library is built from
 ```bash
 xcode-select --install   # or a full Xcode
 brew install cmake ninja pkg-config autoconf automake libtool
+brew install ripgrep     # for the tests: the source-guard checks search with it
 ```
 
 Build with Apple clang and the macOS SDK. Homebrew's GNU `ar` (binutils) writes

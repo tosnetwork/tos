@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <vector>
 
+#include "../send-without-waiting.h"
 #include "adnl/adnl-ext-connection.hpp"
 #include "adnl/adnl-ext-limits.h"
 #include "adnl/adnl-source-share.h"
@@ -652,7 +653,7 @@ class RawExtPeer {
       return false;
     }
     while (!pending_.empty()) {
-      auto n = ::send(fd_, pending_.data(), pending_.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+      auto n = send_without_waiting(fd_, pending_.data(), pending_.size());
       if (n < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
           break;

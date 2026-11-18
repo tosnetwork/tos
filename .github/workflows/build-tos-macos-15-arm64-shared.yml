@@ -42,7 +42,8 @@ jobs:
 
     - name: Install build tools
       run: |
-        brew install ninja pkg-config autoconf automake libtool ccache
+        # ripgrep: the source-guard tests search the tree with it, as on Linux.
+        brew install ninja pkg-config autoconf automake libtool ccache ripgrep
 
     - name: Restore cache TOS
       id: cache-tos

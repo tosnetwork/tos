@@ -2233,6 +2233,7 @@ if(TARGET validator-engine AND TARGET tos-pq-consensus-key)
            COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-pq-signer-no-test-clock.py"
                    --nm "${TOS_NM_EXECUTABLE}" --cxx "${CMAKE_CXX_COMPILER}"
                    --source-root "${CMAKE_CURRENT_SOURCE_DIR}"
+                   --sysroot "${CMAKE_OSX_SYSROOT}"
                    --production "$<TARGET_FILE:tos_pq_consensus_signer>"
                    --binary "$<TARGET_FILE:validator-engine>"
                    --binary "$<TARGET_FILE:tos-pq-consensus-key>"
