@@ -590,8 +590,8 @@ and it names no tag: its source commit and ref are those of `main` when the
 publisher ran, not the tag commit, so `--source-digest <tag commit>` does not
 match. The tag is bound through `release-provenance.json`, which is itself
 attested and records the tag, the tag commit, the build run and artifact
-digest of each input, and under `assets` the SHA-256 of every other published
-file.
+digest of each input, and under `assets` the SHA-256 of every published asset
+(every file except itself and `SHA256SUMS`).
 
 The publisher must be dispatched from `main`; its first step refuses any other
 ref. That refusal is a guard against a mistake, not a control: a copy of the
