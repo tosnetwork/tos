@@ -97,11 +97,14 @@ static void hardware_compress(uint32_t *sp)
 #else
 #define HARDWARE_BACKEND_NAME "armv8-sha2"
 
-/* The kernel reports the SHA-256 instructions the vendored transform uses as HWCAP_SHA2. Its
- * other instructions are Advanced SIMD, which every aarch64 Linux build already assumes. */
+/* The vendored transform is compiled with -march=armv8-a+crypto, which lets the compiler use
+ * the AES, PMULL, SHA1 and SHA2 instructions, so every one of those must be present, not only
+ * SHA2 (the rule the x86-64 probe follows). Its other instructions are Advanced SIMD, which
+ * every aarch64 Linux build already assumes. */
 static int accepts_hwcap(unsigned long hwcap)
 {
-  return (hwcap & HWCAP_SHA2) != 0;
+  const unsigned long needed = HWCAP_AES | HWCAP_PMULL | HWCAP_SHA1 | HWCAP_SHA2;
+  return (hwcap & needed) == needed;
 }
 
 static int cpu_has_hardware_sha256(void)

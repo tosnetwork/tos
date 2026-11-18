@@ -192,18 +192,24 @@ static void cpu_probe(void)
 }
 #else
 #define HARDWARE_BACKEND "armv8-sha2"
-/* The probe accepts the ARMv8 SHA2 path exactly when AT_HWCAP carries the SHA2 bit (bit 6 of the
- * aarch64 Linux hardware capabilities); no other capability bit decides it. */
+/* The probe accepts the ARMv8 SHA2 path exactly when AT_HWCAP carries all four bits of the
+ * extensions the transform is compiled for: AES, PMULL, SHA1 and SHA2 (bits 3 to 6 of the
+ * aarch64 Linux hardware capabilities). No other bit decides it, and no one of them suffices. */
 static void cpu_probe(void)
 {
-  const unsigned long sha2 = 1ul << 6;
-  CHECK(tos_slhdsa_sha256_accepts_hwcap(sha2) == 1);
+  const unsigned long aes = 1ul << 3, pmull = 1ul << 4, sha1 = 1ul << 5, sha2 = 1ul << 6;
+  const unsigned long needed = aes | pmull | sha1 | sha2;
+  CHECK(tos_slhdsa_sha256_accepts_hwcap(needed) == 1);
   CHECK(tos_slhdsa_sha256_accepts_hwcap(~0ul) == 1);
   CHECK(tos_slhdsa_sha256_accepts_hwcap(0) == 0);
+  CHECK(tos_slhdsa_sha256_accepts_hwcap(~0ul & ~aes) == 0);
+  CHECK(tos_slhdsa_sha256_accepts_hwcap(~0ul & ~pmull) == 0);
+  CHECK(tos_slhdsa_sha256_accepts_hwcap(~0ul & ~sha1) == 0);
   CHECK(tos_slhdsa_sha256_accepts_hwcap(~0ul & ~sha2) == 0);
   for (unsigned bit = 0; bit < 8 * sizeof(unsigned long); bit++)
   {
-    CHECK(tos_slhdsa_sha256_accepts_hwcap(1ul << bit) == (bit == 6));
+    CHECK(tos_slhdsa_sha256_accepts_hwcap(1ul << bit) == 0);
+    CHECK(tos_slhdsa_sha256_accepts_hwcap(needed | (1ul << bit)) == 1);
   }
 }
 #endif

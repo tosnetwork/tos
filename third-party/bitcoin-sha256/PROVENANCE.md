@@ -36,7 +36,7 @@ binary keeps the baseline of its build and still starts on a CPU without the ext
 `crypto/pq/slhdsa-sha256-armv8.cpp` converts the SLH state layout (chaining value as big-endian
 words) to the host-order words `sha256_arm_shani::Transform` takes and calls it for one block.
 `crypto/pq/slhdsa-sha256.c` calls it only after the kernel reports the SHA2 extension
-(`getauxval(AT_HWCAP) & HWCAP_SHA2`), and otherwise uses the imported portable compression of
+(`getauxval(AT_HWCAP)` carries `HWCAP_AES`, `HWCAP_PMULL`, `HWCAP_SHA1` and `HWCAP_SHA2`, every extension `+crypto` enables), and otherwise uses the imported portable compression of
 `third-party/slhdsa-c`.
 `sha256d64_arm_shani::Transform_2way` in the same file is compiled but not called.
 
