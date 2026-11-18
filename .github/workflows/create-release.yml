@@ -65,11 +65,11 @@ jobs:
           TAG_SHA: ${{ steps.tag.outputs.sha }}
         run: |
           python3 scripts/release-artifacts.py collect \
-            --repo "$GITHUB_REPOSITORY" --set full --tag "$TAG" --tag-sha "$TAG_SHA" --out artifacts
+            --repo "$GITHUB_REPOSITORY" --set full --tag "$TAG" --tag-sha "$TAG_SHA" --out release-inputs
 
       - name: Stage release assets
         run: |
-          python3 scripts/release-artifacts.py stage --set full --artifacts artifacts --out stage
+          python3 scripts/release-artifacts.py stage --set full --artifacts release-inputs --out stage
           cp recent_changelog.md stage-notes.md
 
       - name: Hand the staged assets to the publishing job

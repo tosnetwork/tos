@@ -1012,6 +1012,24 @@ class RepositoryConfigTest(unittest.TestCase):
             )
             self.assertNotIn("--set ", text.replace(f"--set {release_set} ", ""), workflow)
 
+    def test_release_workflows_write_into_directories_the_checkout_lacks(self) -> None:
+        # collect and stage refuse an existing --out, and both run at the
+        # root of a checkout of the tag: a name the repository already has
+        # (as artifacts/ is) fails every release before anything is collected.
+        root = HERE.parent
+        for workflow in ("create-release.yml", "create-tol-release.yml"):
+            text = (root / ".github" / "workflows" / workflow).read_text()
+            outs = re.findall(r"--out (\S+)", text)
+            self.assertEqual(len(outs), 2, workflow)
+            for out in outs:
+                self.assertRegex(out, r"^[a-z][a-z-]*$", workflow)
+                self.assertFalse(
+                    (root / out).exists(), f"{workflow}: --out {out} exists in the tree"
+                )
+            collected, staged = outs
+            self.assertIn("stage --set", text, workflow)
+            self.assertIn(f"--artifacts {collected} --out {staged}", text, workflow)
+
 
 class PqToolPackagingTest(unittest.TestCase):
     """A Linux release and the node image carry the post-quantum key tools.
