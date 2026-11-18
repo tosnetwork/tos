@@ -20,7 +20,7 @@ const char *tos_slhdsa_sha256_backend(void);
 void tos_slhdsa_sha_ni_compress(uint32_t *sp);
 
 /* The same by the vendored ARMv8 SHA2 transform. aarch64 builds only; only called after the
- * kernel has reported the SHA2 extension. */
+ * kernel has reported the AES, PMULL, SHA1 and SHA2 extensions. */
 void tos_slhdsa_armv8_sha2_compress(uint32_t *sp);
 
 #ifdef TOS_SLHDSA_SHA256_TESTING

@@ -73,7 +73,8 @@ them.
 An arm64 host is not allowed as a validator. Linux arm64 builds with GCC or
 Clang include an accelerated SHA-256 backend by default
 (`TOS_SLHDSA_ARMV8_SHA2` in `crypto/pq/CMakeLists.txt`): it uses the ARMv8 SHA2
-extension when the kernel reports it and the portable backend otherwise, and
+instructions when the kernel reports the AES, PMULL, SHA1 and SHA2 extensions,
+and the portable backend otherwise, and
 the test programs name it `armv8-sha2`. Its verification time has not been
 measured on production-class arm64 hardware, so the price of the check is not
 known to hold there. The pull-request checks print the time of
