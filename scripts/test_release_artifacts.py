@@ -771,6 +771,11 @@ class ReleaseStateTest(CheckTagTest):
         (self.stage / "fift-linux").write_bytes(b"fift")
         (self.stage / "SHA256SUMS").write_bytes(b"sums")
         self.api = FakeTagApi({TAG: commit(TAG_SHA)})
+        # Waits between reads of the release listing are recorded, not slept.
+        self.waits: list[float] = []
+        original = release_artifacts._sleep
+        release_artifacts._sleep = self.waits.append
+        self.addCleanup(setattr, release_artifacts, "_sleep", original)
 
     def uploaded(self, name: str, content: bytes | None = None, **overrides: Any) -> dict[str, Any]:
         """An uploaded asset whose served bytes are the staged file, or `content`."""
@@ -801,6 +806,39 @@ class ReleaseStateTest(CheckTagTest):
     def test_existing_draft_is_refused(self) -> None:
         self.api.releases = [release(6, draft=True)]
         self.assert_refused(self.api, "already exists (draft release 6)")
+
+    def test_a_listing_that_lags_the_write_is_read_again(self) -> None:
+        # The draft was created one step earlier and the listing does not
+        # show it yet; then it shows it without its assets; then complete.
+        complete = release(7, draft=True, assets=self.complete())
+        views = [[], [release(7, draft=True)], [complete]]
+
+        def get_all(path: str) -> list[Any]:
+            self.api.requests.append(path)
+            return views.pop(0) if len(views) > 1 else views[0]
+
+        self.api.get_all = get_all  # type: ignore[method-assign]
+        self.check(self.api, release_state="draft", assets_dir=self.stage)
+        self.assertEqual(self.waits, [release_artifacts.LISTING_WAIT_SECONDS] * 2)
+
+    def test_a_release_that_never_appears_is_refused_after_bounded_reads(self) -> None:
+        self.assert_refused(
+            self.api,
+            "expected exactly one draft release for v2026.10, found 0",
+            release_state="draft",
+        )
+        self.assertEqual(len(self.waits), release_artifacts.LISTING_ATTEMPTS - 1)
+        listing = f"repos/{REPO}/releases?per_page=100"
+        self.assertEqual(self.api.requests.count(listing), release_artifacts.LISTING_ATTEMPTS)
+
+    def test_two_releases_for_the_tag_are_refused_without_waiting(self) -> None:
+        self.api.releases = [release(7, draft=True), release(8, draft=True)]
+        self.assert_refused(self.api, "found 2", release_state="draft")
+        self.assertEqual(self.waits, [])
+
+    def test_the_none_state_reads_the_listing_once(self) -> None:
+        self.check(self.api, release_state="none")
+        self.assertEqual(self.api.requests.count(f"repos/{REPO}/releases?per_page=100"), 1)
 
     def test_draft_without_assets_passes_before_upload(self) -> None:
         self.api.releases = [release(7, draft=True)]
