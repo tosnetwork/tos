@@ -407,8 +407,9 @@ name (`validator-engine`, ..., `dht-server`, `tos-rpc`, `tos-wallet-index`,
 `tosctl`, `BUILD-INFO`). An installer
 checks the zip against that digest and each binary against its member, or
 against `SHA256SUMS`, which the same publisher job writes.
-`release-provenance.json` records digests per artifact zip only; it has no
-per-asset digest.
+`release-provenance.json` records the digest of each artifact zip and, under
+`assets`, the SHA-256 of every other published file (releases after
+`v2026.11`).
 
 The node binaries are plain ELF executables, not AppImages, built by
 `.github/workflows/build-tos-linux-node-binaries.yml` with
@@ -453,7 +454,10 @@ toolchain:
 
 The script refuses to finish unless `rustc` and `cargo` are the pinned
 version, the build left the checkout (and so `Cargo.lock`) unchanged, and
-`tosctl --version` prints `COMMIT_ID:` with the tagged commit.
+`tosctl --version` prints `COMMIT_ID:` with the tagged commit. The toolchain is
+checked before the C++ build starts. `GIT_BRANCH` is fixed to `HEAD`, the name
+a tag checkout reports, so a build dispatched on a branch at the tag commit
+embeds the same text as the build the tag push started.
 
 `node-build-info-linux-<arch>.txt` records the commit,
 `SOURCE_DATE_EPOCH`, the compiler, the flags, the `rustc` and `cargo`
@@ -499,7 +503,8 @@ the release's `SHA256SUMS` before relying on it.
    `scripts/release-artifacts.json`) to succeed on that tag. `v*` tags start
    them on push; for a `tol-v*` tag, run each of them by hand on the tag.
 3. Run the publisher (Actions, "Create release" or "Create tol release",
-   "Run workflow") with the tag.
+   "Run workflow") with the tag, from the branch `main`: the attestations are
+   verified against the workflow on `main`.
 
 A new binary joins a release set only once a real build target exists and
 its build workflow has succeeded on a tag: then add the workflow's artifact
@@ -533,6 +538,10 @@ The publisher then:
    for a maintainer to inspect: deleting an immutable release makes its tag
    unusable for good, and such a failure says nothing about the tag.
 
+Between collecting and publishing, the publisher **attests** every staged
+file (job `attest`): see [Attestations](#attestations). The publishing job
+needs that job, so a release whose files are not attested is not published.
+
 GitHub's release listing can lag a write by a moment, so a step that expects
 a draft or a published release reads the listing again, up to ten times six
 seconds apart, before it refuses (`LISTING_ATTEMPTS` in
@@ -545,6 +554,61 @@ A second run waits for the first and is then refused at step 2, because the
 release exists. An asset is never added to or replaced in an existing
 release. If a run fails after step 2 it leaves a draft behind; delete that
 draft by hand (it was never public) before running the publisher again.
+
+### Attestations
+
+`SHA256SUMS` and `release-provenance.json` are downloaded from the same
+release as the binaries. They detect damage and mix-ups, not a release that
+was rewritten as a whole. The trust root outside the release is a build
+provenance attestation: for every file `SHA256SUMS` lists (every asset and
+`release-provenance.json`; not `SHA256SUMS` itself), the publisher's `attest`
+job has GitHub sign a statement, through Sigstore, that the workflow
+`create-release.yml` (or `create-tol-release.yml`) of this repository
+published a file with that SHA-256. There is no signing key to hold or rotate:
+the signature is bound to the workflow's identity.
+
+The `attest` job has the signing token (`id-token: write`,
+`attestations: write`) and read access only. It checks out nothing and runs no
+script: it receives the staged files and calls the attestation action, both
+pinned by commit. It cannot write a release, and the job that writes the
+release cannot sign. The build workflows hold no signing token: they run on
+pull requests and run the build scripts of every dependency.
+`scripts/test_release_artifacts.py` fails if either publisher's `attest` job
+gains a permission, a script or a condition, or if publication stops waiting
+for it.
+
+An attestation says who published the bytes, not what they were built from,
+and it names no tag: its source commit and ref are those of `main` when the
+publisher ran, not the tag commit, so `--source-digest <tag commit>` does not
+match. The tag is bound through `release-provenance.json`, which is itself
+attested and records the tag, the tag commit, the build run and artifact
+digest of each input, and under `assets` the SHA-256 of every other published
+file.
+
+The publisher must be dispatched from `main`; its first step refuses any other
+ref. That refusal is a guard against a mistake, not a control: a copy of the
+workflow on another branch can drop it and attest any digest. The control is
+in the verification, which must pin the workflow **and the ref**. With the
+GitHub CLI:
+
+```
+gh attestation verify release-provenance.json --repo tosnetwork/tos \
+  --cert-identity https://github.com/tosnetwork/tos/.github/workflows/create-release.yml@refs/heads/main \
+  --source-ref refs/heads/main
+```
+
+Then check, in the verified `release-provenance.json`, that `tag` and
+`tag_commit` are the release you expect, and that `assets` gives the SHA-256
+of each file you downloaded. An asset can be verified directly with the same
+command, but that alone does not show which release it belongs to. Do not
+verify with `--signer-workflow` alone: it matches the workflow on any ref. For
+a Tol release the identity ends in `create-tol-release.yml@refs/heads/main`.
+
+The pin is as strong as the control over `main`. The identity string above is
+the one a run from `main` is expected to carry; it has not been observed yet,
+because no release has been attested. `v2026.11` was published before this job
+existed and has no attestations, and its `release-provenance.json` has no
+`assets`.
 
 ### Repository settings required for closure
 

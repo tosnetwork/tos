@@ -560,7 +560,13 @@ def stage(config: dict[str, Any], *, release_set: str, artifacts: Path, out: Pat
                     if path.is_file():
                         archive.write(path, str(path.relative_to(root)))
 
-    shutil.copyfile(provenance, claim("release-provenance.json"))
+    # The published provenance record also names every other staged file's
+    # digest. It is one of the attested files, so a verifier who has checked
+    # its attestation can bind each asset to this tag from the record alone;
+    # SHA256SUMS is not attested, and an attestation names no tag.
+    record = json.loads(provenance.read_text())
+    record["assets"] = {name: sha256_file(out / name) for name in sorted(staged)}
+    claim("release-provenance.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     sums = "".join(f"{sha256_file(out / name)}  {name}\n" for name in sorted(staged))
     (out / "SHA256SUMS").write_text(sums)
     return sorted(staged)

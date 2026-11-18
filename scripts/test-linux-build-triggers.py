@@ -205,6 +205,8 @@ class TreeTest(unittest.TestCase):
                         "rust-toolchain.toml",
                         "scripts/install-rust-toolchain.sh",
                         "tosctl/src/Cargo.lock",
+                        "tosctl/src/common/build/build.rs",
+                        "tosctl/src/node-control/nodectl/src/app_cli_args.rs",
                     ],
                 },
                 "workflow_dispatch": None,
