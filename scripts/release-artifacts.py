@@ -566,9 +566,7 @@ def stage(config: dict[str, Any], *, release_set: str, artifacts: Path, out: Pat
     # SHA256SUMS is not attested, and an attestation names no tag.
     record = json.loads(provenance.read_text())
     record["assets"] = {name: sha256_file(out / name) for name in sorted(staged)}
-    claim("release-provenance.json").write_text(
-        json.dumps(record, indent=2, sort_keys=True) + "\n"
-    )
+    claim("release-provenance.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     sums = "".join(f"{sha256_file(out / name)}  {name}\n" for name in sorted(staged))
     (out / "SHA256SUMS").write_text(sums)
     return sorted(staged)
