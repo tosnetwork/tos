@@ -982,6 +982,81 @@ class ReleaseStateTest(CheckTagTest):
         self.assert_refused(self.api, "release state 'gone'", release_state="gone")
 
 
+def workflow_job(text: str, job: str) -> str | None:
+    """The body of one job of a workflow, or None if it has no such job."""
+    jobs = text.split("\njobs:\n", 1)[-1]
+    match = re.search(rf"(?ms)^  {re.escape(job)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", jobs)
+    return match.group(1) if match else None
+
+
+def publisher_attest_problems(text: str, sums: str) -> list[str]:
+    attest = workflow_job(text, "attest")
+    publish = workflow_job(text, "publish")
+    if attest is None or publish is None:
+        return ["the publisher has no attest job or no publish job"]
+    problems: list[str] = []
+    # Comments describe the next job; only the job's own lines are judged.
+    lines = [
+        line for line in attest.splitlines() if line.strip() and not line.lstrip().startswith("#")
+    ]
+    body = "\n".join(lines) + "\n"
+    if "    needs: collect\n" not in body:
+        problems.append("attest does not follow collect")
+    grants = re.search(r"(?m)^    permissions:\n((?:      .*\n)+)", body)
+    if grants is None or sorted(grants.group(1).split("\n")[:-1]) != [
+        "      attestations: write",
+        "      contents: read",
+        "      id-token: write",
+    ]:
+        problems.append("attest holds other permissions than the signing token and read access")
+    if re.search(r"(?m)^\s*(?:- )?(?:run|if|continue-on-error):", body):
+        problems.append("attest runs a script, is conditional or tolerates failure")
+    uses = re.findall(r"(?m)^\s*uses: (\S+)", body)
+    if [use.split("@")[0] for use in uses] != [
+        "actions/download-artifact",
+        "actions/attest-build-provenance",
+    ] or not all(re.fullmatch(r"[^@]+@[0-9a-f]{40}", use) for use in uses):
+        problems.append(
+            "attest must only receive the staged files and attest them, by pinned actions"
+        )
+    if f"          subject-checksums: {sums}\n" not in body:
+        problems.append(f"attest does not attest the files {sums} lists")
+    if "    needs: [collect, attest]\n" not in publish:
+        problems.append("publish does not wait for attest")
+    return problems
+
+
+def publisher_attest_mutants(text: str) -> dict[str, str]:
+    def swap(old: str, new: str) -> str:
+        if text.count(old) != 1:
+            raise AssertionError(f"{old!r} occurs {text.count(old)} times")
+        return text.replace(old, new)
+
+    attest_grants = (
+        "    permissions:\n      contents: read\n      id-token: write\n      attestations: write\n"
+    )
+    return {
+        "unchanged": text,
+        "publish does not wait": swap("    needs: [collect, attest]\n", "    needs: collect\n"),
+        "release access": swap(
+            attest_grants, attest_grants.replace("contents: read", "contents: write")
+        ),
+        "no signing token": swap(
+            attest_grants, attest_grants.replace("      id-token: write\n", "")
+        ),
+        "conditional": swap(attest_grants, "    if: github.ref_type == 'tag'\n" + attest_grants),
+        "another file list": swap("/SHA256SUMS\n\n", "/OTHERSUMS\n\n"),
+        "runs a script": swap(
+            "      - name: Attest every file SHA256SUMS lists\n",
+            "      - run: ./stage/hook.sh\n      - name: Attest every file SHA256SUMS lists\n",
+        ),
+        "unpinned action": swap(
+            "actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a",
+            "actions/attest-build-provenance@v3",
+        ),
+    }
+
+
 class RepositoryConfigTest(unittest.TestCase):
     """The committed configuration names workflows that exist and build on tags."""
 
@@ -1052,6 +1127,23 @@ class RepositoryConfigTest(unittest.TestCase):
                 f'collect \\\n            --repo "$GITHUB_REPOSITORY" --set {release_set}', text
             )
             self.assertNotIn("--set ", text.replace(f"--set {release_set} ", ""), workflow)
+
+    def test_release_workflows_attest_what_they_publish(self) -> None:
+        # The attestation job signs with the publisher's identity. It may
+        # hold the signing token only: no release access, no checkout, no
+        # repository code. Publication waits for it.
+        workflows = HERE.parent / ".github" / "workflows"
+        for workflow, sums in (
+            ("create-release.yml", "release/stage/SHA256SUMS"),
+            ("create-tol-release.yml", "stage/SHA256SUMS"),
+        ):
+            for name, text in publisher_attest_mutants((workflows / workflow).read_text()).items():
+                with self.subTest(workflow=workflow, mutant=name):
+                    problems = publisher_attest_problems(text, sums)
+                    if name == "unchanged":
+                        self.assertEqual(problems, [], workflow)
+                    else:
+                        self.assertNotEqual(problems, [], workflow)
 
     def test_release_workflows_delete_a_release_only_when_the_tag_moved(self) -> None:
         # Deleting an immutable release makes its tag unusable for good, so a
@@ -1336,7 +1428,12 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
         '\n  export RUSTFLAGS="$TOSCTL_RUSTFLAGS" CARGO_TARGET_DIR="$TOSCTL_TARGET"\n',
         "\n  export CC=clang-21 CXX=clang++-21\n",
         '\n  export RUSTC_WRAPPER="" CARGO_BUILD_RUSTC_WRAPPER="" CARGO_INCREMENTAL=0\n',
-        "\n  unset CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_TARGET GIT_COMMIT GIT_BRANCH GIT_COMMIT_DATE\n",
+        "\n  unset CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_TARGET GIT_COMMIT GIT_COMMIT_DATE\n",
+        "\n  unset CFLAGS CXXFLAGS TARGET_CFLAGS TARGET_CXXFLAGS\n",
+        # ... the same embedded branch name for a tag build and a dispatch build ...
+        "\n  export GIT_BRANCH=HEAD\n",
+        # ... no other compiler standing in for the checked one ...
+        "\nunset RUSTC CARGO_BUILD_RUSTC RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER\n",
         # ... the committed lock file, which the build must leave as it was ...
         '\n  cargo build --release --locked -p tosctl -j "$JOBS"\n',
         "\nTOSCTL=$TOSCTL_TARGET/release/tosctl\n"
@@ -1356,6 +1453,13 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
         ["cargo", "build", "--release", "--locked", "-p", "tosctl", "-j", '"$JOBS"']
     ]:
         problems.append("the node build script does not build tosctl with --release --locked")
+    # A host without the pinned toolchain is refused before the long C++ build.
+    if (
+        not 0
+        <= script.find('\n[[ "$RUSTC_VERSION" == "rustc $RUST_CHANNEL "* ]]')
+        < script.find("\ncmake -S . -B")
+    ):
+        problems.append("the node build script checks the Rust toolchain after the C++ build")
     if "target-cpu=native" in script or "sccache" in script:
         problems.append("the node build script uses the build host's CPU or a compiler cache")
     for line in recipe:
@@ -1410,6 +1514,9 @@ class NodeBinaryReleaseTest(unittest.TestCase):
         "rust-toolchain.toml",
         "scripts/install-rust-toolchain.sh",
         "tosctl/src/Cargo.lock",
+        # The two files behind the COMMIT_ID line the script requires.
+        "tosctl/src/common/build/build.rs",
+        "tosctl/src/node-control/nodectl/src/app_cli_args.rs",
     )
     # binary -> its path in the build directory
     PATHS = {

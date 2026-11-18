@@ -453,7 +453,10 @@ toolchain:
 
 The script refuses to finish unless `rustc` and `cargo` are the pinned
 version, the build left the checkout (and so `Cargo.lock`) unchanged, and
-`tosctl --version` prints `COMMIT_ID:` with the tagged commit.
+`tosctl --version` prints `COMMIT_ID:` with the tagged commit. The toolchain is
+checked before the C++ build starts. `GIT_BRANCH` is fixed to `HEAD`, the name
+a tag checkout reports, so a build dispatched on a branch at the tag commit
+embeds the same text as the build the tag push started.
 
 `node-build-info-linux-<arch>.txt` records the commit,
 `SOURCE_DATE_EPOCH`, the compiler, the flags, the `rustc` and `cargo`
@@ -533,6 +536,10 @@ The publisher then:
    for a maintainer to inspect: deleting an immutable release makes its tag
    unusable for good, and such a failure says nothing about the tag.
 
+Between collecting and publishing, the publisher **attests** every staged
+file (job `attest`): see [Attestations](#attestations). The publishing job
+needs that job, so a release whose files are not attested is not published.
+
 GitHub's release listing can lag a write by a moment, so a step that expects
 a draft or a published release reads the listing again, up to ten times six
 seconds apart, before it refuses (`LISTING_ATTEMPTS` in
@@ -545,6 +552,44 @@ A second run waits for the first and is then refused at step 2, because the
 release exists. An asset is never added to or replaced in an existing
 release. If a run fails after step 2 it leaves a draft behind; delete that
 draft by hand (it was never public) before running the publisher again.
+
+### Attestations
+
+`SHA256SUMS` and `release-provenance.json` are downloaded from the same
+release as the binaries. They detect damage and mix-ups, not a release that
+was rewritten as a whole. The trust root outside the release is a build
+provenance attestation: for every file `SHA256SUMS` lists (every asset and
+`release-provenance.json`; not `SHA256SUMS` itself), the publisher's `attest`
+job has GitHub sign a statement, through Sigstore, that the workflow
+`create-release.yml` (or `create-tol-release.yml`) of this repository
+produced a file with that SHA-256. There is no signing key to hold or rotate:
+the signature is bound to the workflow's identity.
+
+The `attest` job has the signing token (`id-token: write`,
+`attestations: write`) and read access only. It checks out nothing and runs no
+script: it receives the staged files and calls the attestation action, both
+pinned by commit. It cannot write a release, and the job that writes the
+release cannot sign. The build workflows hold no signing token: they run on
+pull requests and run the build scripts of every dependency.
+`scripts/test_release_artifacts.py` fails if either publisher's `attest` job
+gains a permission, a script or a condition, or if publication stops waiting
+for it.
+
+An attestation says who published the bytes, not what they were built from.
+`release-provenance.json`, itself attested, carries that: the tag commit and
+the build run and artifact digest of each input. Verify a downloaded asset
+with the GitHub CLI:
+
+```
+gh attestation verify validator-engine-linux-x86_64 --repo tosnetwork/tos \
+  --signer-workflow tosnetwork/tos/.github/workflows/create-release.yml
+gh attestation verify release-provenance.json --repo tosnetwork/tos \
+  --signer-workflow tosnetwork/tos/.github/workflows/create-release.yml
+```
+
+Both must pass, and `release-provenance.json` must name the expected tag and
+commit. `v2026.11` was published before this job existed and has no
+attestations.
 
 ### Repository settings required for closure
 

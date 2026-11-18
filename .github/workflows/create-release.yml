@@ -82,6 +82,31 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  # Build provenance for every staged file, signed with this workflow's
+  # identity through Sigstore: a statement, outside the release and its
+  # download channel, that this publisher released exactly these bytes. The
+  # job holds the signing token and no write access to releases: it checks
+  # out nothing and runs no repository code. The publishing
+  # job needs it, so a release whose files are not attested is not published.
+  attest:
+    needs: collect
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Receive the staged assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-stage
+          path: release
+
+      - name: Attest every file SHA256SUMS lists
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-checksums: release/stage/SHA256SUMS
+
   # The only job that writes a v* release. All assets go into one draft,
   # and the draft is published once. Before each step that creates, fills or
   # publishes it, check-tag re-resolves the tag on GitHub and confirms the
@@ -95,7 +120,7 @@ jobs:
   # The tag ruleset and release immutability in doc/tos-release-policy.md
   # close the window between the last check and publication.
   publish:
-    needs: collect
+    needs: [collect, attest]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

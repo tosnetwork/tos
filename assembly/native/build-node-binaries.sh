@@ -56,6 +56,16 @@ esac
 REV=$(git rev-parse HEAD)
 SOURCE_DATE_EPOCH=$(git log -1 --format=%ct HEAD)
 export SOURCE_DATE_EPOCH
+# The Rust toolchain is checked before the long C++ build, so a host without
+# the pinned one fails at once. RUSTC and its siblings would let another
+# compiler stand in for the one checked here.
+unset RUSTC CARGO_BUILD_RUSTC RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER
+RUST_CHANNEL=$(sed -nE 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)"[[:space:]]*$/\1/p' rust-toolchain.toml)
+[ -n "$RUST_CHANNEL" ] || die "rust-toolchain.toml pins no channel"
+RUSTC_VERSION=$(cd tosctl/src && rustc --version)
+CARGO_VERSION=$(cd tosctl/src && cargo --version)
+[[ "$RUSTC_VERSION" == "rustc $RUST_CHANNEL "* ]] || die "rustc is '$RUSTC_VERSION', not the pinned $RUST_CHANNEL"
+[[ "$CARGO_VERSION" == "cargo $RUST_CHANNEL "* ]] || die "cargo is '$CARGO_VERSION', not the pinned $RUST_CHANNEL"
 # No compiler cache: a release binary is compiled from source, never taken
 # from objects another run left behind.
 export CCACHE_DISABLE=1
@@ -117,12 +127,6 @@ done
 # Cargo.lock. RUSTFLAGS is set here, so flags from the environment or a cargo
 # configuration file do not apply; the empty wrapper settings turn off a
 # compiler cache configured on the build host.
-RUST_CHANNEL=$(sed -nE 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)"[[:space:]]*$/\1/p' rust-toolchain.toml)
-[ -n "$RUST_CHANNEL" ] || die "rust-toolchain.toml pins no channel"
-RUSTC_VERSION=$(cd tosctl/src && rustc --version)
-CARGO_VERSION=$(cd tosctl/src && cargo --version)
-[[ "$RUSTC_VERSION" == "rustc $RUST_CHANNEL "* ]] || die "rustc is '$RUSTC_VERSION', not the pinned $RUST_CHANNEL"
-[[ "$CARGO_VERSION" == "cargo $RUST_CHANNEL "* ]] || die "cargo is '$CARGO_VERSION', not the pinned $RUST_CHANNEL"
 TOSCTL_RUSTFLAGS="-C target-cpu=$RUST_CPU"
 TOSCTL_TARGET=$PWD/$BUILD/tosctl-target
 (
@@ -130,7 +134,12 @@ TOSCTL_TARGET=$PWD/$BUILD/tosctl-target
   export RUSTFLAGS="$TOSCTL_RUSTFLAGS" CARGO_TARGET_DIR="$TOSCTL_TARGET"
   export CC=clang-21 CXX=clang++-21
   export RUSTC_WRAPPER="" CARGO_BUILD_RUSTC_WRAPPER="" CARGO_INCREMENTAL=0
-  unset CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_TARGET GIT_COMMIT GIT_BRANCH GIT_COMMIT_DATE
+  unset CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_TARGET GIT_COMMIT GIT_COMMIT_DATE
+  unset CFLAGS CXXFLAGS TARGET_CFLAGS TARGET_CXXFLAGS
+  # tosctl --version embeds a branch name. A tag checkout has none and reports
+  # HEAD; fixing it makes a build dispatched on a branch at the same commit
+  # report the same.
+  export GIT_BRANCH=HEAD
   cargo build --release --locked -p tosctl -j "$JOBS"
 )
 TOSCTL=$TOSCTL_TARGET/release/tosctl
