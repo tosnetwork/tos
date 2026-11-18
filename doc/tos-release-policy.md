@@ -374,7 +374,10 @@ release-writing action, or sends a write request to a releases API path, and
 Validators, full nodes, DHT servers and the standalone wallet services
 ([standalone-wallet-services.md](standalone-wallet-services.md)) are
 installed from these assets of a
-`v<version>` release, one per architecture (`<arch>` is `x86_64` or `arm64`):
+`v<version>` release, one per architecture (`<arch>` is `x86_64` or `arm64`).
+A validator must use the x86-64 assets: arm64 is not allowed for a validator
+([Validator.md](Validator.md#cpu-instruction-set)); the arm64 assets are for
+full nodes, the wallet services, DHT servers and tools.
 
 | Asset | Binary |
 |---|---|
