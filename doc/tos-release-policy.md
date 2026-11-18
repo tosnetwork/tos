@@ -612,11 +612,14 @@ command, but that alone does not show which release it belongs to. Do not
 verify with `--signer-workflow` alone: it matches the workflow on any ref. For
 a Tol release the identity ends in `create-tol-release.yml@refs/heads/main`.
 
-The pin is as strong as the control over `main`. The identity string above is
-the one a run from `main` is expected to carry; it has not been observed yet,
-because no release has been attested. `v2026.11` was published before this job
-existed and has no attestations, and its `release-provenance.json` has no
-`assets`.
+The pin is as strong as the control over `main`. The identity string above was
+confirmed against `v2026.11-1`, the first attested release: the command exits
+0 for its `release-provenance.json` and for an asset, and fails for the same
+identity on another ref and for a file with one byte appended. The command
+needs a GitHub CLI that is logged in; without a token it stops and asks for
+`gh auth login`, for this public repository too. `v2026.11` was published
+before this job existed and has no attestations, and its
+`release-provenance.json` has no `assets`.
 
 ### Repository settings required for closure
 
