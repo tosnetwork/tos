@@ -31,6 +31,13 @@ jobs:
     outputs:
       tag_sha: ${{ steps.tag.outputs.sha }}
     steps:
+      - name: Refuse a run dispatched from another ref than main
+        run: |
+          set -euo pipefail
+          # The release's attestations are verified against this workflow on
+          # main; a run from a branch would sign with another identity.
+          [ "$GITHUB_REF" = refs/heads/main ] || { echo "dispatch this workflow from main, not $GITHUB_REF" >&2; exit 1; }
+
       - name: Check out the release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

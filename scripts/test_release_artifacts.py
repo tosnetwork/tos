@@ -493,6 +493,14 @@ class StageTest(unittest.TestCase):
         for line in lines:
             digest, name = line.split("  ")
             self.assertEqual(hashlib.sha256((out / name).read_bytes()).hexdigest(), digest)
+        # The published provenance record, which is attested, names the digest
+        # of every other staged file and keeps what collect recorded.
+        record = json.loads((out / "release-provenance.json").read_text())
+        listed = dict(reversed(line.split("  ")) for line in lines)
+        del listed["release-provenance.json"]
+        self.assertEqual(record.pop("assets"), listed)
+        collected = json.loads((self.root / "artifacts" / "release-provenance.json").read_text())
+        self.assertEqual(record, collected)
 
     def test_missing_asset_is_refused(self) -> None:
         config = json.loads(json.dumps(CONFIG))
@@ -1021,8 +1029,29 @@ def publisher_attest_problems(text: str, sums: str) -> list[str]:
         )
     if f"          subject-checksums: {sums}\n" not in body:
         problems.append(f"attest does not attest the files {sums} lists")
-    if "    needs: [collect, attest]\n" not in publish:
+    if "    runs-on: ubuntu-24.04\n" not in body:
+        problems.append("attest does not run on the hosted runner")
+    # The action signs an empty statement when the checksum file is missing,
+    # so the files must arrive where the attest step reads them, and the
+    # step takes that one input and nothing else (no other token).
+    directory = sums.rsplit("/", 2)[0] if sums.count("/") > 1 else sums.split("/")[0]
+    if f"          name: release-stage\n          path: {directory}\n" not in body:
+        problems.append(f"attest does not receive release-stage into {directory}")
+    withs = re.findall(r"(?m)^        with:\n((?:          .*\n)+)", body)
+    if len(withs) != 2 or withs[1] != f"          subject-checksums: {sums}\n":
+        problems.append("the attest step takes other inputs than the staged SHA256SUMS")
+    header = [line for line in publish.splitlines() if re.match(r"    \S", line)]
+    if "    needs: [collect, attest]" not in header:
         problems.append("publish does not wait for attest")
+    # A condition such as always() would let publish run after a failed or
+    # skipped attest.
+    if any(line.startswith("    if:") for line in header):
+        problems.append("publish is conditional; it must run only after attest succeeded")
+    # Signed from another ref, a modified copy of this workflow could attest
+    # anything; verifiers pin the ref, and an honest run refuses the mistake.
+    collect = workflow_job(text, "collect") or ""
+    if '[ "$GITHUB_REF" = refs/heads/main ]' not in collect:
+        problems.append("collect does not refuse a run dispatched from another ref than main")
     return problems
 
 
@@ -1032,6 +1061,8 @@ def publisher_attest_mutants(text: str) -> dict[str, str]:
             raise AssertionError(f"{old!r} occurs {text.count(old)} times")
         return text.replace(old, new)
 
+    before_attest, in_attest = text.split("\n  attest:\n", 1)
+    before_attest += "\n  attest:\n"
     attest_grants = (
         "    permissions:\n      contents: read\n      id-token: write\n      attestations: write\n"
     )
@@ -1050,6 +1081,23 @@ def publisher_attest_mutants(text: str) -> dict[str, str]:
             "      - name: Attest every file SHA256SUMS lists\n",
             "      - run: ./stage/hook.sh\n      - name: Attest every file SHA256SUMS lists\n",
         ),
+        "publish runs regardless": swap(
+            "    needs: [collect, attest]\n", "    needs: [collect, attest]\n    if: always()\n"
+        ),
+        "self-hosted signer": swap(
+            "    needs: collect\n    runs-on: ubuntu-24.04\n",
+            "    needs: collect\n    runs-on: self-hosted\n",
+        ),
+        "another download path": before_attest
+        + in_attest.replace(
+            "          name: release-stage\n          path: ",
+            "          name: release-stage\n          path: x-",
+            1,
+        ),
+        "another token": swap(
+            "/SHA256SUMS\n\n", "/SHA256SUMS\n          github-token: ${{ secrets.OTHER }}\n\n"
+        ),
+        "any ref": swap('[ "$GITHUB_REF" = refs/heads/main ]', "true"),
         "unpinned action": swap(
             "actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a",
             "actions/attest-build-provenance@v3",
