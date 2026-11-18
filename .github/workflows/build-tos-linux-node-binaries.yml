@@ -2,8 +2,10 @@ name: Ubuntu TOS build (node binaries)
 
 # The node binaries a release publishes, built with the production node recipe
 # (assembly/native/build-node-binaries.sh): Release, clang-21, jemalloc, a fixed
-# CPU level and SOURCE_DATE_EPOCH set to the commit time. The AppImage workflows
-# keep building the desktop tools; operators install validators from these.
+# CPU level and SOURCE_DATE_EPOCH set to the commit time. The same script builds
+# tosctl with the pinned Rust toolchain and the committed Cargo.lock. The
+# AppImage workflows keep building the desktop tools; operators install
+# validators from these.
 on:
   # Release packaging: a version tag builds the binaries the release workflow
   # collects (scripts/release-artifacts.json); dispatch builds them on demand.
@@ -23,6 +25,9 @@ on:
       - 'scripts/install-llvm-toolchain.sh'
       - 'scripts/keys/apt-llvm-org.asc'
       - 'CMake/Findjemalloc.cmake'
+      - 'rust-toolchain.toml'
+      - 'scripts/install-rust-toolchain.sh'
+      - 'tosctl/src/Cargo.lock'
   workflow_dispatch:
   workflow_call:
 
@@ -60,10 +65,14 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential git cmake ninja-build autoconf automake libtool \
           texinfo pkg-config python3 libgflags-dev libreadline-dev libgsl-dev libblas-dev \
-          libgslcblas0 libjemalloc-dev libgmp-dev gperf
+          libgslcblas0 libjemalloc-dev libgmp-dev gperf libssl-dev
 
     - name: Install clang-21
       run: sudo scripts/install-llvm-toolchain.sh 21
+
+    # tosctl is built by the same script, with the toolchain rust-toolchain.toml pins.
+    - name: Install repository-pinned Rust toolchain
+      run: scripts/install-rust-toolchain.sh
 
     - name: Build the node binaries with the node recipe
       run: assembly/native/build-node-binaries.sh node-binaries

@@ -389,6 +389,7 @@ full nodes, the wallet services, DHT servers and tools.
 | `dht-server-linux-<arch>` | `dht-server` |
 | `tos-rpc-linux-<arch>` | `tos-rpc` |
 | `tos-wallet-index-linux-<arch>` | `tos-wallet-index` |
+| `tosctl-linux-<arch>` | `tosctl` |
 | `node-build-info-linux-<arch>.txt` | the build record described below |
 | `tos-node-linux-<arch>.zip` | the workflow artifact `tos-node-<arch>-linux` itself |
 
@@ -403,7 +404,7 @@ build run. It is the artifact zip byte for byte, so its SHA-256 equals the
 `run_attempt` and `head_sha`). Every standalone node asset above, and the
 build record, is a byte copy of the zip's top-level member of the same plain
 name (`validator-engine`, ..., `dht-server`, `tos-rpc`, `tos-wallet-index`,
-`BUILD-INFO`). An installer
+`tosctl`, `BUILD-INFO`). An installer
 checks the zip against that digest and each binary against its member, or
 against `SHA256SUMS`, which the same publisher job writes.
 `release-provenance.json` records digests per artifact zip only; it has no
@@ -433,8 +434,30 @@ carries jemalloc; the two services get it through `tos_db`) to list
 jemalloc's exit statistics (so jemalloc is the allocator the process
 actually ran with), and requires every binary with `-V` to report the tagged
 commit. `tos-pq-consensus-key`, `tos-rpc` and `tos-wallet-index` have no `-V`;
-the build record's digests bind them to the build. `node-build-info-linux-<arch>.txt` records the commit,
-`SOURCE_DATE_EPOCH`, the compiler, the flags, the jemalloc library and
+the build record's digests bind them to the build.
+
+`tosctl`, the tool an operator drives the node with, is built by the same
+script from the same commit, so a host that installs a release needs no Rust
+toolchain:
+
+- `cargo build --release --locked -p tosctl` in `tosctl/src`, with the
+  toolchain `rust-toolchain.toml` pins (`scripts/install-rust-toolchain.sh`);
+  `--locked` keeps cargo to the committed `Cargo.lock`;
+- `RUSTFLAGS` set to `-C target-cpu=x86-64-v2` on x86-64 and
+  `-C target-cpu=generic` on arm64, never `target-cpu=native`. Setting the
+  target CPU also stops a dependency's build script from enabling
+  instructions it detects on the build host;
+- the C sources of its dependencies compiled with clang-21;
+- no compiler wrapper or cache, the same `SOURCE_DATE_EPOCH`, and a target
+  directory inside the build directory.
+
+The script refuses to finish unless `rustc` and `cargo` are the pinned
+version, the build left the checkout (and so `Cargo.lock`) unchanged, and
+`tosctl --version` prints `COMMIT_ID:` with the tagged commit.
+
+`node-build-info-linux-<arch>.txt` records the commit,
+`SOURCE_DATE_EPOCH`, the compiler, the flags, the `rustc` and `cargo`
+versions, the Rust flags (`rust_flags`), the jemalloc library and
 package, the build OS, each binary's dynamic dependencies and SHA-256.
 `scripts/test_release_artifacts.py` fails if an asset above comes from any
 other build, or if the script loses a recipe flag or a check.
@@ -450,7 +473,9 @@ workflow's package set links `libjemalloc.so.2` into `validator-engine`,
 arm64 `libatomic.so.1` as well. On Ubuntu 24.04 the host therefore needs
 `libjemalloc2`, `libgsl27`, `libblas3`, `libreadline8t64` and, on arm64,
 `libatomic1`; a host that runs only the wallet services needs the same
-packages except `libreadline8t64`.
+packages except `libreadline8t64`. `tosctl` uses none of these: it links
+`libssl.so.3` and `libcrypto.so.3` (package `libssl3t64`) and `libgcc_s.so.1`
+besides the C runtime.
 
 The AppImages and `tos-linux-<arch>.zip` are unchanged: they remain the
 desktop and tool builds (`PORTABLE=1`, without jemalloc) and are not the
@@ -458,8 +483,10 @@ supported way to install a node. Before this split, `lite-client-linux-<arch>`
 and `tos-pq-consensus-key-linux-<arch>` were AppImages; they are now the
 plain node-recipe binaries, and the AppImage versions remain inside the zip.
 
-Byte-identical output across hosts has been observed for this recipe on the
-testnet hosts. It has not been verified across GitHub-hosted runners, so the
+Byte-identical output across hosts has been observed for the node binaries
+of this recipe on the testnet hosts. Two builds of `tosctl` from one checkout
+are byte-identical; the binary embeds the paths of the checkout and of the
+cargo registry, so builds from different paths differ. It has not been verified across GitHub-hosted runners, so the
 release makes no reproducibility claim; compare a host build's SHA-256 with
 the release's `SHA256SUMS` before relying on it.
 

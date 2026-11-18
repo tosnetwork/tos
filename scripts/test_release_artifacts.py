@@ -1211,7 +1211,7 @@ def node_workflow_leg_problems(workflow: str) -> list[str]:
     workflow_name = NodeBinaryReleaseTest.WORKFLOW
     expected = [
         {"arch": arch, "runner": runner, "artifact": artifact}
-        for arch, (artifact, runner, _cpu) in NodeBinaryReleaseTest.ARCHES.items()
+        for arch, (artifact, runner, _cpu, _rust_cpu) in NodeBinaryReleaseTest.ARCHES.items()
     ]
     problems: list[str] = []
     legs = node_workflow_legs(workflow)
@@ -1247,13 +1247,16 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
     problems: list[str] = []
     arches = NodeBinaryReleaseTest.ARCHES
     binaries = NodeBinaryReleaseTest.BINARIES
+    rust_binaries = NodeBinaryReleaseTest.RUST_BINARIES
     workflow_name = NodeBinaryReleaseTest.WORKFLOW
     inputs = {entry["artifact"]: entry["workflow"] for entry in config["build_workflows"]}
     by_name = {asset["name"]: asset for asset in config["release_sets"]["full"]["assets"]}
     machines = {"x86_64": "x86_64", "arm64": "aarch64|arm64"}
-    for arch, (artifact, runner, cpu) in arches.items():
-        if f"\n  {machines[arch]}) CPU={cpu} ;;\n" not in script:
-            problems.append(f"the node build script does not build {arch} for {cpu}")
+    for arch, (artifact, _runner, cpu, rust_cpu) in arches.items():
+        if f"\n  {machines[arch]}) CPU={cpu} RUST_CPU={rust_cpu} ;;\n" not in script:
+            problems.append(
+                f"the node build script does not build {arch} for {cpu} and Rust {rust_cpu}"
+            )
         if inputs.get(artifact) != workflow_name:
             problems.append(f"{artifact} is not built by {workflow_name}")
         # The artifact zip whose digest release-provenance.json records: the
@@ -1263,7 +1266,7 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
             problems.append(
                 f"the full set does not publish {artifact} as tos-node-linux-{arch}.zip"
             )
-        for binary in [*binaries, "BUILD-INFO"]:
+        for binary in [*binaries, *rust_binaries, "BUILD-INFO"]:
             name = (
                 f"node-build-info-linux-{arch}.txt"
                 if binary == "BUILD-INFO"
@@ -1277,7 +1280,7 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
     for asset in config["release_sets"]["full"]["assets"]:
         if asset["artifact"].startswith("tos-node-") or asset.get("zip"):
             continue
-        if asset.get("path") in binaries:
+        if asset.get("path") in (*binaries, *rust_binaries):
             problems.append(f"{asset['name']} publishes {asset['path']} from {asset['artifact']}")
     problems += node_workflow_leg_problems(workflow)
     if "run: assembly/native/build-node-binaries.sh node-binaries\n" not in workflow:
@@ -1286,6 +1289,15 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
         problems.append(f"{workflow_name} does not upload the node build output")
     if "ccache" in workflow or "actions/cache" in workflow:
         problems.append(f"{workflow_name} reuses cached objects")
+    # tosctl needs the toolchain rust-toolchain.toml pins, installed before the
+    # build, and a change to the toolchain or the lock file must run the build.
+    install_rust = "      run: scripts/install-rust-toolchain.sh\n"
+    build_step = "      run: assembly/native/build-node-binaries.sh node-binaries\n"
+    if not 0 <= workflow.find(install_rust) < workflow.find(build_step):
+        problems.append(f"{workflow_name} does not install the pinned Rust toolchain first")
+    for path in NodeBinaryReleaseTest.RUST_INPUTS:
+        if f"      - '{path}'\n" not in workflow.split("\njobs:\n", 1)[0]:
+            problems.append(f"{workflow_name} does not run when {path} changes")
     recipe = [
         "-DCMAKE_BUILD_TYPE=Release \\\n",
         "-DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \\\n",
@@ -1314,9 +1326,38 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
         # Every target goes into the artifact zip, with its dynamic
         # dependencies and digest in the build record.
         '\nfor t in "${TARGETS[@]}"; do\n  install -m 0755 "$BUILD/${PATHS[$t]}" "$OUT/$t"\ndone\n',
-        '\n  for t in "${TARGETS[@]}"; do\n    echo "needed $t $(readelf -d "$OUT/$t" | ',
-        '\n  (cd "$OUT" && sha256sum "${TARGETS[@]}") | sed \'s/^/sha256 /\'\n',
+        '\n  for t in "${TARGETS[@]}" tosctl; do\n    echo "needed $t $(readelf -d "$OUT/$t" | ',
+        '\n  (cd "$OUT" && sha256sum "${TARGETS[@]}" tosctl) | sed \'s/^/sha256 /\'\n',
+        # tosctl: the pinned toolchain ...
+        '\n[[ "$RUSTC_VERSION" == "rustc $RUST_CHANNEL "* ]] || die ',
+        '\n[[ "$CARGO_VERSION" == "cargo $RUST_CHANNEL "* ]] || die ',
+        # ... a fixed target CPU, the node compiler for C sources, no wrapper ...
+        '\nTOSCTL_RUSTFLAGS="-C target-cpu=$RUST_CPU"\n',
+        '\n  export RUSTFLAGS="$TOSCTL_RUSTFLAGS" CARGO_TARGET_DIR="$TOSCTL_TARGET"\n',
+        "\n  export CC=clang-21 CXX=clang++-21\n",
+        '\n  export RUSTC_WRAPPER="" CARGO_BUILD_RUSTC_WRAPPER="" CARGO_INCREMENTAL=0\n',
+        "\n  unset CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_TARGET GIT_COMMIT GIT_BRANCH GIT_COMMIT_DATE\n",
+        # ... the committed lock file, which the build must leave as it was ...
+        '\n  cargo build --release --locked -p tosctl -j "$JOBS"\n',
+        "\nTOSCTL=$TOSCTL_TARGET/release/tosctl\n"
+        '[ -z "$(git status --porcelain --untracked-files=no)" ] '
+        '|| die "the tosctl build changed the checkout"\n',
+        # ... the commit it reports, and its place in the zip and the record.
+        '\n"$TOSCTL" --version | grep -qx "COMMIT_ID: $REV" '
+        '|| die "tosctl --version does not report commit $REV"\n',
+        '\ninstall -m 0755 "$TOSCTL" "$OUT/tosctl"\n',
+        '\n  echo "$RUSTC_VERSION"\n  echo "$CARGO_VERSION"\n'
+        '  echo "rust_flags RUSTFLAGS=$TOSCTL_RUSTFLAGS CC=clang-21 '
+        'cargo build --release --locked -p tosctl"\n',
     ]
+    # Every cargo build in the script is the locked release build of tosctl.
+    cargo_builds = re.findall(r"(?m)^\s*cargo build\b.*$", script)
+    if [line.split() for line in cargo_builds] != [
+        ["cargo", "build", "--release", "--locked", "-p", "tosctl", "-j", '"$JOBS"']
+    ]:
+        problems.append("the node build script does not build tosctl with --release --locked")
+    if "target-cpu=native" in script or "sccache" in script:
+        problems.append("the node build script uses the build host's CPU or a compiler cache")
     for line in recipe:
         if line not in script:
             problems.append(f"the node build script lost {line.strip()!r}")
@@ -1347,10 +1388,10 @@ class NodeBinaryReleaseTest(unittest.TestCase):
     """The full set publishes the node binaries built with the node recipe."""
 
     WORKFLOW = "build-tos-linux-node-binaries.yml"
-    # arch -> (artifact, runner, CPU level for TOS_ARCH and PORTABLE)
+    # arch -> (artifact, runner, CPU level for TOS_ARCH and PORTABLE, rustc target CPU)
     ARCHES = {
-        "x86_64": ("tos-node-x86_64-linux", "ubuntu-24.04", "x86-64-v2"),
-        "arm64": ("tos-node-arm64-linux", "ubuntu-24.04-arm", "armv8-a"),
+        "x86_64": ("tos-node-x86_64-linux", "ubuntu-24.04", "x86-64-v2", "x86-64-v2"),
+        "arm64": ("tos-node-arm64-linux", "ubuntu-24.04-arm", "armv8-a", "generic"),
     }
     BINARIES = (
         "validator-engine",
@@ -1361,6 +1402,14 @@ class NodeBinaryReleaseTest(unittest.TestCase):
         "dht-server",
         "tos-rpc",
         "tos-wallet-index",
+    )
+    # Built by cargo in the same script run, published from the same artifact.
+    RUST_BINARIES = ("tosctl",)
+    # What the Rust half of the recipe reads besides the script itself.
+    RUST_INPUTS = (
+        "rust-toolchain.toml",
+        "scripts/install-rust-toolchain.sh",
+        "tosctl/src/Cargo.lock",
     )
     # binary -> its path in the build directory
     PATHS = {
@@ -1494,8 +1543,8 @@ class NodeBinaryReleaseTest(unittest.TestCase):
         )
         jemalloc = "JEMALLOC_TARGETS=(validator-engine dht-server tos-rpc tos-wallet-index)"
         install = 'for t in "${TARGETS[@]}"; do\n  install -m 0755'
-        needed = 'for t in "${TARGETS[@]}"; do\n    echo "needed $t'
-        digests = '(cd "$OUT" && sha256sum "${TARGETS[@]}")'
+        needed = 'for t in "${TARGETS[@]}" tosctl; do\n    echo "needed $t'
+        digests = '(cd "$OUT" && sha256sum "${TARGETS[@]}" tosctl)'
         for binary, path in (
             ("tos-rpc", "services/tos-rpc"),
             ("tos-wallet-index", "services/tos-wallet-index"),
@@ -1518,11 +1567,11 @@ class NodeBinaryReleaseTest(unittest.TestCase):
                 ),
                 "no needed line": script.replace(
                     needed,
-                    f'for t in "${{TARGETS[@]}}"; do\n    [ "$t" = {binary} ] && continue\n'
+                    f'for t in "${{TARGETS[@]}}" tosctl; do\n    [ "$t" = {binary} ] && continue\n'
                     '    echo "needed $t',
                 ),
                 "no digest": script.replace(
-                    digests, f'(cd "$OUT" && sha256sum "${{TARGETS[@]/{binary}}}")'
+                    digests, f'(cd "$OUT" && sha256sum "${{TARGETS[@]/{binary}}}" tosctl)'
                 ),
             }
             for label, mutant in script_mutants.items():
@@ -1540,6 +1589,134 @@ class NodeBinaryReleaseTest(unittest.TestCase):
                         node_release_problems(mutant, workflow, script),
                         [f"the full set does not publish {binary}-linux-{arch}"],
                     )
+
+    def test_tosctl_is_built_locked_published_and_recorded(self) -> None:
+        # tosctl ships in the node artifact: dropping it from the script's
+        # output, the build record or the asset list, taking it from another
+        # artifact, or loosening its build is refused.
+        config, workflow, script = self.inputs()
+        self.assertEqual(node_release_problems(config, workflow, script), [])
+        script_mutants = {
+            "not copied into the zip": ('install -m 0755 "$TOSCTL" "$OUT/tosctl"\n', ""),
+            "no needed line": (
+                'for t in "${TARGETS[@]}" tosctl; do',
+                'for t in "${TARGETS[@]}"; do',
+            ),
+            "no digest": ('sha256sum "${TARGETS[@]}" tosctl)', 'sha256sum "${TARGETS[@]}")'),
+            "no toolchain record": ('  echo "$RUSTC_VERSION"\n  echo "$CARGO_VERSION"\n', ""),
+            "no flags record": ('  echo "rust_flags RUSTFLAGS=$TOSCTL_RUSTFLAGS ', '  : "'),
+            "not locked": (
+                "cargo build --release --locked -p tosctl -j",
+                "cargo build --release -p tosctl -j",
+            ),
+            "second unlocked build": (
+                '  cargo build --release --locked -p tosctl -j "$JOBS"\n',
+                '  cargo build --release -p tosctl\n  cargo build --release --locked -p tosctl -j "$JOBS"\n',
+            ),
+            "debug build": (
+                "cargo build --release --locked -p tosctl -j",
+                "cargo build --locked -p tosctl -j",
+            ),
+            "another package": ("--locked -p tosctl -j", "--locked -p commands -j"),
+            "host CPU": (
+                'TOSCTL_RUSTFLAGS="-C target-cpu=$RUST_CPU"',
+                'TOSCTL_RUSTFLAGS="-C target-cpu=native"',
+            ),
+            "x86-64 target CPU dropped": (
+                "CPU=x86-64-v2 RUST_CPU=x86-64-v2 ;;",
+                "CPU=x86-64-v2 RUST_CPU=generic ;;",
+            ),
+            "ambient flags": (
+                '  export RUSTFLAGS="$TOSCTL_RUSTFLAGS" CARGO_TARGET_DIR',
+                "  export CARGO_TARGET_DIR",
+            ),
+            "compiler wrapper allowed": (
+                '  export RUSTC_WRAPPER="" CARGO_BUILD_RUSTC_WRAPPER="" CARGO_INCREMENTAL=0\n',
+                "",
+            ),
+            "compiler cache": ('export RUSTC_WRAPPER=""', "export RUSTC_WRAPPER=sccache"),
+            "host C compiler": ("  export CC=clang-21 CXX=clang++-21\n", ""),
+            "toolchain check dropped": (
+                '[[ "$RUSTC_VERSION" == "rustc $RUST_CHANNEL "* ]] || die',
+                "true || die",
+            ),
+            "commit check dropped": (
+                '"$TOSCTL" --version | grep -qx "COMMIT_ID: $REV" ||',
+                "true ||",
+            ),
+            "commit check tolerated": (
+                '|| die "tosctl --version does not report commit $REV"',
+                '|| echo "tosctl --version does not report commit $REV"',
+            ),
+            "lock file change tolerated": (
+                '|| die "the tosctl build changed the checkout"',
+                "|| true",
+            ),
+        }
+        for label, (old, new) in script_mutants.items():
+            with self.subTest(mutant=label):
+                self.assertEqual(script.count(old), 1, old)
+                self.assertNotEqual(
+                    node_release_problems(config, workflow, script.replace(old, new)), []
+                )
+        workflow_mutants = {
+            "toolchain not installed": (
+                "    - name: Install repository-pinned Rust toolchain\n"
+                "      run: scripts/install-rust-toolchain.sh\n",
+                "",
+            ),
+            "toolchain installed after the build": (
+                "      run: scripts/install-rust-toolchain.sh\n",
+                "      run: true\n",
+            ),
+            "compiler cache": (
+                "    - name: Upload artifacts\n",
+                "    - run: sccache --start-server\n    - name: Upload artifacts\n",
+            ),
+            **{
+                f"{path} is not a trigger": (f"      - '{path}'\n", "") for path in self.RUST_INPUTS
+            },
+        }
+        for label, (old, new) in workflow_mutants.items():
+            with self.subTest(mutant=label):
+                self.assertEqual(workflow.count(old), 1, old)
+                self.assertNotEqual(
+                    node_release_problems(config, workflow.replace(old, new), script), []
+                )
+        for arch, (artifact, _runner, _cpu, _rust_cpu) in self.ARCHES.items():
+            name = f"tosctl-linux-{arch}"
+            with self.subTest(arch=arch, mutant="asset dropped"):
+                mutant = json.loads(json.dumps(config))
+                assets = mutant["release_sets"]["full"]["assets"]
+                before = len(assets)
+                assets[:] = [a for a in assets if a["name"] != name]
+                self.assertEqual(len(assets), before - 1)
+                self.assertEqual(
+                    node_release_problems(mutant, workflow, script),
+                    [f"the full set does not publish {name}"],
+                )
+            for other in (
+                f"tos-{arch}-linux",
+                "tos-node-" + ("arm64" if arch == "x86_64" else "x86_64") + "-linux",
+            ):
+                with self.subTest(arch=arch, mutant=f"taken from {other}"):
+                    mutant = json.loads(json.dumps(config))
+                    for asset in mutant["release_sets"]["full"]["assets"]:
+                        if asset["name"] == name:
+                            asset["artifact"] = other
+                    self.assertIn(
+                        f"{name} is not {artifact}/tosctl",
+                        node_release_problems(mutant, workflow, script),
+                    )
+            with self.subTest(arch=arch, mutant="another member"):
+                mutant = json.loads(json.dumps(config))
+                for asset in mutant["release_sets"]["full"]["assets"]:
+                    if asset["name"] == name:
+                        asset["path"] = "lite-client"
+                self.assertEqual(
+                    node_release_problems(mutant, workflow, script),
+                    [f"{name} is not {artifact}/tosctl"],
+                )
 
     def test_a_missing_artifact_zip_is_refused(self) -> None:
         config, workflow, script = self.inputs()
