@@ -70,31 +70,42 @@ SHA-256 backend. That means one of:
 A validator on the portable backend is not allowed, on either architecture.
 
 The reason is the price of the SLH-DSA rescue check (TVM `PQCHECKSIG_SUITE`
-suite 3): 4,500 gas plus its cell loads, which covers about 409 µs of
-verification ([GlobalVersions.md](GlobalVersions.md)). A price must hold on the
-slowest permitted validator, for a signature chosen to maximise the verifier's
-work. That input is `test/pq-slhdsa/slh-worst-case-vectors.txt`: 3,174 SHA-256
-compressions against 2,214 for an honest signature, the bound for the parameter
-set being 3,894. Measured for it:
+suite 3): 4,500 gas plus its cell loads. It was set for validators that verify
+with SHA-NI: one verification of an adversarially chosen signature was put at
+210-360 µs (`crypto/vm/pqops.h`), the upper figure being the testnet VPS
+class. A
+price must hold on the slowest permitted validator, so a host is permitted
+when its verifier is no slower than that reference class. Where
+`crypto/vm/pqops.h` and [GlobalVersions.md](GlobalVersions.md) say SHA-NI,
+read: the hardware backend of the architecture.
 
-| Host | Hardware backend | Portable backend |
-|---|---|---|
-| x86-64 server, measuring host of the price, through the VM loop | 211-212 µs (`sha-ni`) | about 590 µs |
-| x86-64 testnet VPS class, estimated from that host | about 360 µs | about 1.0-1.1 ms |
-| x86-64 cloud VM (Xeon 6975P), shared CI runner | 242 µs (`sha-ni`) | 625 µs |
-| arm64 cloud VM (Neoverse-N2), shared CI runner | 188 µs (`armv8-sha2`) | 587 µs |
+The comparison uses one input, `test/pq-slhdsa/slh-worst-case-vectors.txt`: a
+signature built to maximise the verifier's work, 3,174 SHA-256 compressions
+against 2,214 for an honest one, the bound for the parameter set being 3,894.
+The figures below are the time of the verification alone
+(`bench-pq-slhdsa-verify`, median), not of the whole instruction in the VM:
 
-The last two rows are the median of `bench-pq-slhdsa-verify` on the runners of
-the pull-request checks, which print it on every run. Scaled to the bound of
-3,894 compressions the arm64 figure is about 231 µs. The portable backend
-exceeds what the price covers on every host measured; a validator using it
-would spend more time on these checks than the gas they pay for, and could fall
-behind on blocks full of them.
+| Host | Hardware backend | Per compression | Portable backend |
+|---|---|---|---|
+| x86-64 testnet VPS class, two nodes: the reference | about 315-326 µs (`sha-ni`), computed from the next column | 99-103 ns, measured on honest signatures | above 1 ms |
+| x86-64 server (Xeon 8455C) | 178 µs (`sha-ni`) | 56 ns | 545 µs |
+| x86-64 cloud VM (Xeon 6975P), shared CI runner | 242 µs (`sha-ni`) | 76 ns | 625 µs |
+| arm64 cloud VM (Neoverse-N2), shared CI runner | 188 µs (`armv8-sha2`) | 59 ns | 587 µs |
 
-arm64 was first allowed on these measurements. They cover one arm64 CPU
-generation on a shared cloud VM, the hardware class production uses, and no
-older arm64 core. A validator on any CPU not in the table shows that it stays
-within the price with step 4 of the receipt below.
+The reference row was measured when the price was set, with honest signatures,
+and is scaled here to this input; the other rows are measured with it, the
+last two on the runners of the pull-request checks, which print them on every
+run. The arm64 hardware backend is faster than the reference class, and the
+portable backend is slower than it on every host, by a factor of about three.
+A validator on the portable backend would spend far more time on these checks
+than the gas they pay for, and could fall behind on blocks full of them.
+
+What this shows for arm64 is one CPU generation on a shared cloud VM, as
+production hosts are. No arm64 instance of a production provider and no older
+arm64 core has been measured; step 4 of the receipt below is how a host shows
+that it is no slower than the reference. Whether the price also covers the
+bound of 3,894 compressions on the reference class is a separate question,
+still open for both architectures ([GlobalVersions.md](GlobalVersions.md)).
 
 The backend is chosen at run time (`crypto/pq/slhdsa-sha256.c`): from CPUID on
 x86-64, from the kernel's hardware capabilities on arm64. Linux builds with GCC
@@ -115,7 +126,9 @@ Each validator therefore keeps a deployment receipt with:
 2. The binary identity: the SHA-256 of the deployed `validator-engine`, the
    source commit, and the backend switch of its build: the `slhdsa_sha256`
    line of a release's build record, or `TOS_SLHDSA_SHA_NI` /
-   `TOS_SLHDSA_ARMV8_SHA2` from a host build's `CMakeCache.txt`.
+   `TOS_SLHDSA_ARMV8_SHA2` from a host build's `CMakeCache.txt`. For a release
+   binary, that line together with step 1 is the evidence that the deployed
+   binary takes the hardware path.
 3. The backend actually used: `test-pq-slhdsa-vectors
    test/pq-slhdsa/slh-verify-vectors.txt`, run on the validator host with
    `TOS_REQUIRE_SHA_NI=1` (x86-64) or `TOS_REQUIRE_ARMV8_SHA2=1` (arm64),
@@ -124,10 +137,17 @@ Each validator therefore keeps a deployment receipt with:
    deployed one: the same commit and configuration. A test program built
    otherwise does not show which backend the deployed binary uses.
 4. The time: `bench-pq-slhdsa-verify test/pq-slhdsa/slh-worst-case-vectors.txt
-   2000`, on the validator host while it is otherwise idle. The median of the
-   hardware backend's `verify` line must be below 330 µs, which is 409 µs
-   scaled from the 3,174 compressions of this input to the bound of 3,894. A
-   host above it is not allowed as a validator, whatever its architecture.
+   2000`, on the validator host while it is otherwise idle. Run it twice and
+   record the second run: the first can read high while the CPU leaves a
+   low-power state. The median of the hardware backend's `verify` line must
+   not exceed 360 µs, the upper end of what the price was set for. A host
+   above it is slower than the reference class and is not allowed as a
+   validator, whatever its architecture.
+
+A release does not ship the two test programs of steps 3 and 4. Build them
+from a checkout of the release commit, the post-quantum library alone:
+`cmake -S crypto/pq -B build-pq -DCMAKE_BUILD_TYPE=Release` and
+`cmake --build build-pq --target test-pq-slhdsa-vectors bench-pq-slhdsa-verify`.
 
 Repeat the receipt after every hardware, hypervisor or binary change.
 

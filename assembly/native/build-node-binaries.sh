@@ -69,6 +69,9 @@ CARGO_VERSION=$(cd tosctl/src && cargo --version)
 # No compiler cache: a release binary is compiled from source, never taken
 # from objects another run left behind.
 export CCACHE_DISABLE=1
+# The SHA-256 backend switches take their defaults from variables of the same
+# names, in the CMake and the Cargo build alike; a release uses the defaults.
+unset TOS_SLHDSA_SHA_NI TOS_SLHDSA_ARMV8_SHA2
 
 TARGETS=(validator-engine validator-engine-console lite-client generate-random-id
          tos-pq-consensus-key dht-server tos-rpc tos-wallet-index)
