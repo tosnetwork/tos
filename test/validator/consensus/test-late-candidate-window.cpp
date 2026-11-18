@@ -71,6 +71,7 @@
 #include "consensus/utils.h"
 #include "crypto/pq/consensus-pq-signer.h"
 #include "td/actor/BusRuntime.h"
+#include "td/actor/TestScheduler.h"
 #include "td/actor/coro_utils.h"
 #include "vm/boc.h"
 
@@ -1131,14 +1132,16 @@ int run_mode(const ModeSpec& spec) {
   if (!spec.mode.has_value()) {
     return check_window_helper();
   }
-  td::actor::Scheduler scheduler({2});
+  // One thread and virtual time: when nothing is runnable, time jumps to the next alarm,
+  // so every wait in the driver ends only after all the work it allowed has run.
+  td::actor::TestScheduler scheduler;
+  scheduler.begin_sync();
   td::actor::ActorOwn<Driver> driver;
-  scheduler.run_in_context([&] {
+  scheduler.step([&] {
     driver = td::actor::create_actor<Driver>("late-driver", *spec.mode);
     td::actor::ask(driver, &Driver::run).detach();
   });
-  while (scheduler.run(1)) {
-  }
+  scheduler.run_until_no_alarm();
   // The driver ends the process with its verdict; reaching here means it never gave one.
   return 1;
 }
@@ -1146,6 +1149,7 @@ int run_mode(const ModeSpec& spec) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  td::Time::allow_freezes();  // before the first clock read
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
   if (argc > 2) {
     std::fprintf(stderr, "usage: %s [mode]\n", argv[0]);

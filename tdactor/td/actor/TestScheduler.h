@@ -140,6 +140,15 @@ class TestScheduler {
     settle();
   }
 
+  // Settles, then keeps moving time to the next alarm until no alarm is left. For a test
+  // whose driver ends the process itself: returning means the driver waits for something
+  // that nothing is left to do.
+  void run_until_no_alarm() {
+    settle();
+    while (fire_next_alarm(std::numeric_limits<double>::infinity())) {
+    }
+  }
+
   // Runs the remaining alarms and discards whatever is left; every actor must be stopped.
   void end_sync() {
     CHECK(sync_);
