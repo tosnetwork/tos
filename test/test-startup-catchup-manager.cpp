@@ -21,10 +21,12 @@
 // with a real RootDb; only its network-heavy startup, the group actors (counted by a
 // fake) and the shard client start are substituted.
 
+#include <chrono>
 #include <mutex>
 #include <optional>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "adnl/adnl.h"
@@ -33,6 +35,7 @@
 #include "keyring/keyring.h"
 #include "quic/quic-sender.h"
 #include "rldp2/rldp.h"
+#include "td/actor/TestScheduler.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
@@ -456,6 +459,18 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
     signing_custody_changed(id);
     promise.set_value(td::Unit());
   }
+  // How many of `id`'s held keys custody still treats as usable, at the clock custody
+  // itself reads.
+  void unexpired_keys(ValidatorId id, td::Promise<size_t> promise) {
+    const auto now = pq_custody_now();
+    size_t n = 0;
+    for (const auto& [key_id, held] : pq_custody_.held_keys(id)) {
+      if (!pq_custody_.key_expired(id, key_id, now)) {
+        ++n;
+      }
+    }
+    promise.set_value(std::move(n));
+  }
   // The wall clock custody is measured from, `offset` seconds ahead of the real one.
   void set_custody_clock_offset(double offset, td::Promise<td::Unit> promise) {
     custody_clock_offset_ = offset;
@@ -683,11 +698,12 @@ class Fixture {
   // `before_start` runs on that root before the manager exists.
   explicit Fixture(const std::function<void(const std::string&)>& before_start = nullptr,
                    BlockIdExt zero_state = BlockIdExt{})
-      : root_(td::mkdtemp("/tmp", "startup-catchup-manager").move_as_ok()), scheduler_({1}) {
+      : root_(td::mkdtemp("/tmp", "startup-catchup-manager").move_as_ok()) {
+    scheduler_.begin_sync();
     if (before_start) {
       before_start(root_);
     }
-    scheduler_.run_in_context([&] {
+    scheduler_.step([&] {
       keys_ = keyring::Keyring::create(root_);
       adnl_ = adnl::Adnl::create(root_, keys_.get());
       rldp_ = rldp2::Rldp::create(adnl_.get());
@@ -708,52 +724,43 @@ class Fixture {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::teardown, std::move(p));
     });
     run_for(0.2);
-    scheduler_.run_in_context([&] {
+    scheduler_.step([&] {
       manager_.reset();
       rldp_.reset();
       adnl_.reset();
       keys_.reset();
-      td::actor::SchedulerContext::get().stop();
     });
-    while (scheduler_.run(1)) {
-    }
+    scheduler_.end_sync();
     td::rmrf(root_).ignore();
   }
   template <class T, class Send>
   T ask(Send send) {
     std::mutex mu;
     std::optional<td::Result<T>> result;
-    scheduler_.run_in_context([&] {
+    scheduler_.step([&] {
       send(td::PromiseCreator::lambda([&](td::Result<T> r) {
         std::lock_guard<std::mutex> lk(mu);
         result.emplace(std::move(r));
       }));
     });
-    auto deadline = td::Timestamp::in(60.0);
-    while (true) {
-      {
-        std::lock_guard<std::mutex> lk(mu);
-        if (result) {
-          break;
-        }
-      }
-      LOG_CHECK(!deadline.is_in_past()) << "timed out waiting for the manager";
-      scheduler_.run(0.01);
+    // The step settled: an answer that has not arrived waits for an alarm. With no alarm
+    // due within a minute of virtual time, nothing will ever answer.
+    const double limit = td::Time::now() + 60.0;
+    while (!result) {
+      LOG_CHECK(scheduler_.fire_next_alarm(limit)) << "the manager did not answer and no work is pending";
     }
     return result->move_as_ok();
   }
+  // Lets `seconds` of virtual time pass, firing every alarm due in it.
   void run_for(double seconds) {
-    auto deadline = td::Timestamp::in(seconds);
-    while (!deadline.is_in_past()) {
-      scheduler_.run(0.01);
-    }
+    scheduler_.run_for(seconds);
   }
   // Validators of `epoch` at catchain seqno `cc`, with `old` before and `next` after.
   Snapshot snapshot(const Epoch& epoch, CatchainSeqno cc) {
     return Snapshot{old.set(cc), epoch.set(cc), next.set(cc + 1), cc};
   }
   void hold(const Epoch& epoch, size_t i) {
-    scheduler_.run_in_context([&] {
+    scheduler_.step([&] {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::hold, epoch.custody[i],
                               epoch.members[i].validator_id, 0u);
     });
@@ -765,17 +772,16 @@ class Fixture {
     });
   }
   void hold_expiring(const Epoch& epoch, int index, size_t i, td::uint32 expire_at) {
-    scheduler_.run_in_context([&] {
+    scheduler_.step([&] {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::hold, epoch.windowed(index, i, expire_at),
                               epoch.members[i].validator_id, expire_at);
     });
   }
   void hold_operator_key() {
-    scheduler_.run_in_context(
-        [&] { td::actor::send_closure(manager_, &StartupCatchupManagerProbe::hold_operator_key); });
+    scheduler_.step([&] { td::actor::send_closure(manager_, &StartupCatchupManagerProbe::hold_operator_key); });
   }
   void set_tip(Snapshot s, BlockSeqno height, double age) {
-    scheduler_.run_in_context(
+    scheduler_.step(
         [&] { td::actor::send_closure(manager_, &StartupCatchupManagerProbe::set_tip, std::move(s), height, age); });
   }
   void advance(Snapshot s, BlockSeqno height, double age) {
@@ -856,6 +862,18 @@ class Fixture {
                               std::move(p));
     });
   }
+  size_t unexpired_keys(const Epoch& epoch, size_t i) {
+    return ask<size_t>([&](td::Promise<size_t> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::unexpired_keys, epoch.members[i].validator_id,
+                              std::move(p));
+    });
+  }
+  // Lets `seconds` of real wall-clock time pass, then settles. Key expiry is judged on the
+  // wall clock, which virtual time does not move.
+  void wait_wall_clock(double seconds) {
+    std::this_thread::sleep_for(std::chrono::duration<double>(seconds));
+    scheduler_.settle();
+  }
   void custody_clock_offset(double offset) {
     ask<td::Unit>([&](td::Promise<td::Unit> p) {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::set_custody_clock_offset, offset, std::move(p));
@@ -883,15 +901,16 @@ class Fixture {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::key_block, seqno, std::move(p));
     });
   }
+  // Whether the event happens within `timeout` seconds of virtual time. Every step has
+  // already settled, so the event is either in the journal or waits for an alarm.
   bool wait_event(const std::string& prefix, double timeout) {
-    auto deadline = td::Timestamp::in(timeout);
-    while (!deadline.is_in_past()) {
-      if (journal->count(prefix) > 0) {
-        return true;
+    const double limit = td::Time::now() + timeout;
+    while (journal->count(prefix) == 0) {
+      if (!scheduler_.fire_next_alarm(limit)) {
+        return false;
       }
-      scheduler_.run(0.01);
     }
-    return journal->count(prefix) > 0;
+    return true;
   }
   std::optional<consensus::PendingValidatorConsensusDbCleanup> record_of(const ValidatorSessionId& s) {
     return ask<std::optional<consensus::PendingValidatorConsensusDbCleanup>>(
@@ -908,7 +927,7 @@ class Fixture {
 
  private:
   std::string root_;
-  td::actor::Scheduler scheduler_;
+  td::actor::TestScheduler scheduler_;
   td::actor::ActorOwn<keyring::Keyring> keys_;
   td::actor::ActorOwn<adnl::Adnl> adnl_;
   td::actor::ActorOwn<rldp2::Rldp> rldp_;
@@ -999,7 +1018,9 @@ TEST(StartupCatchupManager, T13_NewKeyHolderEntersAndStaysFenced) {
   // The old key expires a moment after it is installed; the next set's key is held.
   f.hold_expiring(f.current, 2, 1, static_cast<td::uint32>(td::Clocks::system()) + 1);
   f.hold(f.next, 0);
-  f.run_for(1.5);
+  ASSERT_EQ(1u, f.unexpired_keys(f.current, 1));
+  f.wait_wall_clock(1.5);
+  ASSERT_EQ(0u, f.unexpired_keys(f.current, 1));  // the premise: the old key has expired
   f.set_tip(f.snapshot(f.current, 1), 10, kStale);
   ASSERT_TRUE(f.decide());
   f.advance(f.snapshot(f.current, 1), 10, kStale);
