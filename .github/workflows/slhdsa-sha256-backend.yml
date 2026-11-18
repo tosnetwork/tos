@@ -100,6 +100,13 @@ jobs:
           cmake --build build-pq --target test-pq-slhdsa-vectors -j4
           build-pq/test-pq-slhdsa-vectors test/pq-slhdsa/slh-verify-vectors.txt | tee vectors.txt
           grep -Fx 'SLH-DSA SHA-256 backend: ${{ matrix.backend }}' vectors.txt
+      # Counted, not timed, so it gates on every leg: the worst-case input must be rejected
+      # at exactly the compressions it was built to cost. An edit that makes it cheaper, or
+      # makes it verify, fails here; the timing step below could not tell.
+      - name: Worst-case input costs the work it was built for
+        run: |
+          cmake --build build-pq --target test-pq-slhdsa-work -j4
+          build-pq/test-pq-slhdsa-work test/pq-slhdsa/slh-worst-case-vectors.txt 0 3174
       - name: Hardware backend against the imported implementation
         if: matrix.backend != 'portable'
         env:
