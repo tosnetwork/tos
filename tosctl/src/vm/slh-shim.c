@@ -3,7 +3,7 @@
  * SLH-DSA-SHA2-128s verification with an explicit context. The parameter table
  * stays in C, so Rust never restates its layout. Returns 1 valid, 0 invalid. */
 #include "slh_dsa.h"
-#ifdef TOS_SLHDSA_SHA_NI
+#if defined(TOS_SLHDSA_SHA_NI) || defined(TOS_SLHDSA_ARMV8_SHA2)
 #include "slhdsa-sha256.h"
 #endif
 
@@ -12,9 +12,9 @@ int tos_rust_slhdsa128s_verify(const uint8_t *m, size_t m_sz, const uint8_t *sig
   return slh_verify(m, m_sz, sig, sig_sz, ctx, ctx_sz, pk, &slh_dsa_sha2_128s);
 }
 
-/* SHA-256 path the verifier executes on this machine: "sha-ni" or "portable". */
+/* SHA-256 path the verifier executes on this machine: "sha-ni", "armv8-sha2" or "portable". */
 const char *tos_rust_slhdsa_sha256_backend(void) {
-#ifdef TOS_SLHDSA_SHA_NI
+#if defined(TOS_SLHDSA_SHA_NI) || defined(TOS_SLHDSA_ARMV8_SHA2)
   return tos_slhdsa_sha256_backend();
 #else
   return "portable";

@@ -11,6 +11,7 @@ inline constexpr std::size_t slhdsa128s_max_message_bytes = 8192;
 inline constexpr std::size_t slhdsa128s_max_context_bytes = 255;
 VerifyResult verify_slhdsa128s(std::string_view message, std::string_view context, std::string_view signature,
                                std::string_view public_key) noexcept;
-// SHA-256 path the verifier executes on this machine: "sha-ni" or "portable". Results never differ.
+// SHA-256 path the verifier executes on this machine: "sha-ni", "armv8-sha2" or "portable". Results never
+// differ.
 const char* slhdsa128s_sha256_backend() noexcept;
 }  // namespace tos::pq

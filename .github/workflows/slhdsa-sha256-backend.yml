@@ -25,7 +25,10 @@ concurrency:
   cancel-in-progress: true
 jobs:
   # Every configuration runs the same signature vectors. "sha-ni" must actually execute the SHA-NI
-  # path (TOS_REQUIRE_SHA_NI=1 fails the job otherwise); "portable" builds the imported file.
+  # path (TOS_REQUIRE_SHA_NI=1 fails the job otherwise) and "armv8-sha2" the ARMv8 SHA2 path
+  # (TOS_REQUIRE_ARMV8_SHA2=1); "portable" builds the imported file. `switch` is the environment
+  # assignment that overrides the platform default, `cpu_flag` the /proc/cpuinfo word the runner
+  # must show for its hardware path.
   native:
     strategy:
       fail-fast: false
@@ -35,26 +38,47 @@ jobs:
             runner: ubuntu-24.04
             switch: ''
             expect: 'ON'
+            expect_armv8: 'OFF'
             require: '1'
+            require_armv8: '0'
             backend: sha-ni
+            cpu_flag: sha_ni
           - name: linux-x86_64-off
             runner: ubuntu-24.04
-            switch: '0'
+            switch: 'TOS_SLHDSA_SHA_NI=0'
             expect: 'OFF'
+            expect_armv8: 'OFF'
             require: '0'
+            require_armv8: '0'
             backend: portable
+            cpu_flag: ''
           - name: linux-arm64-default
             runner: ubuntu-24.04-arm
             switch: ''
             expect: 'OFF'
+            expect_armv8: 'ON'
             require: '0'
+            require_armv8: '1'
+            backend: armv8-sha2
+            cpu_flag: sha2
+          - name: linux-arm64-off
+            runner: ubuntu-24.04-arm
+            switch: 'TOS_SLHDSA_ARMV8_SHA2=0'
+            expect: 'OFF'
+            expect_armv8: 'OFF'
+            require: '0'
+            require_armv8: '0'
             backend: portable
+            cpu_flag: ''
           - name: macos-default
             runner: macos-15
             switch: ''
             expect: 'OFF'
+            expect_armv8: 'OFF'
             require: '0'
+            require_armv8: '0'
             backend: portable
+            cpu_flag: ''
     name: native (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
@@ -64,24 +88,41 @@ jobs:
           persist-credentials: false
       - name: Configure the PQ library alone
         run: |
-          if [ -n '${{ matrix.switch }}' ]; then export TOS_SLHDSA_SHA_NI='${{ matrix.switch }}'; fi
+          if [ -n '${{ matrix.switch }}' ]; then export '${{ matrix.switch }}'; fi
           cmake -S crypto/pq -B build-pq -DCMAKE_BUILD_TYPE=Release | tee configure.txt
           grep -Fx -- '-- SLH-DSA SHA-256 backend: TOS_SLHDSA_SHA_NI=${{ matrix.expect }}' configure.txt
+          grep -Fx -- '-- SLH-DSA SHA-256 backend: TOS_SLHDSA_ARMV8_SHA2=${{ matrix.expect_armv8 }}' configure.txt
       - name: Signature vectors through the node adapter
         env:
           TOS_REQUIRE_SHA_NI: ${{ matrix.require }}
+          TOS_REQUIRE_ARMV8_SHA2: ${{ matrix.require_armv8 }}
         run: |
           cmake --build build-pq --target test-pq-slhdsa-vectors -j4
           build-pq/test-pq-slhdsa-vectors test/pq-slhdsa/slh-verify-vectors.txt | tee vectors.txt
           grep -Fx 'SLH-DSA SHA-256 backend: ${{ matrix.backend }}' vectors.txt
-      - name: SHA-NI backend against the imported implementation
-        if: matrix.expect == 'ON'
+      - name: Hardware backend against the imported implementation
+        if: matrix.backend != 'portable'
         env:
           TOS_REQUIRE_SHA_NI: ${{ matrix.require }}
+          TOS_REQUIRE_ARMV8_SHA2: ${{ matrix.require_armv8 }}
         run: |
-          grep -m1 -o -w sha_ni /proc/cpuinfo
+          grep -m1 -o -w '${{ matrix.cpu_flag }}' /proc/cpuinfo
           cmake --build build-pq --target test-pq-slhdsa-sha256-backend -j4
-          build-pq/test-pq-slhdsa-sha256-backend
+          build-pq/test-pq-slhdsa-sha256-backend | tee backend.txt
+          grep -Fx 'OK: ${{ matrix.backend }} path matches the imported implementation' backend.txt
+          grep -Fx 'OK: forced portable path matches the imported implementation' backend.txt
+      # Timing on a shared runner, which is not the production hardware class: the numbers are
+      # indicative and never fail the job. The fixture signatures are honestly generated, so this
+      # is not the adversarial worst case either.
+      - name: Verification time on this runner, hardware and forced portable (not a gate)
+        if: matrix.backend != 'portable'
+        continue-on-error: true
+        run: |
+          cmake --build build-pq --target bench-pq-slhdsa-verify -j4
+          lscpu | grep -E '^(Architecture|Vendor ID|Model name|CPU\(s\)):' || true
+          build-pq/bench-pq-slhdsa-verify test/pq-slhdsa/slh-verify-vectors.txt | tee bench.txt
+          grep -E '^verify ${{ matrix.backend }}: vectors=4 valid=4 invalid=0 ' bench.txt
+          grep -E '^verify portable: vectors=4 valid=4 invalid=0 ' bench.txt
   rust:
     strategy:
       fail-fast: false
@@ -91,16 +132,25 @@ jobs:
             runner: ubuntu-24.04
             switch: ''
             require: '1'
+            require_armv8: '0'
             backend: sha-ni
           - name: linux-x86_64-off
             runner: ubuntu-24.04
-            switch: '0'
+            switch: 'TOS_SLHDSA_SHA_NI=0'
             require: '0'
+            require_armv8: '0'
             backend: portable
           - name: linux-arm64-default
             runner: ubuntu-24.04-arm
             switch: ''
             require: '0'
+            require_armv8: '1'
+            backend: armv8-sha2
+          - name: linux-arm64-off
+            runner: ubuntu-24.04-arm
+            switch: 'TOS_SLHDSA_ARMV8_SHA2=0'
+            require: '0'
+            require_armv8: '0'
             backend: portable
     name: rust (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
@@ -122,8 +172,9 @@ jobs:
       - name: VM suite-3 backend and the wallet signer
         env:
           TOS_REQUIRE_SHA_NI: ${{ matrix.require }}
+          TOS_REQUIRE_ARMV8_SHA2: ${{ matrix.require_armv8 }}
         run: |
-          if [ -n '${{ matrix.switch }}' ]; then export TOS_SLHDSA_SHA_NI='${{ matrix.switch }}'; fi
+          if [ -n '${{ matrix.switch }}' ]; then export '${{ matrix.switch }}'; fi
           cargo test --locked --manifest-path tosctl/src/vm/Cargo.toml --lib slhdsa_vector_tests -- --nocapture | tee vm.txt
           grep -Fx 'SLH-DSA SHA-256 backend: ${{ matrix.backend }}' vm.txt
           cargo test --locked --manifest-path tosctl/src/wallet-pq-signer/Cargo.toml

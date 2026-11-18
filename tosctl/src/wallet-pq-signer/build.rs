@@ -18,9 +18,7 @@ fn main() {
     let openssl = env::var_os("DEP_OPENSSL_INCLUDE").expect("OpenSSL dependency include path");
     let mut signing = cc::Build::new();
     signing.cpp(true).std("c++17").include(&pq).include(&ml).include(&slh).include(&lms);
-    if sha256.sha_ni {
-        signing.define("TOS_SLHDSA_SHA_NI", None);
-    }
+    sha256.define(&mut signing);
     for path in env::split_paths(&openssl) {
         signing.include(path);
     }
@@ -83,5 +81,5 @@ fn main() {
         .std("c99")
         .warnings(false)
         .compile("tos_wallet_slh");
-    sha256.compile_sha_ni("tos_wallet_slh");
+    sha256.compile_hardware("tos_wallet_slh");
 }

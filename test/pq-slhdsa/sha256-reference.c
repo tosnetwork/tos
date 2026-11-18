@@ -1,6 +1,6 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
 /* The imported third-party/slhdsa-c/sha2_256.c, unmodified, under ref_ names: the reference the
- * SHA-NI backend is compared against. Every public name is renamed, so the original buffering
+ * hardware backends are compared against. Every public name is renamed, so the original buffering
  * code calls the original compression function. */
 #include "sha256-reference.h"
 

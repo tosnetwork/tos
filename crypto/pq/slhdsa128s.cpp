@@ -1,13 +1,13 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
 #include "slh_dsa.h"
 #include "slhdsa128s.h"
-#ifdef TOS_SLHDSA_SHA_NI
+#if defined(TOS_SLHDSA_SHA_NI) || defined(TOS_SLHDSA_ARMV8_SHA2)
 #include "slhdsa-sha256.h"
 #endif
 
 namespace tos::pq {
 const char* slhdsa128s_sha256_backend() noexcept {
-#ifdef TOS_SLHDSA_SHA_NI
+#if defined(TOS_SLHDSA_SHA_NI) || defined(TOS_SLHDSA_ARMV8_SHA2)
   return tos_slhdsa_sha256_backend();
 #else
   return "portable";

@@ -1,20 +1,30 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: Apache-2.0 OR ISC OR MIT */
-/* SHA-224/256 for the SLH-DSA verifier, with an SHA-NI compression path.
+/* SHA-224/256 for the SLH-DSA verifier, with a hardware compression path: SHA-NI on x86-64,
+ * the ARMv8 SHA2 extension on Linux aarch64.
  *
- * Built in place of third-party/slhdsa-c/sha2_256.c when TOS_SLHDSA_SHA_NI is on; that file
- * is not modified. Its portable compression function is compiled here under a private name
- * and stays the fallback. The SHA-NI compression is the vendored, unmodified transform in
- * third-party/bitcoin-sha256, reached through slhdsa-sha256-shani.cpp. The buffering and
+ * Built in place of third-party/slhdsa-c/sha2_256.c when TOS_SLHDSA_SHA_NI (x86-64) or
+ * TOS_SLHDSA_ARMV8_SHA2 (Linux aarch64) is on; that file is not modified. Its portable
+ * compression function is compiled here under a private name and stays the fallback. The
+ * hardware compression is the vendored, unmodified transform in third-party/bitcoin-sha256,
+ * reached through slhdsa-sha256-shani.cpp or slhdsa-sha256-armv8.cpp. The buffering and
  * padding routines below are copied from the imported file unchanged (hence its license on
  * this file): the SLH code reaches the compression function through them as well as directly,
  * so replacing only the compression symbol would leave most hashing on the portable path.
  * State layout is the imported one: s[0..7] hold the chaining value as big-endian words,
  * s[8..23] the 64-byte block. */
-#if !defined(__x86_64__) || !(defined(__GNUC__) || defined(__clang__))
-#error "the SHA-NI SHA-256 backend needs x86-64 and GCC or Clang"
+#if !(defined(__GNUC__) || defined(__clang__))
+#error "the hardware SHA-256 backend needs GCC or Clang"
+#endif
+#if defined(__x86_64__)
+#include <cpuid.h>
+#elif defined(__aarch64__) && defined(__linux__) && defined(__BYTE_ORDER__) && \
+    __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#include <asm/hwcap.h>
+#include <sys/auxv.h>
+#else
+#error "the hardware SHA-256 backend needs x86-64, or little-endian aarch64 on Linux"
 #endif
 
-#include <cpuid.h>
 #include <string.h>
 #include "slhdsa-sha256.h"
 #include "sha2_api.h"
@@ -55,8 +65,11 @@ void tos_slhdsa_portable_sha2_224(uint8_t *h, const void *m, size_t m_sz);
 /* === Backend selection. The value depends only on the CPU, so concurrent first calls may both
  * probe and store the same result; relaxed atomics keep that free of data races. */
 
-enum { backend_unknown = 0, backend_portable = 1, backend_sha_ni = 2 };
+enum { backend_unknown = 0, backend_portable = 1, backend_hardware = 2 };
 static int backend_state = backend_unknown;
+
+#if defined(__x86_64__)
+#define HARDWARE_BACKEND_NAME "sha-ni"
 
 /* The vendored transform is compiled with -msse4.1 -msse4 -msha, so every one of those
  * extensions must be present, not only SHA. */
@@ -66,7 +79,7 @@ static int accepts_cpu(unsigned leaf1_ecx, unsigned leaf7_ebx)
   return (leaf1_ecx & leaf1_needed) == leaf1_needed && (leaf7_ebx & bit_SHA) != 0;
 }
 
-static int cpu_has_sha_ni(void)
+static int cpu_has_hardware_sha256(void)
 {
   unsigned a, b1, c1, d;
   unsigned b7, c7;
@@ -77,12 +90,40 @@ static int cpu_has_sha_ni(void)
   return accepts_cpu(c1, b7);
 }
 
+static void hardware_compress(uint32_t *sp)
+{
+  tos_slhdsa_sha_ni_compress(sp);
+}
+#else
+#define HARDWARE_BACKEND_NAME "armv8-sha2"
+
+/* The vendored transform is compiled with -march=armv8-a+crypto, which lets the compiler use
+ * the AES, PMULL, SHA1 and SHA2 instructions, so every one of those must be present, not only
+ * SHA2 (the rule the x86-64 probe follows). Its other instructions are Advanced SIMD, which
+ * every aarch64 Linux build already assumes. */
+static int accepts_hwcap(unsigned long hwcap)
+{
+  const unsigned long needed = HWCAP_AES | HWCAP_PMULL | HWCAP_SHA1 | HWCAP_SHA2;
+  return (hwcap & needed) == needed;
+}
+
+static int cpu_has_hardware_sha256(void)
+{
+  return accepts_hwcap(getauxval(AT_HWCAP));
+}
+
+static void hardware_compress(uint32_t *sp)
+{
+  tos_slhdsa_armv8_sha2_compress(sp);
+}
+#endif
+
 static int backend(void)
 {
   int s = __atomic_load_n(&backend_state, __ATOMIC_RELAXED);
   if (s == backend_unknown)
   {
-    s = cpu_has_sha_ni() ? backend_sha_ni : backend_portable;
+    s = cpu_has_hardware_sha256() ? backend_hardware : backend_portable;
     __atomic_store_n(&backend_state, s, __ATOMIC_RELAXED);
   }
   return s;
@@ -90,7 +131,7 @@ static int backend(void)
 
 const char *tos_slhdsa_sha256_backend(void)
 {
-  return backend() == backend_sha_ni ? "sha-ni" : "portable";
+  return backend() == backend_hardware ? HARDWARE_BACKEND_NAME : "portable";
 }
 
 #ifdef TOS_SLHDSA_SHA256_TESTING
@@ -99,20 +140,27 @@ void tos_slhdsa_sha256_force_portable(int on)
   __atomic_store_n(&backend_state, on ? backend_portable : backend_unknown, __ATOMIC_RELAXED);
 }
 
+#if defined(__x86_64__)
 int tos_slhdsa_sha256_accepts_cpu(unsigned leaf1_ecx, unsigned leaf7_ebx)
 {
   return accepts_cpu(leaf1_ecx, leaf7_ebx);
 }
+#else
+int tos_slhdsa_sha256_accepts_hwcap(unsigned long hwcap)
+{
+  return accepts_hwcap(hwcap);
+}
+#endif
 #endif
 
-/* === Compression: the vendored SHA-NI transform when the probe accepts the CPU, otherwise the
- * imported portable function. */
+/* === Compression: the vendored hardware transform when the probe accepts the CPU, otherwise
+ * the imported portable function. */
 
 void sha2_256_compress(void *v)
 {
-  if (backend() == backend_sha_ni)
+  if (backend() == backend_hardware)
   {
-    tos_slhdsa_sha_ni_compress((uint32_t *)v);
+    hardware_compress((uint32_t *)v);
     return;
   }
   tos_slhdsa_portable_sha2_256_compress(v);
