@@ -2,9 +2,11 @@
 /* crypto/pq/slhdsa-sha256.c against the unmodified imported sha2_256.c, on the CPU-selected path
  * and again with the portable path forced. Covers every entry point the SLH code uses, including
  * final_pad followed by a direct compression of the padded state (the WOTS chain loop), and the
- * CPU probe's decision for each missing required extension.
+ * CPU probe's decision for each missing required extension. The hardware path is SHA-NI in an
+ * x86-64 build and the ARMv8 SHA2 extension in an aarch64 build.
  * Checks stay on under NDEBUG. TOS_REQUIRE_SHA_NI=1 fails the run unless the SHA-NI path is
- * the one selected on this CPU. */
+ * the one selected on this CPU; TOS_REQUIRE_ARMV8_SHA2=1 does the same for the ARMv8 SHA2
+ * path. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -171,6 +173,8 @@ static void against_reference(void)
   }
 }
 
+#if defined(__x86_64__)
+#define HARDWARE_BACKEND "sha-ni"
 /* The probe accepts SHA-NI only with every extension the vendored transform is compiled for:
  * SSSE3, SSE4.1, SSE4.2 (CPUID leaf 1 ECX bits 9, 19, 20) and SHA (leaf 7 EBX bit 29). */
 static void cpu_probe(void)
@@ -186,20 +190,48 @@ static void cpu_probe(void)
   CHECK(tos_slhdsa_sha256_accepts_cpu(0xFFFFFFFFu & ~sse42, 0xFFFFFFFFu) == 0);
   CHECK(tos_slhdsa_sha256_accepts_cpu(0xFFFFFFFFu, 0xFFFFFFFFu & ~sha) == 0);
 }
+#else
+#define HARDWARE_BACKEND "armv8-sha2"
+/* The probe accepts the ARMv8 SHA2 path exactly when AT_HWCAP carries the SHA2 bit (bit 6 of the
+ * aarch64 Linux hardware capabilities); no other capability bit decides it. */
+static void cpu_probe(void)
+{
+  const unsigned long sha2 = 1ul << 6;
+  CHECK(tos_slhdsa_sha256_accepts_hwcap(sha2) == 1);
+  CHECK(tos_slhdsa_sha256_accepts_hwcap(~0ul) == 1);
+  CHECK(tos_slhdsa_sha256_accepts_hwcap(0) == 0);
+  CHECK(tos_slhdsa_sha256_accepts_hwcap(~0ul & ~sha2) == 0);
+  for (unsigned bit = 0; bit < 8 * sizeof(unsigned long); bit++)
+  {
+    CHECK(tos_slhdsa_sha256_accepts_hwcap(1ul << bit) == (bit == 6));
+  }
+}
+#endif
+
+static int required(const char *name)
+{
+  const char *value = getenv(name);
+  return value != NULL && strcmp(value, "1") == 0;
+}
 
 int main(void)
 {
   cpu_probe();
   const char *selected = tos_slhdsa_sha256_backend();
   printf("CPU-selected backend: %s\n", selected);
-  const char *require = getenv("TOS_REQUIRE_SHA_NI");
-  if (require != NULL && strcmp(require, "1") == 0)
+  if (required("TOS_REQUIRE_SHA_NI"))
   {
     CHECK(strcmp(selected, "sha-ni") == 0);
   }
-  if (strcmp(selected, "sha-ni") != 0)
+  if (required("TOS_REQUIRE_ARMV8_SHA2"))
   {
-    printf("NOTE: this CPU has no SHA-NI; only the portable path is exercised\n");
+    CHECK(strcmp(selected, "armv8-sha2") == 0);
+  }
+  if (strcmp(selected, HARDWARE_BACKEND) != 0)
+  {
+    CHECK(strcmp(selected, "portable") == 0);
+    printf("NOTE: this CPU does not offer the %s path; only the portable path is exercised\n",
+           HARDWARE_BACKEND);
   }
 
   known_answers();

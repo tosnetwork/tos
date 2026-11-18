@@ -15,11 +15,12 @@ blob id equals the upstream blob id at the revision above.
 | `attributes.h` | `src/attributes.h` (the only non-standard include of `sha256_x86_shani.cpp`; defines `ALWAYS_INLINE`) |
 | `COPYING` | `COPYING` |
 
-Why: the SLH-DSA verifier spends nearly all of its time in SHA-256 compressions. Its SHA-NI path
-uses this widely deployed transform unchanged rather than a local implementation.
+Why: the SLH-DSA verifier spends nearly all of its time in SHA-256 compressions. Its hardware
+paths use these widely deployed transforms unchanged rather than local implementations.
 
-How it is built: only when `TOS_SLHDSA_SHA_NI` is on (Linux x86-64 by default), exactly as
-upstream builds it: C++17, definitions `ENABLE_SSE41` and `ENABLE_X86_SHANI`, and the per-file
+How `sha256_x86_shani.cpp` is built: only when `TOS_SLHDSA_SHA_NI` is on (Linux x86-64 by
+default), exactly as upstream builds it: C++17, definitions `ENABLE_SSE41` and
+`ENABLE_X86_SHANI`, and the per-file
 flags `-msse4.1 -msse4 -msha`, with this directory on the include path so `<attributes.h>`
 resolves to the copy here. No other file is compiled with those flags.
 `crypto/pq/slhdsa-sha256-shani.cpp` converts the SLH state layout (chaining value as big-endian
@@ -28,5 +29,17 @@ words) to the host-order words `sha256_x86_shani::Transform` takes and calls it 
 and otherwise uses the imported portable compression of `third-party/slhdsa-c`.
 `sha256d64_x86_shani::Transform_2way` in the same file is compiled but not called.
 
-Verification: `test-pq-slhdsa-sha256-backend` compares the result against the unmodified
-`third-party/slhdsa-c/sha2_256.c`, and the signature vectors run through the production archive.
+How `sha256_arm_shani.cpp` is built: only when `TOS_SLHDSA_ARMV8_SHA2` is on (Linux aarch64 by
+default), exactly as upstream builds it: C++17, definition `ENABLE_ARM_SHANI`, and the per-file
+flag `-march=armv8-a+crypto`. No other file is compiled with that flag, so the rest of the
+binary keeps the baseline of its build and still starts on a CPU without the extension.
+`crypto/pq/slhdsa-sha256-armv8.cpp` converts the SLH state layout (chaining value as big-endian
+words) to the host-order words `sha256_arm_shani::Transform` takes and calls it for one block.
+`crypto/pq/slhdsa-sha256.c` calls it only after the kernel reports the SHA2 extension
+(`getauxval(AT_HWCAP) & HWCAP_SHA2`), and otherwise uses the imported portable compression of
+`third-party/slhdsa-c`.
+`sha256d64_arm_shani::Transform_2way` in the same file is compiled but not called.
+
+Verification: on either architecture `test-pq-slhdsa-sha256-backend` compares the result
+against the unmodified `third-party/slhdsa-c/sha2_256.c`, and the signature vectors run through
+the production archive.

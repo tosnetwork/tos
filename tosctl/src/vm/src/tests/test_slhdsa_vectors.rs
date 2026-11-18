@@ -3,7 +3,8 @@
 // The Rust VM's SLH-DSA-SHA2-128s backend against the shared fixture the C++ test reads, in
 // whichever SHA-256 backend this build selected. Every signature must verify; flipping a byte of
 // the randomizer, of the last hypertree layer or of the message must not.
-// TOS_REQUIRE_SHA_NI=1 also requires the SHA-NI path to be the one executing.
+// TOS_REQUIRE_SHA_NI=1 also requires the SHA-NI path to be the one executing, and
+// TOS_REQUIRE_ARMV8_SHA2=1 the ARMv8 SHA2 path.
 //
 // The shim interface and the FIPS 205 lengths are declared here, not imported from
 // executor/pq.rs: that file is pinned byte-for-byte by the wallet review manifest.
@@ -66,6 +67,9 @@ fn slhdsa_fixture_vectors() {
     println!("SLH-DSA SHA-256 backend: {backend}");
     if std::env::var("TOS_REQUIRE_SHA_NI").as_deref() == Ok("1") {
         assert_eq!(backend, "sha-ni");
+    }
+    if std::env::var("TOS_REQUIRE_ARMV8_SHA2").as_deref() == Ok("1") {
+        assert_eq!(backend, "armv8-sha2");
     }
     let path =
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../../test/pq-slhdsa/slh-verify-vectors.txt");

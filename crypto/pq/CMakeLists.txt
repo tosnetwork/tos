@@ -380,10 +380,12 @@ target_include_directories(tos_lms_fee PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT
 target_link_libraries(tos_lms_fee PRIVATE OpenSSL::Crypto)
 # PROTOTYPE rescue root: Pure SLH-DSA-SHA2-128s verification only. See the import's PROVENANCE.md.
 set(TOS_SLHDSA_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third-party/slhdsa-c")
-# SHA-256 backend of the SLH-DSA verifier. ON builds crypto/pq/slhdsa-sha256.c (SHA-NI with a
-# portable fallback chosen at run time) in place of the imported sha2_256.c; the hashes are the
-# same either way. Default: on for Linux x86-64 with GCC or Clang, off elsewhere. The environment
-# variable of the same name sets the default, so the CMake and Cargo builds follow one switch.
+# SHA-256 backend of the SLH-DSA verifier. Either switch ON builds crypto/pq/slhdsa-sha256.c (a
+# hardware compression with a portable fallback chosen at run time) in place of the imported
+# sha2_256.c; the hashes are the same either way. TOS_SLHDSA_SHA_NI is the x86-64 SHA-NI backend,
+# default on for Linux x86-64 with GCC or Clang; TOS_SLHDSA_ARMV8_SHA2 is the ARMv8 SHA2 backend,
+# default on for Linux aarch64 with GCC or Clang. Both are off elsewhere. The environment variable
+# of the same name sets each default, so the CMake and Cargo builds follow one switch.
 if(DEFINED ENV{TOS_SLHDSA_SHA_NI})
   set(TOS_SLHDSA_SHA_NI_DEFAULT "$ENV{TOS_SLHDSA_SHA_NI}")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$"
@@ -411,7 +413,34 @@ if(TOS_SLHDSA_SHA_NI)
 else()
   set(TOS_SLHDSA_SHA256_SOURCES "${TOS_SLHDSA_SOURCE_DIR}/sha2_256.c")
 endif()
+if(DEFINED ENV{TOS_SLHDSA_ARMV8_SHA2})
+  set(TOS_SLHDSA_ARMV8_SHA2_DEFAULT "$ENV{TOS_SLHDSA_ARMV8_SHA2}")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$"
+       AND CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$")
+  set(TOS_SLHDSA_ARMV8_SHA2_DEFAULT ON)
+else()
+  set(TOS_SLHDSA_ARMV8_SHA2_DEFAULT OFF)
+endif()
+option(TOS_SLHDSA_ARMV8_SHA2 "SLH-DSA verifier uses the ARMv8 SHA2 SHA-256 backend" ${TOS_SLHDSA_ARMV8_SHA2_DEFAULT})
+if(TOS_SLHDSA_ARMV8_SHA2)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$"
+     OR NOT CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
+    message(FATAL_ERROR "TOS_SLHDSA_ARMV8_SHA2 needs a Linux aarch64 target and GCC or Clang")
+  endif()
+  # The ARMv8 SHA2 transform is vendored unchanged (third-party/bitcoin-sha256/PROVENANCE.md) and
+  # built as its upstream builds it; only that file gets the instruction-set flag, so every other
+  # translation unit keeps the baseline of the build and the binary still starts on a CPU without
+  # the extension.
+  set(TOS_SHA256_SHANI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third-party/bitcoin-sha256")
+  set(TOS_SHA256_ARMV8_SOURCE "${TOS_SHA256_SHANI_DIR}/sha256_arm_shani.cpp")
+  set_source_files_properties("${TOS_SHA256_ARMV8_SOURCE}" PROPERTIES
+    COMPILE_DEFINITIONS "ENABLE_ARM_SHANI"
+    COMPILE_OPTIONS "-march=armv8-a+crypto")
+  set(TOS_SLHDSA_SHA256_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/slhdsa-sha256.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/slhdsa-sha256-armv8.cpp" "${TOS_SHA256_ARMV8_SOURCE}")
+endif()
 message(STATUS "SLH-DSA SHA-256 backend: TOS_SLHDSA_SHA_NI=${TOS_SLHDSA_SHA_NI}")
+message(STATUS "SLH-DSA SHA-256 backend: TOS_SLHDSA_ARMV8_SHA2=${TOS_SLHDSA_ARMV8_SHA2}")
 add_library(tos_slhdsa_native STATIC "${TOS_SLHDSA_SOURCE_DIR}/slh_dsa.c" "${TOS_SLHDSA_SOURCE_DIR}/slh_sha2.c"
   ${TOS_SLHDSA_SHA256_SOURCES} "${TOS_SLHDSA_SOURCE_DIR}/sha2_512.c")
 set_target_properties(tos_slhdsa_native PROPERTIES C_STANDARD 99 CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON
@@ -430,11 +459,25 @@ target_link_libraries(tos_slhdsa128s PRIVATE tos_slhdsa_native)
 if(TOS_SLHDSA_SHA_NI)
   target_compile_definitions(tos_slhdsa128s PRIVATE TOS_SLHDSA_SHA_NI)
 endif()
+if(TOS_SLHDSA_ARMV8_SHA2)
+  target_compile_definitions(tos_slhdsa128s PRIVATE TOS_SLHDSA_ARMV8_SHA2)
+endif()
 set(TOS_SLHDSA_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-slhdsa")
 add_executable(test-pq-slhdsa-vectors "${TOS_SLHDSA_TEST_DIR}/slh-verify-vectors.cpp")
 target_link_libraries(test-pq-slhdsa-vectors PRIVATE tos_slhdsa128s)
 add_test(NAME pq-slhdsa-vectors COMMAND test-pq-slhdsa-vectors "${TOS_SLHDSA_TEST_DIR}/slh-verify-vectors.txt")
-if(TOS_SLHDSA_SHA_NI)
+# Timing only, never a pass/fail threshold: per-verification time on the selected SHA-256 backend
+# and, in a hardware-backend build, with the portable path forced. Links its own build of the
+# verifier with the forcing hook; the production archive is not involved.
+add_executable(bench-pq-slhdsa-verify "${TOS_SLHDSA_TEST_DIR}/verify-bench.c"
+  "${TOS_SLHDSA_SOURCE_DIR}/slh_dsa.c" "${TOS_SLHDSA_SOURCE_DIR}/slh_sha2.c" ${TOS_SLHDSA_SHA256_SOURCES}
+  "${TOS_SLHDSA_SOURCE_DIR}/sha2_512.c")
+set_target_properties(bench-pq-slhdsa-verify PROPERTIES C_STANDARD 99 CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+target_include_directories(bench-pq-slhdsa-verify PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${TOS_SLHDSA_SOURCE_DIR}")
+target_compile_options(bench-pq-slhdsa-verify PRIVATE
+  "$<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wno-error=conversion>")
+if(TOS_SLHDSA_SHA_NI OR TOS_SLHDSA_ARMV8_SHA2)
+  target_compile_definitions(bench-pq-slhdsa-verify PRIVATE TOS_SLHDSA_SHA256_TESTING)
   # Links its own testing build of the backend (with the forcing hook) and the imported file
   # under ref_ names; the production archive is not involved.
   add_executable(test-pq-slhdsa-sha256-backend "${TOS_SLHDSA_TEST_DIR}/sha256-backend.c"
@@ -464,7 +507,7 @@ if(TARGET tos_crypto)
   target_link_libraries(test-fee-native-cost PRIVATE tos_crypto)
 endif()
 install(FILES "${TOS_FALCON_SOURCE_DIR}/LICENSE" DESTINATION share/tos/licenses/falcon-reference)
-if(TOS_SLHDSA_SHA_NI)
+if(TOS_SLHDSA_SHA_NI OR TOS_SLHDSA_ARMV8_SHA2)
   install(FILES "${TOS_SHA256_SHANI_DIR}/COPYING" DESTINATION share/tos/licenses/bitcoin-sha256)
 endif()
 

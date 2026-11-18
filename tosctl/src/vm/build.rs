@@ -55,9 +55,7 @@ fn main() {
     for source in ["slh_dsa.c", "slh_sha2.c", "sha2_512.c"] {
         build.file(slh.join(source));
     }
-    if sha256.sha_ni {
-        build.define("TOS_SLHDSA_SHA_NI", None);
-    }
+    sha256.define(&mut build);
     build
         .file(&sha256.source)
         .file(root.join("slh-shim.c"))
@@ -66,5 +64,5 @@ fn main() {
         .std("c99")
         .warnings(false)
         .compile("tos_rust_slhdsa128s");
-    sha256.compile_sha_ni("tos_rust_slhdsa128s");
+    sha256.compile_hardware("tos_rust_slhdsa128s");
 }

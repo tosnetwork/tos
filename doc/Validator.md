@@ -70,19 +70,26 @@ about three times as long. A validator using it would spend far more time on
 these checks than the gas they pay for, and could fall behind on blocks full of
 them.
 
-An arm64 host is not allowed as a validator. The only accelerated SHA-256
-backend is the x86-64 SHA-NI one; an arm64 build contains the portable backend
-only. Its verification time has not been measured on arm64 hardware, so the
-price of the check is not known to hold there. The arm64 binaries of a release,
+An arm64 host is not allowed as a validator. Linux arm64 builds with GCC or
+Clang include an accelerated SHA-256 backend by default
+(`TOS_SLHDSA_ARMV8_SHA2` in `crypto/pq/CMakeLists.txt`): it uses the ARMv8 SHA2
+extension when the kernel reports it and the portable backend otherwise, and
+the test programs name it `armv8-sha2`. Its verification time has not been
+measured on production-class arm64 hardware, so the price of the check is not
+known to hold there. The pull-request checks print the time of
+`bench-pq-slhdsa-verify` on a shared arm64 runner; that figure is indicative
+only, because the runner is not the production hardware class and the fixture
+signatures are not adversarially chosen. The arm64 binaries of a release,
 `validator-engine` included, are for full nodes, the wallet services, DHT
 servers and tools, which follow the chain and neither produce nor validate
 block candidates, so they do not have to keep a validator's block deadlines.
-Allowing arm64 validators needs an accelerated arm64 backend and its
-measurements on the production hardware class first, because the price of the
-check must hold on the slowest permitted validator.
+The rule stands until the arm64 backend has been measured on the production
+hardware class, because the price of the check must hold on the slowest
+permitted validator.
 
-The backend is chosen at run time from CPUID (`crypto/pq/slhdsa-sha256.c`). Linux
-x86-64 builds with GCC or Clang include the SHA-NI backend by default
+On x86-64 the backend is chosen at run time from CPUID
+(`crypto/pq/slhdsa-sha256.c`). Linux x86-64 builds with GCC or Clang include
+the SHA-NI backend by default
 (`TOS_SLHDSA_SHA_NI` in `crypto/pq/CMakeLists.txt`). A CPU that supports the
 instructions does not prove that the deployed binary uses them: a build with
 `TOS_SLHDSA_SHA_NI=OFF`, or a hypervisor that hides the flags from the guest,

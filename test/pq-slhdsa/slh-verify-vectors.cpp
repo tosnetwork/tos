@@ -3,7 +3,8 @@
 // build selected. Every fixture signature must verify; flipping one byte of the randomizer, of
 // the last hypertree layer, or of the message must not. Checks stay on under NDEBUG.
 // Usage: test-pq-slhdsa-vectors <slh-verify-vectors.txt>
-// TOS_REQUIRE_SHA_NI=1 also requires the SHA-NI path to be the one executing.
+// TOS_REQUIRE_SHA_NI=1 also requires the SHA-NI path to be the one executing, and
+// TOS_REQUIRE_ARMV8_SHA2=1 the ARMv8 SHA2 path.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -46,9 +47,15 @@ int main(int argc, char** argv) {
   CHECK(argc == 2);
   const char* backend = tos::pq::slhdsa128s_sha256_backend();
   std::printf("SLH-DSA SHA-256 backend: %s\n", backend);
-  const char* require = std::getenv("TOS_REQUIRE_SHA_NI");
-  if (require != nullptr && std::strcmp(require, "1") == 0) {
+  const auto required = [](const char* name) {
+    const char* value = std::getenv(name);
+    return value != nullptr && std::strcmp(value, "1") == 0;
+  };
+  if (required("TOS_REQUIRE_SHA_NI")) {
     CHECK(std::strcmp(backend, "sha-ni") == 0);
+  }
+  if (required("TOS_REQUIRE_ARMV8_SHA2")) {
+    CHECK(std::strcmp(backend, "armv8-sha2") == 0);
   }
 
   std::ifstream in(argv[1]);

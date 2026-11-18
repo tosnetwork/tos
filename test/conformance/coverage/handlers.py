@@ -48,9 +48,15 @@ COMPONENTS = [
     "tdfec/",
 ]
 SLACK = 0.5
-# Files whose executed lines depend on the CPU the measurement runs on (a backend chosen by CPUID at run
-# time), not on the vectors: never floored, so a runner without the feature cannot fail the gate.
-RUNTIME_DISPATCHED = frozenset({"crypto/pq/slhdsa-sha256.c", "crypto/pq/slhdsa-sha256-shani.cpp"})
+# Files whose executed lines depend on the CPU the measurement runs on (a backend chosen by a CPU probe
+# at run time), not on the vectors: never floored, so a runner without the feature cannot fail the gate.
+RUNTIME_DISPATCHED = frozenset(
+    {
+        "crypto/pq/slhdsa-sha256.c",
+        "crypto/pq/slhdsa-sha256-shani.cpp",
+        "crypto/pq/slhdsa-sha256-armv8.cpp",
+    }
+)
 
 
 def tool(*names: str) -> str:
