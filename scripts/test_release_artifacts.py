@@ -1446,6 +1446,13 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
         "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct HEAD)\nexport SOURCE_DATE_EPOCH\n",
         "export CCACHE_DISABLE=1\n",
         '[ "$(cached TOS_USE_JEMALLOC)" = ON ]',
+        # ... and with the hardware SHA-256 backend of its architecture, which
+        # the build record names.
+        "\nunset TOS_SLHDSA_SHA_NI TOS_SLHDSA_ARMV8_SHA2\n",
+        "\n  x86_64) SLHDSA_BACKEND=TOS_SLHDSA_SHA_NI ;;\n  *) SLHDSA_BACKEND=TOS_SLHDSA_ARMV8_SHA2 ;;\n",
+        '\n[ "$(cached "$SLHDSA_BACKEND")" = ON ] || die "$SLHDSA_BACKEND is not ON"\n',
+        '\n  echo "slhdsa_sha256 TOS_SLHDSA_SHA_NI=$(cached TOS_SLHDSA_SHA_NI) '
+        'TOS_SLHDSA_ARMV8_SHA2=$(cached TOS_SLHDSA_ARMV8_SHA2)"\n',
         # jemalloc is a dependency of the binaries that link it ...
         '\nfor t in "${JEMALLOC_TARGETS[@]}"; do\n'
         '  bin="$BUILD/${PATHS[$t]}"\n'

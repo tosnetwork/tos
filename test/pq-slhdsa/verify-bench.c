@@ -8,8 +8,9 @@
  * Usage: bench-pq-slhdsa-verify <vectors.txt> [rounds]
  * The vector file has the format of slh-verify-vectors.txt. Signatures need not be valid: an
  * invalid one is verified in full as well, and the counts of valid and invalid ones are printed.
- * The fixture signatures are honestly generated. A signature chosen to maximise the hash chain
- * steps costs more than they do, so their time is not the worst case the gas price must cover. */
+ * The signatures in slh-verify-vectors.txt are honestly generated. slh-worst-case-vectors.txt
+ * holds one chosen to maximise the hash chain steps; its time is the one the gas price must
+ * cover. */
 #define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
 #include <stdio.h>
@@ -238,6 +239,6 @@ int main(int argc, char **argv)
   }
 #endif
   free(samples);
-  printf("NOTE: timing of this host only; it is not a pass/fail result and not the worst case\n");
+  printf("NOTE: timing of this host only, for the signatures in the file; not a pass/fail result\n");
   return 0;
 }

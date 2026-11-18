@@ -466,6 +466,20 @@ set(TOS_SLHDSA_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-slhdsa")
 add_executable(test-pq-slhdsa-vectors "${TOS_SLHDSA_TEST_DIR}/slh-verify-vectors.cpp")
 target_link_libraries(test-pq-slhdsa-vectors PRIVATE tos_slhdsa128s)
 add_test(NAME pq-slhdsa-vectors COMMAND test-pq-slhdsa-vectors "${TOS_SLHDSA_TEST_DIR}/slh-verify-vectors.txt")
+# The work of a verification, counted with the imported implementation's own compression counter:
+# the worst-case input must be rejected at exactly the compressions it was built to cost. Its own
+# build of the unmodified imported files (the counter needs SLH_EXPERIMENTAL); the production
+# archive is not involved.
+add_executable(test-pq-slhdsa-work "${TOS_SLHDSA_TEST_DIR}/verify-work.c"
+  "${TOS_SLHDSA_SOURCE_DIR}/slh_dsa.c" "${TOS_SLHDSA_SOURCE_DIR}/slh_sha2.c"
+  "${TOS_SLHDSA_SOURCE_DIR}/sha2_256.c" "${TOS_SLHDSA_SOURCE_DIR}/sha2_512.c")
+set_target_properties(test-pq-slhdsa-work PROPERTIES C_STANDARD 99)
+target_include_directories(test-pq-slhdsa-work PRIVATE "${TOS_SLHDSA_SOURCE_DIR}")
+target_compile_definitions(test-pq-slhdsa-work PRIVATE SLH_EXPERIMENTAL)
+target_compile_options(test-pq-slhdsa-work PRIVATE
+  "$<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wno-error=conversion>")
+add_test(NAME pq-slhdsa-worst-case-work
+  COMMAND test-pq-slhdsa-work "${TOS_SLHDSA_TEST_DIR}/slh-worst-case-vectors.txt" 0 3174)
 # Timing only, never a pass/fail threshold: per-verification time on the selected SHA-256 backend
 # and, in a hardware-backend build, with the portable path forced. Links its own build of the
 # verifier with the forcing hook; the production archive is not involved.

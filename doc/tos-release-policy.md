@@ -375,9 +375,10 @@ Validators, full nodes, DHT servers and the standalone wallet services
 ([standalone-wallet-services.md](standalone-wallet-services.md)) are
 installed from these assets of a
 `v<version>` release, one per architecture (`<arch>` is `x86_64` or `arm64`).
-A validator must use the x86-64 assets: arm64 is not allowed for a validator
-([Validator.md](Validator.md#cpu-instruction-set)); the arm64 assets are for
-full nodes, the wallet services, DHT servers and tools.
+A validator host of either architecture must expose the CPU extensions of the
+hardware SHA-256 backend ([Validator.md](Validator.md#cpu-instruction-set)).
+`v2026.11` was built before the arm64 backend existed: its arm64 assets are
+for full nodes, the wallet services, DHT servers and tools only.
 
 | Asset | Binary |
 |---|---|
@@ -424,10 +425,16 @@ recipe, the same one the testnet hosts use when they build on themselves:
   `SIGILL` on an older CPU;
 - `SOURCE_DATE_EPOCH` set to the commit time of the tagged commit, so build
   timestamps in third-party code do not vary between builds;
-- no compiler cache: every release build compiles from source.
+- no compiler cache: every release build compiles from source;
+- the hardware SHA-256 backend of the architecture (`TOS_SLHDSA_SHA_NI` on
+  x86-64, `TOS_SLHDSA_ARMV8_SHA2` on arm64), which a validator must verify with
+  ([Validator.md](Validator.md#cpu-instruction-set)). It is the default for
+  these targets; the binaries select it at run time on a CPU that has the
+  extensions and use the portable backend on one that does not.
 
 The script refuses to finish unless the recipe took effect: it reads the
-values back from `CMakeCache.txt`, requires `validator-engine`,
+values back from `CMakeCache.txt`, among them the backend switch of the
+architecture, which must be ON, requires `validator-engine`,
 `dht-server`, `tos-rpc` and `tos-wallet-index` (the binaries whose link line
 carries jemalloc; the two services get it through `tos_db`) to list
 `libjemalloc.so` as a dependency, runs
@@ -460,7 +467,8 @@ a tag checkout reports, so a build dispatched on a branch at the tag commit
 embeds the same text as the build the tag push started.
 
 `node-build-info-linux-<arch>.txt` records the commit,
-`SOURCE_DATE_EPOCH`, the compiler, the flags, the `rustc` and `cargo`
+`SOURCE_DATE_EPOCH`, the compiler, the flags, both SHA-256 backend switches
+(`slhdsa_sha256`), the `rustc` and `cargo`
 versions, the Rust flags (`rust_flags`), the jemalloc library and
 package, the build OS, each binary's dynamic dependencies and SHA-256.
 `scripts/test_release_artifacts.py` fails if an asset above comes from any
