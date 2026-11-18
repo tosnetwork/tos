@@ -137,6 +137,11 @@
         },
         {
           "artifact": "tos-node-x86_64-linux",
+          "path": "tosctl",
+          "name": "tosctl-linux-x86_64"
+        },
+        {
+          "artifact": "tos-node-x86_64-linux",
           "path": "BUILD-INFO",
           "name": "node-build-info-linux-x86_64.txt"
         },
@@ -254,6 +259,11 @@
           "artifact": "tos-node-arm64-linux",
           "path": "tos-wallet-index",
           "name": "tos-wallet-index-linux-arm64"
+        },
+        {
+          "artifact": "tos-node-arm64-linux",
+          "path": "tosctl",
+          "name": "tosctl-linux-arm64"
         },
         {
           "artifact": "tos-node-arm64-linux",

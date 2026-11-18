@@ -18,8 +18,23 @@
 # The script refuses to finish unless the recipe is in effect: the configured
 # cache holds these values, the binaries that link jemalloc load it,
 # validator-engine allocates through it, and every binary with -V reports the
-# commit it was built from. The output directory receives the eight binaries
-# and BUILD-INFO.
+# commit it was built from.
+#
+# tosctl, the Rust tool an operator drives the node with, is built from the
+# same commit in the same run:
+#
+#   cargo build --release --locked -p tosctl (in tosctl/src),
+#   the Rust toolchain rust-toolchain.toml pins,
+#   RUSTFLAGS = -C target-cpu=x86-64-v2 (x86-64) or generic (arm64),
+#   C sources of its dependencies compiled with clang-21, no compiler wrapper.
+#
+# --locked keeps cargo to the committed Cargo.lock. The fixed target CPU also
+# keeps a dependency's build script from enabling instructions it finds on the
+# build host. The script refuses to finish unless rustc is the pinned version,
+# the build left the checkout unchanged and tosctl --version reports the
+# commit.
+#
+# The output directory receives the eight node binaries, tosctl and BUILD-INFO.
 set -euo pipefail
 
 die() { echo "build-node-binaries: $*" >&2; exit 1; }
@@ -33,8 +48,8 @@ if [ ! -f CMakeLists.txt ] || [ ! -d validator-engine ]; then die "run from the 
 [ ! -e "$OUT" ] || die "$OUT already exists"
 
 case "$(uname -m)" in
-  x86_64) CPU=x86-64-v2 ;;
-  aarch64|arm64) CPU=armv8-a ;;
+  x86_64) CPU=x86-64-v2 RUST_CPU=x86-64-v2 ;;
+  aarch64|arm64) CPU=armv8-a RUST_CPU=generic ;;
   *) die "unsupported architecture $(uname -m)" ;;
 esac
 
@@ -98,16 +113,44 @@ for t in "${VERSIONED_TARGETS[@]}"; do
   "$BUILD/${PATHS[$t]}" -V | grep -q "Commit: $REV" || die "$t -V does not report commit $REV"
 done
 
+# tosctl, with the toolchain rust-toolchain.toml pins and the committed
+# Cargo.lock. RUSTFLAGS is set here, so flags from the environment or a cargo
+# configuration file do not apply; the empty wrapper settings turn off a
+# compiler cache configured on the build host.
+RUST_CHANNEL=$(sed -nE 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)"[[:space:]]*$/\1/p' rust-toolchain.toml)
+[ -n "$RUST_CHANNEL" ] || die "rust-toolchain.toml pins no channel"
+RUSTC_VERSION=$(cd tosctl/src && rustc --version)
+CARGO_VERSION=$(cd tosctl/src && cargo --version)
+[[ "$RUSTC_VERSION" == "rustc $RUST_CHANNEL "* ]] || die "rustc is '$RUSTC_VERSION', not the pinned $RUST_CHANNEL"
+[[ "$CARGO_VERSION" == "cargo $RUST_CHANNEL "* ]] || die "cargo is '$CARGO_VERSION', not the pinned $RUST_CHANNEL"
+TOSCTL_RUSTFLAGS="-C target-cpu=$RUST_CPU"
+TOSCTL_TARGET=$PWD/$BUILD/tosctl-target
+(
+  cd tosctl/src
+  export RUSTFLAGS="$TOSCTL_RUSTFLAGS" CARGO_TARGET_DIR="$TOSCTL_TARGET"
+  export CC=clang-21 CXX=clang++-21
+  export RUSTC_WRAPPER="" CARGO_BUILD_RUSTC_WRAPPER="" CARGO_INCREMENTAL=0
+  unset CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_TARGET GIT_COMMIT GIT_BRANCH GIT_COMMIT_DATE
+  cargo build --release --locked -p tosctl -j "$JOBS"
+)
+TOSCTL=$TOSCTL_TARGET/release/tosctl
+[ -z "$(git status --porcelain --untracked-files=no)" ] || die "the tosctl build changed the checkout"
+"$TOSCTL" --version | grep -qx "COMMIT_ID: $REV" || die "tosctl --version does not report commit $REV"
+
 mkdir -p "$OUT"
 for t in "${TARGETS[@]}"; do
   install -m 0755 "$BUILD/${PATHS[$t]}" "$OUT/$t"
 done
+install -m 0755 "$TOSCTL" "$OUT/tosctl"
 {
   echo "tos_revision $REV"
   echo "source_date_epoch $SOURCE_DATE_EPOCH"
   echo "architecture $(uname -m)"
   echo "compiler $(clang++-21 --version | head -1)"
   echo "flags CMAKE_BUILD_TYPE=Release TOS_ARCH=$CPU PORTABLE=$CPU TOS_USE_JEMALLOC=ON"
+  echo "$RUSTC_VERSION"
+  echo "$CARGO_VERSION"
+  echo "rust_flags RUSTFLAGS=$TOSCTL_RUSTFLAGS CC=clang-21 cargo build --release --locked -p tosctl"
   echo "jemalloc $JEMALLOC_LIB"
   if command -v dpkg-query >/dev/null; then
     package=$(dpkg -S "$(readlink -f "$JEMALLOC_LIB")" 2>/dev/null | cut -d: -f1 || true)
@@ -117,9 +160,9 @@ done
     # shellcheck source=/dev/null
     echo "build_os $(. /etc/os-release && echo "$PRETTY_NAME")"
   fi
-  for t in "${TARGETS[@]}"; do
+  for t in "${TARGETS[@]}" tosctl; do
     echo "needed $t $(readelf -d "$OUT/$t" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | sort | tr '\n' ' ' | sed 's/ $//')"
   done
-  (cd "$OUT" && sha256sum "${TARGETS[@]}") | sed 's/^/sha256 /'
+  (cd "$OUT" && sha256sum "${TARGETS[@]}" tosctl) | sed 's/^/sha256 /'
 } >"$OUT/BUILD-INFO"
 cat "$OUT/BUILD-INFO"
