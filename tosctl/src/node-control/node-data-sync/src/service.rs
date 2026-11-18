@@ -567,6 +567,120 @@ fn command(command: &mut Command, budget: Duration) -> Result<String> {
     ensure!(status.success(), "service command failed: {status}: {text}");
     Ok(text)
 }
+/// macOS has no `/proc`; libproc reports the same facts. Every process's vnode
+/// descriptors are listed and any one below `root` opened for writing refuses. As on
+/// Linux, a process that exits or that this account may not inspect is skipped.
+#[cfg(target_os = "macos")]
+pub(crate) fn refuse_writers(root: &Path) -> Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    /// `PROC_PIDFDVNODEPATHINFO` and its reply, from `<sys/proc_info.h>`.
+    const PROC_PIDFDVNODEPATHINFO: libc::c_int = 2;
+    /// The kernel's `FWRITE` open flag, as `proc_fileinfo.fi_openflags` reports it.
+    const FWRITE: u32 = 0x0002;
+    #[repr(C)]
+    struct ProcFileInfo {
+        fi_openflags: u32,
+        fi_status: u32,
+        fi_offset: libc::off_t,
+        fi_type: i32,
+        fi_guardflags: u32,
+    }
+    #[repr(C)]
+    struct VnodeFdInfoWithPath {
+        pfi: ProcFileInfo,
+        pvip: libc::vnode_info_path,
+    }
+    const _: () = assert!(std::mem::size_of::<VnodeFdInfoWithPath>() == 1200);
+    let skippable = |error: &std::io::Error| {
+        matches!(error.raw_os_error(), Some(libc::ESRCH | libc::EPERM | libc::EBADF))
+    };
+
+    // SAFETY: a null buffer asks only for the number of processes.
+    let count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
+    ensure!(count >= 0, "cannot count processes: {}", std::io::Error::last_os_error());
+    // Room for processes started between the two calls.
+    let capacity = usize::try_from(count)?.checked_add(64).context("process count overflow")?;
+    let mut pids = vec![0 as libc::pid_t; capacity];
+    let bytes = libc::c_int::try_from(
+        capacity.checked_mul(std::mem::size_of::<libc::pid_t>()).context("pid buffer overflow")?,
+    )?;
+    // SAFETY: the buffer holds `bytes` bytes.
+    let listed = unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast(), bytes) };
+    ensure!(listed >= 0, "cannot list processes: {}", std::io::Error::last_os_error());
+    pids.truncate(usize::try_from(listed)?.min(capacity));
+
+    let own = libc::pid_t::try_from(std::process::id())?;
+    let root = root.as_os_str().as_bytes();
+    for pid in pids.into_iter().filter(|pid| *pid > 0 && *pid != own) {
+        // SAFETY: a null buffer asks only for the size of the descriptor table.
+        let size =
+            unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, std::ptr::null_mut(), 0) };
+        if size <= 0 {
+            let error = std::io::Error::last_os_error();
+            if size == 0 || skippable(&error) {
+                continue;
+            }
+            return Err(error).with_context(|| format!("cannot list process {pid} descriptors"));
+        }
+        let entry = std::mem::size_of::<libc::proc_fdinfo>();
+        let slots = usize::try_from(size)?.div_euclid(entry).checked_add(16).context("fd count")?;
+        let mut fds: Vec<libc::proc_fdinfo> =
+            // SAFETY: proc_fdinfo is two integers, for which all-zero is valid.
+            (0..slots).map(|_| unsafe { std::mem::zeroed() }).collect();
+        let buffer = libc::c_int::try_from(slots.checked_mul(entry).context("fd buffer")?)?;
+        // SAFETY: the buffer holds `buffer` bytes.
+        let filled = unsafe {
+            libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, fds.as_mut_ptr().cast(), buffer)
+        };
+        if filled <= 0 {
+            let error = std::io::Error::last_os_error();
+            if filled == 0 || skippable(&error) {
+                continue;
+            }
+            return Err(error).with_context(|| format!("cannot list process {pid} descriptors"));
+        }
+        fds.truncate(usize::try_from(filled)?.div_euclid(entry));
+        for fd in fds.iter().filter(|fd| fd.proc_fdtype == libc::PROX_FDTYPE_VNODE as u32) {
+            // SAFETY: plain integers and character arrays, for which all-zero is valid.
+            let mut info: VnodeFdInfoWithPath = unsafe { std::mem::zeroed() };
+            let size = libc::c_int::try_from(std::mem::size_of::<VnodeFdInfoWithPath>())?;
+            // SAFETY: the reply buffer is exactly the size passed.
+            let got = unsafe {
+                libc::proc_pidfdinfo(
+                    pid,
+                    fd.proc_fd,
+                    PROC_PIDFDVNODEPATHINFO,
+                    std::ptr::from_mut(&mut info).cast(),
+                    size,
+                )
+            };
+            if got != size {
+                let error = std::io::Error::last_os_error();
+                if skippable(&error) {
+                    continue;
+                }
+                return Err(error).with_context(|| {
+                    format!("cannot inspect process {pid} descriptor {}", fd.proc_fd)
+                });
+            }
+            // SAFETY: the kernel terminates the path within its MAXPATHLEN buffer, which
+            // libc declares as 32 rows of 32 characters, one contiguous array.
+            let path = unsafe {
+                std::ffi::CStr::from_ptr(info.pvip.vip_path.as_ptr().cast::<libc::c_char>())
+            };
+            if Path::new(std::ffi::OsStr::from_bytes(path.to_bytes()))
+                .starts_with(Path::new(std::ffi::OsStr::from_bytes(root)))
+            {
+                ensure!(
+                    info.pfi.fi_openflags & FWRITE == 0,
+                    "another process has a writable database descriptor"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+#[cfg(target_os = "linux")]
 pub(crate) fn refuse_writers(root: &Path) -> Result<()> {
     let own = std::process::id().to_string();
     for entry in fs::read_dir("/proc")? {
@@ -758,6 +872,46 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(target_os = "macos")]
+    fn refuse_writers_sees_another_process_write_descriptor() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().canonicalize()?;
+        let file = root.join("CURRENT");
+        fs::write(&file, b"MANIFEST-000001\n")?;
+        // A child that holds the file open on descriptor 3 until its stdin closes.
+        let hold = |redirect: &str| -> Result<std::process::Child> {
+            let mut child = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("exec 3{redirect}\"$0\"; echo ready; read _"))
+                .arg(&file)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()?;
+            let mut ready = [0_u8; 6];
+            std::io::Read::read_exact(child.stdout.as_mut().context("child stdout")?, &mut ready)?;
+            ensure!(&ready == b"ready\n", "child did not open the file");
+            Ok(child)
+        };
+        let finish = |mut child: std::process::Child| -> Result<()> {
+            drop(child.stdin.take());
+            child.wait()?;
+            Ok(())
+        };
+        refuse_writers(&root)?;
+        let reader = hold("<")?;
+        let read_only = refuse_writers(&root);
+        finish(reader)?;
+        read_only.context("a read-only descriptor was refused")?;
+        let writer = hold(">>")?;
+        let refused = refuse_writers(&root);
+        finish(writer)?;
+        let error = refused.err().context("a writable descriptor was accepted")?;
+        assert!(format!("{error:#}").contains("writable database descriptor"), "{error:#}");
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
     #[ignore = "requires CAP_SYS_PTRACE for nondumpable child inspection"]
     fn refuse_writers_checks_child_descriptor_access_modes() -> Result<()> {
         use std::{

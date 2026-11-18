@@ -952,6 +952,22 @@ mod tree_contract_tests {
         }
         Ok(())
     }
+    /// Give every entry of a private test tree the caller's effective group.
+    fn regroup_to_caller(path: &std::path::Path) -> Result<()> {
+        let target = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())?;
+        // SAFETY: a terminated path in a private temporary directory; -1 keeps the owner.
+        ensure!(
+            unsafe { libc::lchown(target.as_ptr(), u32::MAX, libc::getegid()) } == 0,
+            "chgrp {}",
+            path.display()
+        );
+        if fs::symlink_metadata(path)?.is_dir() {
+            for entry in fs::read_dir(path)? {
+                regroup_to_caller(&entry?.path())?;
+            }
+        }
+        Ok(())
+    }
     #[test]
     fn a_local_identity_entry_of_another_owner_or_unsafe_mode_refuses() -> Result<()> {
         for (label, mode) in [("world-writable", 0o666), ("setgid directory", 0o2750)] {
@@ -961,7 +977,14 @@ mod tree_contract_tests {
             } else {
                 node.db.path.join("console-client/client")
             };
+            // New entries take their parent's group on macOS, and the kernel silently drops
+            // setgid for a group the caller is not in; give the tree the caller's group.
+            regroup_to_caller(&node.db.path)?;
             fs::set_permissions(&path, fs::Permissions::from_mode(mode))?;
+            ensure!(
+                fs::symlink_metadata(&path)?.permissions().mode() & 0o7777 == mode,
+                "{label}: mode was not applied"
+            );
             let error = capture(&node, "backup").err().context(label)?;
             assert!(
                 format!("{error:#}").contains("special or world-writable"),

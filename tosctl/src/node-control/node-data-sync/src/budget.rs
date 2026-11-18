@@ -422,12 +422,15 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let path = temp.path().join("accounted");
         std::fs::create_dir(&path)?;
+        // Content to account for: an empty directory takes blocks on ext4 but none on APFS.
+        std::fs::write(path.join("data"), [1_u8; 4096])?;
         let root = Root::open(&path)?;
         let inventory = Inventory::open(std::slice::from_ref(&path), &root)?;
         assert!(inventory.sample()? > 0);
         // Replacing the path cannot detach the descriptor used for space probes.
         std::fs::rename(&path, temp.path().join("saved"))?;
         std::fs::create_dir(&path)?;
+        std::fs::write(path.join("data"), [1_u8; 4096])?;
         let error = inventory.sample().expect_err("replaced root accepted on a later sample");
         assert!(format!("{error:#}").contains("root path was exchanged or replaced"));
         let replacement = Root::open(&path)?;
