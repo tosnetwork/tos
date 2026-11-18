@@ -27,8 +27,8 @@ jobs:
   # Every configuration runs the same signature vectors. "sha-ni" must actually execute the SHA-NI
   # path (TOS_REQUIRE_SHA_NI=1 fails the job otherwise) and "armv8-sha2" the ARMv8 SHA2 path
   # (TOS_REQUIRE_ARMV8_SHA2=1); "portable" builds the imported file. `switch` is the environment
-  # assignment that overrides the platform default, `cpu_flag` the /proc/cpuinfo word the runner
-  # must show for its hardware path.
+  # assignment that overrides the platform default, `cpu_flag` the /proc/cpuinfo word (on macOS,
+  # the hw.optional.arm sysctl) the runner must show for its hardware path.
   native:
     strategy:
       fail-fast: false
@@ -74,6 +74,15 @@ jobs:
             runner: macos-15
             switch: ''
             expect: 'OFF'
+            expect_armv8: 'ON'
+            require: '0'
+            require_armv8: '1'
+            backend: armv8-sha2
+            cpu_flag: FEAT_SHA256
+          - name: macos-off
+            runner: macos-15
+            switch: 'TOS_SLHDSA_ARMV8_SHA2=0'
+            expect: 'OFF'
             expect_armv8: 'OFF'
             require: '0'
             require_armv8: '0'
@@ -113,7 +122,11 @@ jobs:
           TOS_REQUIRE_SHA_NI: ${{ matrix.require }}
           TOS_REQUIRE_ARMV8_SHA2: ${{ matrix.require_armv8 }}
         run: |
-          grep -m1 -o -w '${{ matrix.cpu_flag }}' /proc/cpuinfo
+          if [ "$RUNNER_OS" = macOS ]; then
+            test "$(sysctl -n hw.optional.arm.${{ matrix.cpu_flag }})" = 1
+          else
+            grep -m1 -o -w '${{ matrix.cpu_flag }}' /proc/cpuinfo
+          fi
           cmake --build build-pq --target test-pq-slhdsa-sha256-backend -j4
           build-pq/test-pq-slhdsa-sha256-backend | tee backend.txt
           grep -Fx 'OK: ${{ matrix.backend }} path matches the imported implementation' backend.txt
