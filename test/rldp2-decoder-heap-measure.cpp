@@ -29,7 +29,11 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#if defined(__APPLE__)
+#include <malloc/malloc.h>
+#else
 #include <malloc.h>
+#endif
 #include <new>
 #include <vector>
 
@@ -39,6 +43,15 @@
 #include "td/utils/logging.h"
 
 namespace {
+// The usable size of an allocation: malloc_usable_size in glibc, malloc_size on macOS.
+std::size_t usable_size(void *p) {
+#if defined(__APPLE__)
+  return malloc_size(p);
+#else
+  return malloc_usable_size(p);
+#endif
+}
+
 std::atomic<long long> g_current{0};
 std::atomic<long long> g_peak{0};
 
@@ -47,7 +60,7 @@ void *counted_alloc(std::size_t n) {
   if (!p) {
     throw std::bad_alloc();
   }
-  auto size = static_cast<long long>(malloc_usable_size(p));
+  auto size = static_cast<long long>(usable_size(p));
   auto current = g_current.fetch_add(size) + size;
   auto peak = g_peak.load();
   while (current > peak && !g_peak.compare_exchange_weak(peak, current)) {
@@ -57,7 +70,7 @@ void *counted_alloc(std::size_t n) {
 
 void counted_free(void *p) noexcept {
   if (p) {
-    g_current.fetch_sub(static_cast<long long>(malloc_usable_size(p)));
+    g_current.fetch_sub(static_cast<long long>(usable_size(p)));
     std::free(p);
   }
 }

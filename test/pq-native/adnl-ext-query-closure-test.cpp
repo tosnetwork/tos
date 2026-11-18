@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <memory>
 #include <mutex>
 #include <netinet/in.h>
@@ -488,8 +489,15 @@ struct RawPeer {
   int accepted = -1;
   td::uint16 port = 0;
   RawPeer() {
+#if defined(__APPLE__)
+    // macOS has no SOCK_NONBLOCK; the same flag is set on the descriptor after creation.
+    listener = ::socket(AF_INET, SOCK_STREAM, 0);
+    require(listener >= 0 && ::fcntl(listener, F_SETFL, ::fcntl(listener, F_GETFL) | O_NONBLOCK) == 0,
+            "cannot create raw peer socket");
+#else
     listener = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
     require(listener >= 0, "cannot create raw peer socket");
+#endif
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -576,7 +584,12 @@ void dead_nonempty_refusal() {
   const auto accept_limit = td::Timestamp::in(5.0);
   while (peer.accepted < 0) {
     scheduler.run(0.01);
+#if defined(__APPLE__)
+    // macOS has no accept4; an accepted socket inherits O_NONBLOCK from the listener there.
+    peer.accepted = ::accept(peer.listener, nullptr, nullptr);
+#else
     peer.accepted = ::accept4(peer.listener, nullptr, nullptr, SOCK_NONBLOCK);
+#endif
     require(peer.accepted >= 0 || !accept_limit.is_in_past(), "client never connected to the raw peer");
   }
   // No second connection can be accepted: a reconnect could not replace conn_

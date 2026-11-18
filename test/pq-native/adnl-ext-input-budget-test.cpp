@@ -186,6 +186,17 @@ class Harness {
   Opened open(size_t max_pending, double lifetime, std::string source = "v4:192.0.2.1") {
     int fds[2];
     require(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair failed");
+#if defined(__APPLE__)
+    // The peer writes from the thread that runs the server's scheduler, so a write
+    // that does not fit the socket buffer blocks forever. A macOS socketpair holds
+    // 8 KiB by default; give it the capacity a Linux one has (about 176 KiB).
+    for (int fd : fds) {
+      int bytes = 256 << 10;
+      require(::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &bytes, sizeof(bytes)) == 0 &&
+                  ::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &bytes, sizeof(bytes)) == 0,
+              "cannot size the socketpair");
+    }
+#endif
     auto socket = td::SocketFd::from_native_fd(td::NativeFd(fds[0]));
     require(socket.is_ok(), "cannot wrap the server end");
     auto probe = std::make_shared<Probe>();
