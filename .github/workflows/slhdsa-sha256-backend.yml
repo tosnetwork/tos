@@ -111,9 +111,9 @@ jobs:
           build-pq/test-pq-slhdsa-sha256-backend | tee backend.txt
           grep -Fx 'OK: ${{ matrix.backend }} path matches the imported implementation' backend.txt
           grep -Fx 'OK: forced portable path matches the imported implementation' backend.txt
-      # Timing on a shared runner, which is not the production hardware class: the numbers are
-      # indicative and never fail the job. The fixture signatures are honestly generated, so this
-      # is not the adversarial worst case either.
+      # Timing on a shared runner: the numbers never fail the job. The first file holds honestly
+      # generated signatures; the second holds one signature built to maximise the verifier's
+      # work (3,174 compressions against 2,214), the case the gas price has to cover.
       - name: Verification time on this runner, hardware and forced portable (not a gate)
         if: matrix.backend != 'portable'
         continue-on-error: true
@@ -123,6 +123,10 @@ jobs:
           build-pq/bench-pq-slhdsa-verify test/pq-slhdsa/slh-verify-vectors.txt | tee bench.txt
           grep -E '^verify ${{ matrix.backend }}: vectors=4 valid=4 invalid=0 ' bench.txt
           grep -E '^verify portable: vectors=4 valid=4 invalid=0 ' bench.txt
+          echo 'worst case:'
+          build-pq/bench-pq-slhdsa-verify test/pq-slhdsa/slh-worst-case-vectors.txt 2000 | tee worst.txt
+          grep -E '^verify ${{ matrix.backend }}: vectors=1 valid=0 invalid=1 ' worst.txt
+          grep -E '^verify portable: vectors=1 valid=0 invalid=1 ' worst.txt
   rust:
     strategy:
       fail-fast: false
