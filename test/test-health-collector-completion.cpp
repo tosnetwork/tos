@@ -1,4 +1,5 @@
 #include "metrics/metrics-collectors.h"
+#include "td/actor/TestScheduler.h"
 #include "td/actor/actor.h"
 #include "td/utils/check.h"
 
@@ -52,7 +53,7 @@ class Driver final : public td::actor::Actor {
     CHECK(state_.slow_completed && state_.busy_completed);
     state_.first_completed = true;
     *passed_ = true;
-    td::actor::SchedulerContext::get().stop();
+    alarm_timestamp() = td::Timestamp::never();
   }
   void busy(td::Result<tos::metrics::MetricSet> result) {
     CHECK(result.is_error());
@@ -91,10 +92,19 @@ class Driver final : public td::actor::Actor {
 };
 }  // namespace
 int main() {
+  td::Time::allow_freezes();  // before the first clock read
   bool passed = false;
-  td::actor::Scheduler scheduler({1});
+  // One thread and virtual time. The second request is sent from an alarm, which fires
+  // only once everything the first request caused has run: the slow child is then
+  // holding its promise, whatever the host's speed, and the state the actors share is
+  // touched by one thread.
+  td::actor::TestScheduler scheduler;
+  scheduler.begin_sync();
   td::actor::ActorOwn<Driver> driver;
-  scheduler.run_in_context([&] { driver = td::actor::create_actor<Driver>("driver", &passed); });
-  scheduler.run();
+  scheduler.step([&] { driver = td::actor::create_actor<Driver>("driver", &passed); });
+  // The driver's last alarm fails the test if the first request never completes.
+  scheduler.run_until_no_alarm();
   CHECK(passed);
+  scheduler.step([&] { driver.reset(); });
+  scheduler.end_sync();
 }
