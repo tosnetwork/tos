@@ -1,14 +1,20 @@
 {
  "schema": "tos.evidence.index.v1",
- "claim": "The Service Actor release check rebuilds from source and refuses each drift at its intended comparison",
- "reviewed_commit": "7e7f5deb3",
+ "claim": "The Service Actor release check rebuilds the release and the test-only build from source and refuses each drift at its intended comparison",
+ "reviewed_commit": "54200768a",
  "runner": "test/service-actor/release_mutations.py",
  "command": "FUNC_BIN=<func> FIFT_BIN=<fift> FUNC_PATH=<func> FIFT_PATH=<fift> python3 test/service-actor/release_mutations.py <checkout> <results.json>",
- "compiler": "FunC v0.4.6 and Fift from one build at 392bc162e095cc34292eb9ea0709273407e06ca7",
+ "compiler": "FunC v0.4.6 and Fift from one build at 5af405dcb1f523be0ff3b812e9f6945275c4945b",
  "released": {
   "code_hash": "tvm-cell-sha256:0594f9a5743440f9c5f63913ab790c0ea6f4fd5c627d9962d63e09428e42aa0c",
   "boc_sha256": "sha256:21f1ea22576fce66ec3b218513adf037710b078ea12a8d84929eda970d62d5a8",
   "boc_bytes": 4590
+ },
+ "test_profile": {
+  "code_hash": "tvm-cell-sha256:79a566f5f4281f7abe59cd1c16a7bc3b2d990e840f42b00d55cb0ae4b0545960",
+  "boc_sha256": "sha256:c77cfda33feca51c26c991f48575fa54c30b988731a37a5b5148c50148c2435c",
+  "boc_bytes": 4590,
+  "test_only": true
  },
  "flags_note": "check-service-actor-bytecode.py compiles with -APS, the release build with -A -P; the baseline checker run compares its rebuild with the -A -P artifact byte for byte and passes, so both produce identical BOCs",
  "results": [
@@ -103,7 +109,7 @@
    "expected_text": "SDK SERVICE_ACTOR_CODE_B64 differs from the rebuild",
    "matched": true,
    "mutated": "tosctl/src/node-control/contracts/src/service_actor.rs",
-   "mutated_sha256": "55f63e3511331add940eede639e72f84d1b1b36658eda0c660b1e6e2dc125b24"
+   "mutated_sha256": "f5ce528c46f74aef1ab3febc80434180d4d24e3265a8e65d8e4acf9a0eea0443"
   },
   {
    "control": "d-sdk-alternate-container",
@@ -116,7 +122,59 @@
    "expected_text": "Service Actor bytecode synchronized (repr_hash=",
    "matched": true,
    "mutated": "tosctl/src/node-control/contracts/src/service_actor.rs",
-   "mutated_sha256": "55f63e3511331add940eede639e72f84d1b1b36658eda0c660b1e6e2dc125b24"
+   "mutated_sha256": "f5ce528c46f74aef1ab3febc80434180d4d24e3265a8e65d8e4acf9a0eea0443"
+  },
+  {
+   "control": "e-test-artifact-byte",
+   "command": "scripts/test-tos-service-actor-v1.sh",
+   "exit": 1,
+   "last_line": [
+    "Service Actor release check failed: frozen artifact differs from the rebuild"
+   ],
+   "expected_exit": 1,
+   "expected_text": "frozen artifact differs from the rebuild",
+   "matched": true,
+   "mutated": "crypto/smartcont/tos-service-actor-v1-test.boc.base64",
+   "mutated_sha256": "798aaf2da9f1908ecd1c2249bbb2f90e654be049f461d134f2d4432dcd0f80c1"
+  },
+  {
+   "control": "e-test-artifact-byte",
+   "command": "python3 scripts/check-service-actor-bytecode.py",
+   "exit": 1,
+   "last_line": [
+    "Service Actor test-profile artifact is stale: the frozen artifact differs from the rebuild (generated 4590 bytes, frozen 4590 bytes)"
+   ],
+   "expected_exit": 1,
+   "expected_text": "Service Actor test-profile artifact is stale",
+   "matched": true,
+   "mutated": "crypto/smartcont/tos-service-actor-v1-test.boc.base64",
+   "mutated_sha256": "798aaf2da9f1908ecd1c2249bbb2f90e654be049f461d134f2d4432dcd0f80c1"
+  },
+  {
+   "control": "f-test-manifest-not-test-only",
+   "command": "scripts/test-tos-service-actor-v1.sh",
+   "exit": 1,
+   "last_line": [
+    "Service Actor release check failed: the test manifest must set test_only to true"
+   ],
+   "expected_exit": 1,
+   "expected_text": "the test manifest must set test_only to true",
+   "matched": true,
+   "mutated": "crypto/smartcont/tos-service-actor-v1-test.release.json",
+   "mutated_sha256": "24dde7c9ac5d73fa660ea5e2981f7947e5185c3f072f40b09595f72e553723a4"
+  },
+  {
+   "control": "g-test-manifest-extra-override",
+   "command": "scripts/test-tos-service-actor-v1.sh",
+   "exit": 1,
+   "last_line": [
+    "Service Actor release check failed: manifest constant_overrides differ from the overrides the build applies"
+   ],
+   "expected_exit": 1,
+   "expected_text": "manifest constant_overrides differ from the overrides the build applies",
+   "matched": true,
+   "mutated": "crypto/smartcont/tos-service-actor-v1-test.release.json",
+   "mutated_sha256": "4bad8d736deae136c592c5a6d5598683f80fc48a38ba25f01c6a7491669b35db"
   },
   {
    "control": "restored",
