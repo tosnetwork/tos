@@ -1,9 +1,11 @@
 name: Windows TOS build (x86-64)
 
 # The client tools built on Windows with clang-cl and lld-link from
-# Visual Studio 2022 (assembly/native/build-windows-2022.bat). It runs on every
-# pull request to main and every push to main, unfiltered by path, for the
-# reason the Linux shared builds give.
+# Visual Studio 2022 (assembly/native/build-windows-2022.bat), and packaged by
+# assembly/native/package-windows.ps1 into the artifact tos-x86-64-windows. It
+# runs on every pull request to main and every push to main, unfiltered by path,
+# for the reason the Linux shared builds give, and on every version tag, whose
+# run is the one a release collects (scripts/release-artifacts.py).
 
 on:
   pull_request:
@@ -11,7 +13,9 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+  workflow_call:
 
 defaults:
   run:
@@ -39,10 +43,22 @@ jobs:
     - name: Install build tools
       run: choco install -y --no-progress ninja nasm
 
-    - name: Build TOS
+    # Packaged in the same step, because dumpbin, which checks every file's
+    # DLLs, comes from the Visual Studio environment vcvars64 sets.
+    - name: Build and package TOS
       run: |
         call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
         if errorlevel 1 exit /b 1
         set "PATH=%PATH%;C:\Program Files\NASM"
         call assembly\native\build-windows-2022.bat -k
         if errorlevel 1 exit /b 1
+        pwsh -NoProfile -File assembly\native\package-windows.ps1 -BuildDir build-windows -OutDir tos-windows
+        if errorlevel 1 exit /b 1
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: tos-x86-64-windows
+        path: tos-windows
+        if-no-files-found: error
+        retention-days: 14
