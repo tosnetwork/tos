@@ -85,6 +85,9 @@ foreach ($name in $Files.Keys) {
   $text = dumpbin /nologo /dependents $file | Out-String
   if ($LASTEXITCODE -ne 0) { Fail "dumpbin cannot read $name" }
   $deps = @([regex]::Matches($text, '(?im)^\s+(\S+\.dll)\s*$') | ForEach-Object { $_.Groups[1].Value.ToLowerInvariant() } | Sort-Object -Unique)
+  # Every Windows executable and DLL imports something; an empty list means the
+  # output of dumpbin was not understood, not that the file needs nothing.
+  if ($deps.Count -eq 0) { Fail "dumpbin lists no DLL for $name" }
   foreach ($dep in $deps) {
     $ok = $Shipped -contains $dep
     foreach ($pattern in $Allowed) { if ($dep -match $pattern) { $ok = $true } }

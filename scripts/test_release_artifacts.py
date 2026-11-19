@@ -2106,6 +2106,7 @@ def windows_release_problems(workflow: str, script: str) -> list[str]:
         '  if ($out -notmatch "Commit: $Rev") { Fail ',
         "  $text = dumpbin /nologo /dependents $file | Out-String\n",
         "    if (-not $ok) { Fail ",
+        "  if ($deps.Count -eq 0) { Fail ",
         "Set-Content -Path (Join-Path $OutDir 'BUILD-INFO')",
     ):
         if line not in script:
@@ -2153,6 +2154,7 @@ class WindowsReleaseTest(unittest.TestCase):
         workflow, script = self.inputs()
         mutants = {
             "    if (-not $ok) { Fail ": "    if ($false) { Fail ",
+            "  if ($deps.Count -eq 0) { Fail ": "  if ($false) { Fail ",
             '  if ($out -notmatch "Commit: $Rev") { Fail ': "  if ($false) { Fail ",
             "  if (-not (Test-Path -PathType Leaf $path)) { Fail ": "  if ($false) { Fail ",
             "if (git status --porcelain --untracked-files=no) { Fail ": "if ($false) { Fail ",
