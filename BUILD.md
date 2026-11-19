@@ -10,8 +10,11 @@ The current build focuses on the native TVM execution surface for actor-based ap
 ## Supported Platforms
 
 The node and its tools are built, tested in CI and released for Linux on
-x86-64 and arm64. There are no Windows or Android builds, build scripts or
-release artifacts.
+x86-64 and arm64. There are no Android builds, build scripts or release
+artifacts, and no Windows release artifacts.
+
+Windows x86-64 builds the client tools from source, not the node: see
+[Windows Build](#windows-build).
 
 WebAssembly covers the contract tools only, not the node: the FunC compiler
 and Fift assembler library (`funcfiftlib`), `fift`, `func`, `tlbc` and the
@@ -197,6 +200,35 @@ The labels mark tests that macOS cannot host, not failures of the code they test
   hold there. `test-http-server-limits` cannot pin loopback socket buffers as
   small as its slow-reader case requires, and `test-rldp2-decoder-heap` is
   calibrated against glibc's allocator, which rounds less than the macOS one.
+
+## Windows Build
+
+`assembly/native/build-windows-2022.bat` builds the client tools on Windows
+x86-64 with clang-cl and lld-link from Visual Studio 2022: `lite-client`,
+`validator-engine-console`, `storage-daemon-cli`, `blockchain-explorer`, `fift`,
+`func`, `tol`, `toslib`, `toslibjson`, `toslib-cli`, `emulator`, `create-state`
+and `json2tlo`. Every third-party library is built from `third-party\`.
+
+Run it from the repository root in an "x64 Native Tools Command Prompt for VS
+2022" with the Visual Studio "C++ Clang tools for Windows" component, ninja,
+NASM and Perl on `PATH` (for example `choco install ninja nasm strawberryperl`).
+The configuration also needs Python 3 and Git for Windows, whose bash runs the
+script that verifies the native registry contract:
+
+```bat
+assembly\native\build-windows-2022.bat
+```
+
+The output is in `build-windows\`. Nothing that links the node's own code is
+built: not `validator-engine`, and not the programs that use its key store,
+metrics or RLDP (`storage-daemon`, `dht-server`, `http-proxy`,
+`rldp-http-proxy`, `proxy-liteserver`, `generate-random-id`, `tos-rpc`,
+`tos-wallet-index`). That code relies on POSIX file semantics and is neither
+ported nor compiled on Windows
+([Windows](doc/Validator.md#windows)). CI builds the tools on every pull
+request and push to `main`
+(`.github/workflows/build-tos-windows-2022-x86-64.yml`); there are no Windows
+release artifacts. `tosctl` is not part of the Windows build.
 
 ## Rust Workspace
 
