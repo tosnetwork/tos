@@ -9,7 +9,7 @@
 # the libraries that compile and test contracts in a browser or under Node.js.
 #
 # Every third-party library is built from third-party/ with Emscripten: libsodium
-# by this script, the others by the CMake build. The WebAssembly build does not run the code
+# and OpenSSL by this script, the others by the CMake build. The WebAssembly build does not run the code
 # generators (tlbc and the Fift smart-contract envelopes), so a native build of
 # fift and smc-envelope first writes their output into the source tree.
 #
@@ -51,8 +51,9 @@ unset CC CXX
 
 BUILD=build-wasm
 rm -rf "$BUILD"
-# libsodium is the one library the Emscripten configuration expects already
-# built, under the build directory; it comes from third-party/sodium too.
+# The Emscripten configuration expects two libraries already built under the
+# build directory: libsodium, and OpenSSL with QUIC (libssl and libcrypto, for
+# the QUIC library's probe). Both come from third-party/.
 SODIUM=$BUILD/3pp_emscripten/libsodium
 mkdir -p "$(dirname "$SODIUM")"
 cp -R third-party/sodium "$SODIUM"
@@ -62,6 +63,18 @@ cp -R third-party/sodium "$SODIUM"
   emmake make -j"$JOBS"
 )
 [ -f "$SODIUM/src/libsodium/.libs/libsodium.a" ] || die "libsodium was not built"
+
+OPENSSL=$BUILD/3pp_emscripten/openssl_em
+cp -R third-party/openssl "$OPENSSL"
+(
+  cd "$OPENSSL"
+  CC=emcc CXX=em++ AR=emar RANLIB=emranlib NM=emnm ARFLAGS=rcs \
+    ./Configure linux-generic32 no-asm no-shared no-dso no-unit-test no-tests no-apps no-threads enable-quic
+  emmake make -j"$JOBS" build_libs CROSS_COMPILE=
+)
+for f in libssl.a libcrypto.a include/openssl/quic.h; do
+  [ -f "$OPENSSL/$f" ] || die "OpenSSL was not built: $OPENSSL/$f is missing"
+done
 
 emcmake cmake -S . -B "$BUILD" -G Ninja -DUSE_EMSCRIPTEN=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build "$BUILD" --parallel "$JOBS" --target funcfiftlib fift func tlbc emulator-emscripten
