@@ -25,6 +25,7 @@ use common::{
     chain_utils::{display_tos, tos_to_nanotos},
     time_format,
 };
+use contracts::service_actor::ServiceActorCodeProfile;
 use contracts::service_actor::protocol_constants::{
     ADMISSION_GAS_ALLOWANCE, MINIMUM_OPERATING_RESERVE, PAYOUT_GAS_ALLOWANCE,
 };
@@ -145,10 +146,35 @@ pub struct ServiceActorDeployCmd {
     amount: f64,
     #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
+    #[arg(long, value_enum, default_value_t = CodeProfileArg::Release, help = CODE_PROFILE_HELP)]
+    code_profile: CodeProfileArg,
     #[arg(long)]
     yes: bool,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
+}
+
+const CODE_PROFILE_HELP: &str = "Service Actor build: `release` (the default) or `test`. \
+    `test` is FOR TEST NETWORKS ONLY: the same contract with the minimum response SLA and \
+    refund claim window lowered to 600 seconds, under its own code hash. Never deploy it on a \
+    production network; nothing that pins the release code hash accepts it";
+
+/// Which Service Actor build `deploy` and `build-state` use.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CodeProfileArg {
+    /// The released Service Actor.
+    Release,
+    /// TEST NETWORKS ONLY: minimum windows of 600 seconds.
+    Test,
+}
+
+impl From<CodeProfileArg> for ServiceActorCodeProfile {
+    fn from(value: CodeProfileArg) -> Self {
+        match value {
+            CodeProfileArg::Release => Self::Release,
+            CodeProfileArg::Test => Self::Test,
+        }
+    }
 }
 
 #[derive(clap::Args, Clone)]
@@ -360,6 +386,8 @@ pub struct ServiceActorBuildStateCmd {
     attestor_pubkey: Option<String>,
     #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
+    #[arg(long, value_enum, default_value_t = CodeProfileArg::Release, help = CODE_PROFILE_HELP)]
+    code_profile: CodeProfileArg,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
 }
@@ -631,8 +659,9 @@ impl ServiceActorDeployCmd {
             &self.proof_scheme_hash,
             attestor_pubkey,
         )?;
-        let address = ServiceActorContract::calculate_address(self.workchain, &init)?;
-        let state_init = ServiceActorContract::build_state_init(&init)?;
+        let profile = ServiceActorCodeProfile::from(self.code_profile);
+        let address = ServiceActorContract::calculate_address_for(profile, self.workchain, &init)?;
+        let state_init = ServiceActorContract::build_state_init_for(profile, &init)?;
         let record_name = self.name.clone().unwrap_or_else(|| {
             let hex = address.to_string();
             let hash = hex.rsplit(':').next().unwrap_or(&hex);
@@ -1546,7 +1575,11 @@ impl ServiceActorBuildStateCmd {
             &self.proof_scheme_hash,
             parse_attestor_public_key("attestor-pubkey", &self.attestor_pubkey)?,
         )?;
-        let address = ServiceActorContract::calculate_address(self.workchain, &init)?;
+        let address = ServiceActorContract::calculate_address_for(
+            self.code_profile.into(),
+            self.workchain,
+            &init,
+        )?;
         if self.format == OutputFormat::Json {
             println!("{}", serde_json::json!({ "address": address.to_string() }));
         } else {
