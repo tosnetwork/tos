@@ -1958,8 +1958,9 @@ def windows_release_problems(workflow: str, script: str) -> list[str]:
     ):
         if line not in script:
             problems.append(f"the Windows package script lost {line.strip()!r}")
-    if "'validator-engine.exe'" in script:
-        problems.append("the Windows package ships validator-engine, which Windows does not build")
+    for tool in WindowsReleaseTest.NOT_BUILT:
+        if f"'{tool}.exe'" in script:
+            problems.append(f"the Windows package ships {tool}, which Windows does not build")
     return problems
 
 
@@ -1967,6 +1968,18 @@ class WindowsReleaseTest(unittest.TestCase):
     """The Windows package is the CI build of the client tools, checked file by file."""
 
     WORKFLOW = "build-tos-windows-2022-x86-64.yml"
+    # Everything that links node code; build-windows-2022.bat builds none of it.
+    NOT_BUILT = (
+        "validator-engine",
+        "storage-daemon",
+        "dht-server",
+        "http-proxy",
+        "rldp-http-proxy",
+        "proxy-liteserver",
+        "generate-random-id",
+        "tos-rpc",
+        "tos-wallet-index",
+    )
 
     def inputs(self) -> tuple[str, str]:
         return (
@@ -1976,6 +1989,13 @@ class WindowsReleaseTest(unittest.TestCase):
 
     def test_repository_packages_the_windows_build(self) -> None:
         self.assertEqual(windows_release_problems(*self.inputs()), [])
+
+    def test_the_build_script_builds_no_node_code(self) -> None:
+        script = (HERE.parent / "assembly" / "native" / "build-windows-2022.bat").read_text()
+        _, _, targets = script.partition("ninja -C build-windows %KEEP_GOING% ")
+        targets = targets.partition("\nif errorlevel")[0].replace("^", " ").split()
+        self.assertIn("lite-client", targets)
+        self.assertEqual([t for t in targets if t in self.NOT_BUILT], [])
 
     def test_a_weakened_script_is_refused(self) -> None:
         workflow, script = self.inputs()
@@ -1987,6 +2007,10 @@ class WindowsReleaseTest(unittest.TestCase):
             "  'lite-client.exe'              = 'lite-client\\lite-client.exe'\n": (
                 "  'lite-client.exe'              = 'lite-client\\lite-client.exe'\n"
                 "  'validator-engine.exe'         = 'validator-engine\\validator-engine.exe'\n"
+            ),
+            "  'json2tlo.exe'                 = 'utils\\json2tlo.exe'\n": (
+                "  'json2tlo.exe'                 = 'utils\\json2tlo.exe'\n"
+                "  'dht-server.exe'               = 'dht-server\\dht-server.exe'\n"
             ),
         }
         for old, new in mutants.items():

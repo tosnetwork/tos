@@ -509,13 +509,12 @@ the release's `SHA256SUMS` before relying on it.
 client tools with clang-cl and lld-link on `windows-2022` on every `v*` tag
 (and every pull request and push to `main`), and
 `assembly/native/package-windows.ps1` packages them into the artifact
-`tos-x86-64-windows`: `lite-client`, `validator-engine-console`, `fift`,
-`func`, `tol`, `create-state`, `toslib-cli`, `toslibjson.dll`, `emulator.dll`,
-`storage-daemon`, `storage-daemon-cli`, `blockchain-explorer`, `dht-server`,
-`http-proxy`, `rldp-http-proxy`, `proxy-liteserver`, `generate-random-id`,
-`json2tlo`, `tos-rpc` and `tos-wallet-index`, with the `smartcont` and `lib`
-directories and `BUILD-INFO`. There is no `validator-engine` and no `tosctl`:
-Windows cannot host a node ([Windows](Validator.md#windows)).
+`tos-x86-64-windows`: `lite-client`, `validator-engine-console`,
+`storage-daemon-cli`, `blockchain-explorer`, `fift`, `func`, `tol`,
+`create-state`, `json2tlo`, `toslib-cli`, `toslibjson.dll` and `emulator.dll`,
+with the `smartcont` and `lib` directories and `BUILD-INFO`. There is no
+`validator-engine`, no daemon that links node code and no `tosctl`: Windows
+cannot host a node ([Windows](Validator.md#windows)).
 
 The script refuses to finish unless every listed file was built, the tools
 with `-V` report the tagged commit, the checkout is clean, and every file

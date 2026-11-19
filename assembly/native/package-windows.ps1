@@ -11,8 +11,8 @@
 # and lib directories the Fift tools read, and BUILD-INFO with each file's
 # SHA-256.
 #
-# validator-engine is not built on Windows (BUILD.md, Windows Build), so it is
-# not shipped.
+# Nothing that links node code is built on Windows (BUILD.md, Windows Build),
+# so validator-engine and the daemons are not shipped.
 
 param(
   [Parameter(Mandatory = $true)][string]$BuildDir,
@@ -38,7 +38,6 @@ if (git status --porcelain --untracked-files=no) { Fail 'the checkout has local 
 
 # The shipped files and where the build puts them.
 $Files = [ordered]@{
-  'storage-daemon.exe'           = 'storage\storage-daemon\storage-daemon.exe'
   'storage-daemon-cli.exe'       = 'storage\storage-daemon\storage-daemon-cli.exe'
   'blockchain-explorer.exe'      = 'blockchain-explorer\blockchain-explorer.exe'
   'fift.exe'                     = 'crypto\fift.exe'
@@ -50,17 +49,10 @@ $Files = [ordered]@{
   'toslib-cli.exe'               = 'toslib\toslib-cli.exe'
   'toslibjson.dll'               = 'toslib\toslibjson.dll'
   'emulator.dll'                 = 'emulator\emulator.dll'
-  'http-proxy.exe'               = 'http\http-proxy.exe'
-  'rldp-http-proxy.exe'          = 'rldp-http-proxy\rldp-http-proxy.exe'
-  'dht-server.exe'               = 'dht-server\dht-server.exe'
-  'generate-random-id.exe'       = 'utils\generate-random-id.exe'
   'json2tlo.exe'                 = 'utils\json2tlo.exe'
-  'proxy-liteserver.exe'         = 'utils\proxy-liteserver.exe'
-  'tos-rpc.exe'                  = 'services\tos-rpc.exe'
-  'tos-wallet-index.exe'         = 'services\tos-wallet-index.exe'
 }
 # The tools whose -V prints the commit they were built from.
-$Versioned = @('lite-client.exe', 'validator-engine-console.exe', 'fift.exe', 'storage-daemon.exe', 'dht-server.exe', 'generate-random-id.exe')
+$Versioned = @('lite-client.exe', 'validator-engine-console.exe', 'fift.exe')
 
 foreach ($name in $Files.Keys) {
   $path = Join-Path $BuildDir $Files[$name]
