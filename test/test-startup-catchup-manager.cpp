@@ -948,6 +948,10 @@ TEST(StartupCatchupManager, T12_FenceThenExactGroupsBeforeShardClient) {
   }
   f.end(ExitReason::Fresh);
   auto expected = f.session_of(f.snapshot(f.current, 6));
+  // The validator group is built once its signing admission is answered, which the
+  // ledger decides asynchronously on its own disk I/O. Wait for that answer, but before
+  // the sync completes: a group deferred to the sync's completion still fails here.
+  ASSERT_TRUE(f.wait_event("group " + expected.to_hex(), 30.0));
   {
     std::lock_guard<std::mutex> lock(f.journal->mu);
     ASSERT_EQ(1u, f.journal->validator_groups.size());

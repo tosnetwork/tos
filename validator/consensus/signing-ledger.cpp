@@ -148,6 +148,30 @@ bool file_exists(const std::string& path) {
   return ::lstat(path.c_str(), &st) == 0;
 }
 
+// Flushes a descriptor's data and metadata to stable storage. On macOS fsync(2) hands
+// the data to the drive, which may still hold it in its volatile cache; F_FULLFSYNC also
+// flushes that cache, so a record reported durable survives a power loss there too.
+int durable_sync(int fd) {
+#if defined(__APPLE__)
+  int rc;
+  do {
+    rc = ::fcntl(fd, F_FULLFSYNC);
+  } while (rc == -1 && errno == EINTR);
+  return rc;
+#else
+  return ::fsync(fd);
+#endif
+}
+
+// As durable_sync, for the record path where only the data and the size must persist.
+int durable_data_sync(int fd) {
+#if defined(__APPLE__)
+  return durable_sync(fd);
+#else
+  return ::fdatasync(fd);
+#endif
+}
+
 // Whether `dir` holds any log file.
 bool has_log_files(const std::string& dir) {
   DIR* handle = ::opendir(dir.c_str());
@@ -170,7 +194,7 @@ td::Status fsync_directory(const std::string& dir) {
   if (fd < 0) {
     return td::Status::Error(PSTRING() << "cannot open " << dir << ": " << errno_text());
   }
-  const int rc = ::fsync(fd);
+  const int rc = durable_sync(fd);
   const int error = errno;
   ::close(fd);
   if (rc != 0) {
@@ -363,11 +387,11 @@ long FileOps::pwrite(int fd, const void* data, std::size_t size, long offset) {
 }
 
 int FileOps::fdatasync(int fd) {
-  return ::fdatasync(fd);
+  return durable_data_sync(fd);
 }
 
 int FileOps::fsync(int fd) {
-  return ::fsync(fd);
+  return durable_sync(fd);
 }
 
 int FileOps::ftruncate(int fd, long length) {
@@ -394,7 +418,7 @@ td::Status FileOps::replace_file(const std::string& dir, const std::string& name
     }
     written += static_cast<std::size_t>(n);
   }
-  if (::fsync(fd) != 0) {
+  if (durable_sync(fd) != 0) {
     const int error = errno;
     ::close(fd);
     return td::Status::Error(PSTRING() << "cannot flush " << temp_path << ": " << std::strerror(error));
@@ -415,11 +439,27 @@ std::shared_ptr<FileOps> default_file_ops() {
 
 namespace {
 
+constexpr const char* kNoBirthTime =
+    "the filesystem reports no birth time, so this file cannot be bound to what it was "
+    "created as";
+
+#if defined(__APPLE__)
+// stat(2) on macOS carries the birth time. A filesystem that does not record one reports
+// zero, which is refused as statx(2) refuses a missing STATX_BTIME on Linux.
+td::Result<Binding> binding_from(const struct stat& st) {
+  if (st.st_birthtimespec.tv_sec <= 0 && st.st_birthtimespec.tv_nsec == 0) {
+    return td::Status::Error(td::Slice(kNoBirthTime));
+  }
+  Binding binding;
+  binding.ino = static_cast<std::uint64_t>(st.st_ino);
+  binding.btime_sec = static_cast<std::int64_t>(st.st_birthtimespec.tv_sec);
+  binding.btime_nsec = static_cast<std::uint32_t>(st.st_birthtimespec.tv_nsec);
+  return binding;
+}
+#else
 td::Result<Binding> binding_from(const struct statx& stx) {
   if ((stx.stx_mask & STATX_BTIME) == 0) {
-    return td::Status::Error(
-        "the filesystem reports no birth time, so this file cannot be bound to what it was "
-        "created as");
+    return td::Status::Error(td::Slice(kNoBirthTime));
   }
   Binding binding;
   binding.ino = stx.stx_ino;
@@ -427,23 +467,40 @@ td::Result<Binding> binding_from(const struct statx& stx) {
   binding.btime_nsec = stx.stx_btime.tv_nsec;
   return binding;
 }
+#endif
 
 }  // namespace
 
 td::Result<Binding> binding_of(const std::string& path) {
+#if defined(__APPLE__)
+  struct stat st{};
+  if (::lstat(path.c_str(), &st) != 0) {
+    return td::Status::Error(PSTRING() << "cannot inspect " << path << ": " << errno_text());
+  }
+  return binding_from(st);
+#else
   struct statx stx{};
   if (::statx(AT_FDCWD, path.c_str(), AT_SYMLINK_NOFOLLOW, STATX_INO | STATX_BTIME, &stx) != 0) {
     return td::Status::Error(PSTRING() << "cannot inspect " << path << ": " << errno_text());
   }
   return binding_from(stx);
+#endif
 }
 
 td::Result<Binding> binding_of_fd(int fd) {
+#if defined(__APPLE__)
+  struct stat st{};
+  if (::fstat(fd, &st) != 0) {
+    return td::Status::Error(PSTRING() << "cannot inspect an open log: " << errno_text());
+  }
+  return binding_from(st);
+#else
   struct statx stx{};
   if (::statx(fd, "", AT_EMPTY_PATH, STATX_INO | STATX_BTIME, &stx) != 0) {
     return td::Status::Error(PSTRING() << "cannot inspect an open log: " << errno_text());
   }
   return binding_from(stx);
+#endif
 }
 
 // ===== Records =====

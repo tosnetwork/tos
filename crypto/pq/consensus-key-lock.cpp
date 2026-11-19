@@ -6,7 +6,12 @@
 #include <mutex>
 #include <sys/file.h>
 #include <sys/stat.h>
+#if defined(__APPLE__)
+#include <sys/mount.h>
+#include <sys/param.h>
+#else
 #include <sys/statfs.h>
+#endif
 #include <unistd.h>
 #include <utility>
 
@@ -79,6 +84,15 @@ std::variant<std::shared_ptr<KeyFileLock>, std::string> acquire(int fd) {
     ::close(fd);
     return "cannot inspect the filesystem of the consensus key file: " + errno_text(error);
   }
+#if defined(__APPLE__)
+  const std::string_view type_name(fs.f_fstypename, ::strnlen(fs.f_fstypename, sizeof(fs.f_fstypename)));
+  if (!consensus_key_lock_supported_darwin_filesystem(type_name, (fs.f_flags & MNT_LOCAL) != 0)) {
+    ::close(fd);
+    return "the consensus key file is on a filesystem (" + std::string(type_name) +
+           ") where the engine cannot enforce that only one process signs with it; keep the key on a local "
+           "filesystem (apfs or hfs)";
+  }
+#else
   const auto f_type = static_cast<std::uint64_t>(static_cast<unsigned long>(fs.f_type));
   if (!consensus_key_lock_supported_filesystem(f_type)) {
     ::close(fd);
@@ -88,6 +102,7 @@ std::variant<std::shared_ptr<KeyFileLock>, std::string> acquire(int fd) {
            ") where the engine cannot enforce that only one process signs with it; keep the key on a local "
            "filesystem (ext4, xfs, btrfs, tmpfs or the overlay over one of them)";
   }
+#endif
 
   std::scoped_lock guard(registry_mutex);
   for (auto it = registry.begin(); it != registry.end();) {
@@ -137,6 +152,16 @@ bool consensus_key_lock_supported_filesystem(std::uint64_t f_type) noexcept {
     default:
       return false;
   }
+}
+
+bool consensus_key_lock_supported_darwin_filesystem(std::string_view type_name, bool local) noexcept {
+  // Only local Apple filesystems, where every process shares the kernel's lock table.
+  // Network mounts (smbfs, nfs, afpfs, webdav) lack MNT_LOCAL; FUSE mounts (macfuse,
+  // which decides locking in user space) are refused by name, whatever their flags.
+  if (!local) {
+    return false;
+  }
+  return type_name == "apfs" || type_name == "hfs";
 }
 
 std::variant<std::shared_ptr<const ValidatorPQKeyStore>, std::string> load_locked_consensus_key(

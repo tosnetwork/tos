@@ -49,6 +49,8 @@
 #include "td/utils/tests.h"
 #include "validator-engine/json-rpc-http-policy.h"
 
+#include "send-without-waiting.h"
+
 namespace {
 
 class OkCallback : public tos::http::HttpServer::Callback {
@@ -1264,8 +1266,7 @@ void with_gated_inbound(std::shared_ptr<tos::http::BodyBudget> budget,
 void send_for(int fd, const std::string &data, size_t &offset, int ms) {
   auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
   while (offset < data.size() && std::chrono::steady_clock::now() < until) {
-    auto n =
-        ::send(fd, data.data() + offset, std::min(data.size() - offset, size_t{16 << 10}), MSG_NOSIGNAL | MSG_DONTWAIT);
+    auto n = send_without_waiting(fd, data.data() + offset, std::min(data.size() - offset, size_t{16 << 10}));
     if (n > 0) {
       offset += static_cast<size_t>(n);
     } else {

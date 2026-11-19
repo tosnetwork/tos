@@ -16,6 +16,7 @@ import json
 import os
 import pty
 import re
+import select
 import subprocess
 import sys
 import tempfile
@@ -222,6 +223,7 @@ def check(tool: Path, work: Path, shim: Path | None) -> None:
 def export_through_pty(tool: Path, key: Path) -> tuple[int, bytes]:
     """Run export with a terminal as its standard output, and collect what reached it."""
     controller, terminal = pty.openpty()
+    seen = b""
     try:
         done = subprocess.run(
             [str(tool), "export", str(key)],
@@ -230,18 +232,19 @@ def export_through_pty(tool: Path, key: Path) -> tuple[int, bytes]:
             stdin=subprocess.DEVNULL,
             timeout=120,
         )
+        # Drained while this process still holds the terminal side: macOS discards what
+        # the controller has not read once the last terminal descriptor closes.
+        while select.select([controller], [], [], 0.5)[0]:
+            try:
+                chunk = os.read(controller, 4096)
+            except OSError:  # EIO when nothing is left on a closed terminal
+                break
+            if not chunk:
+                break
+            seen += chunk
     finally:
         os.close(terminal)
-    seen = b""
-    while True:
-        try:
-            chunk = os.read(controller, 4096)
-        except OSError:  # EIO once the terminal side is closed and drained
-            break
-        if not chunk:
-            break
-        seen += chunk
-    os.close(controller)
+        os.close(controller)
     return done.returncode, seen
 
 

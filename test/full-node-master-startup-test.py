@@ -24,6 +24,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -35,6 +36,8 @@ MASTER_REFUSAL = "refusing to start the full-node master"
 SLAVE_REFUSAL = "refusing to start the full-node slave"
 REFUSAL_TIMEOUT_S = 30.0
 SURVIVAL_S = 6.0
+# Lines that name why an engine stopped: a failed check, a fatal log line or a signal.
+CRASH_MARKERS = re.compile(r"Check .* failed|\[ 0\]|FATAL|Signal: \d+|terminate called|Assertion")
 
 
 def fail(message: str) -> None:
@@ -157,7 +160,13 @@ class Node:
         if MASTER_REFUSAL in output or SLAVE_REFUSAL in output:
             fail(f"{case}: a valid configuration was refused: {output[-2000:]}")
         if code is not None:
-            fail(f"{case}: the engine exited {code} within {SURVIVAL_S} s: {output[-2000:]}")
+            # The cause of an early exit is usually printed well before the end of the log,
+            # which shutdown and stack traces fill; name it first.
+            causes = [line for line in output.splitlines() if CRASH_MARKERS.search(line)][:10]
+            fail(
+                f"{case}: the engine exited {code} within {SURVIVAL_S} s; "
+                f"first fatal lines: {causes!r}; end of log: {output[-2000:]}"
+            )
         print(f"FULL_NODE_MASTER_STARTUP {case}=started")
 
 

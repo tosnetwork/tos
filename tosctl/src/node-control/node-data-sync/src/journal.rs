@@ -191,6 +191,7 @@ fn atomic_exchange(a: &Path, b: &Path) -> Result<()> {
     let a_name = CString::new(a.as_os_str().as_bytes())?;
     let b_name = CString::new(b.as_os_str().as_bytes())?;
     // SAFETY: terminated absolute paths live through the synchronous atomic syscall.
+    #[cfg(target_os = "linux")]
     let result = unsafe {
         libc::renameat2(
             libc::AT_FDCWD,
@@ -200,6 +201,10 @@ fn atomic_exchange(a: &Path, b: &Path) -> Result<()> {
             libc::RENAME_EXCHANGE,
         )
     };
+    // macOS swaps two names atomically with RENAME_SWAP, as RENAME_EXCHANGE does on Linux.
+    // SAFETY: as above.
+    #[cfg(target_os = "macos")]
+    let result = unsafe { libc::renamex_np(a_name.as_ptr(), b_name.as_ptr(), libc::RENAME_SWAP) };
     ensure!(result == 0, "atomic root exchange failed: {}", std::io::Error::last_os_error());
     for path in [a, b] {
         std::fs::File::open(path.parent().ok_or_else(|| anyhow::anyhow!("missing root parent"))?)?

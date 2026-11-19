@@ -1,9 +1,9 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: Apache-2.0 OR ISC OR MIT */
 /* SHA-224/256 for the SLH-DSA verifier, with a hardware compression path: SHA-NI on x86-64,
- * the ARMv8 SHA2 extension on Linux aarch64.
+ * the ARMv8 SHA2 extension on aarch64 Linux and macOS.
  *
  * Built in place of third-party/slhdsa-c/sha2_256.c when TOS_SLHDSA_SHA_NI (x86-64) or
- * TOS_SLHDSA_ARMV8_SHA2 (Linux aarch64) is on; that file is not modified. Its portable
+ * TOS_SLHDSA_ARMV8_SHA2 (aarch64 Linux or macOS) is on; that file is not modified. Its portable
  * compression function is compiled here under a private name and stays the fallback. The
  * hardware compression is the vendored, unmodified transform in third-party/bitcoin-sha256,
  * reached through slhdsa-sha256-shani.cpp or slhdsa-sha256-armv8.cpp. The buffering and
@@ -21,8 +21,17 @@
     __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #include <asm/hwcap.h>
 #include <sys/auxv.h>
+#elif defined(__aarch64__) && defined(__APPLE__)
+#include <sys/sysctl.h>
+/* macOS reports each extension as its own sysctl. The probe composes them into a mask with
+ * the bit positions of the aarch64 Linux hardware capabilities, so both systems share one
+ * decision rule and one test. */
+#define HWCAP_AES (1ul << 3)
+#define HWCAP_PMULL (1ul << 4)
+#define HWCAP_SHA1 (1ul << 5)
+#define HWCAP_SHA2 (1ul << 6)
 #else
-#error "the hardware SHA-256 backend needs x86-64, or little-endian aarch64 on Linux"
+#error "the hardware SHA-256 backend needs x86-64, or little-endian aarch64 on Linux or macOS"
 #endif
 
 #include <string.h>
@@ -107,10 +116,29 @@ static int accepts_hwcap(unsigned long hwcap)
   return (hwcap & needed) == needed;
 }
 
+#if defined(__APPLE__)
+/* One extension as macOS reports it. A name the system does not know, or any value other than
+ * 1, counts as absent. */
+static unsigned long apple_feature(const char *name, unsigned long bit) {
+  int value = 0;
+  size_t size = sizeof(value);
+  if (sysctlbyname(name, &value, &size, NULL, 0) != 0 || size != sizeof(value) || value != 1)
+    return 0;
+  return bit;
+}
+
+static int cpu_has_hardware_sha256(void) {
+  const unsigned long hwcap =
+      apple_feature("hw.optional.arm.FEAT_AES", HWCAP_AES) | apple_feature("hw.optional.arm.FEAT_PMULL", HWCAP_PMULL) |
+      apple_feature("hw.optional.arm.FEAT_SHA1", HWCAP_SHA1) | apple_feature("hw.optional.arm.FEAT_SHA256", HWCAP_SHA2);
+  return accepts_hwcap(hwcap);
+}
+#else
 static int cpu_has_hardware_sha256(void)
 {
   return accepts_hwcap(getauxval(AT_HWCAP));
 }
+#endif
 
 static void hardware_compress(uint32_t *sp)
 {

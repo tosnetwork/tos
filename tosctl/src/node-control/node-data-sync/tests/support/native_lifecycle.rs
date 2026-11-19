@@ -404,6 +404,9 @@ impl ObjectServer {
                     }
                     Err(e) => panic!("fixture accept: {e}"),
                 };
+                // BSD sockets inherit O_NONBLOCK from the listener (Linux ones do not);
+                // this reader blocks, bounded by the read timeout.
+                socket.set_nonblocking(false).unwrap();
                 socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
                 let mut header = Vec::new();
                 while !header.ends_with(b"\r\n\r\n") {

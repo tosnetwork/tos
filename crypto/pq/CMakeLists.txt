@@ -55,7 +55,10 @@ set_target_properties(tos_pq_consensus_signer PROPERTIES POSITION_INDEPENDENT_CO
 target_compile_features(tos_pq_consensus_signer PUBLIC cxx_std_20)
 target_include_directories(tos_pq_consensus_signer PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" PRIVATE "${TOS_MLDSA_SOURCE_DIR}/mldsa")
 target_compile_definitions(tos_pq_consensus_signer PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
-target_link_libraries(tos_pq_consensus_signer PUBLIC tos_pq_consensus PRIVATE tos_pq_consensus_signer_backend OpenSSL::Crypto)
+# consensus-key-file.h includes OpenSSL headers, so every consumer needs them from the
+# OpenSSL this links, not from whatever the system search path holds.
+target_link_libraries(tos_pq_consensus_signer PUBLIC tos_pq_consensus OpenSSL::Crypto
+                      PRIVATE tos_pq_consensus_signer_backend)
 
 # The engine's exclusive hold on the consensus key files it signs with. Only the engine
 # links it; the operator tools that read a seed offline do not take the lock.
@@ -75,8 +78,8 @@ target_include_directories(tos_pq_consensus_signer_test_clock PUBLIC "${CMAKE_CU
                            PRIVATE "${TOS_MLDSA_SOURCE_DIR}/mldsa")
 target_compile_definitions(tos_pq_consensus_signer_test_clock PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h"
                            PUBLIC TOS_PQ_SIGNER_TEST_CLOCK=1)
-target_link_libraries(tos_pq_consensus_signer_test_clock PUBLIC tos_pq_consensus
-                      PRIVATE tos_pq_consensus_signer_backend OpenSSL::Crypto)
+target_link_libraries(tos_pq_consensus_signer_test_clock PUBLIC tos_pq_consensus OpenSSL::Crypto
+                      PRIVATE tos_pq_consensus_signer_backend)
 
 
 # Provisioning for the node's consensus key. It links the same library the node loads
@@ -384,7 +387,8 @@ set(TOS_SLHDSA_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third-party/slhdsa-
 # hardware compression with a portable fallback chosen at run time) in place of the imported
 # sha2_256.c; the hashes are the same either way. TOS_SLHDSA_SHA_NI is the x86-64 SHA-NI backend,
 # default on for Linux x86-64 with GCC or Clang; TOS_SLHDSA_ARMV8_SHA2 is the ARMv8 SHA2 backend,
-# default on for Linux aarch64 with GCC or Clang. Both are off elsewhere. The environment variable
+# default on for Linux aarch64 with GCC or Clang and for macOS on Apple silicon. Both are off
+# elsewhere. The environment variable
 # of the same name sets each default, so the CMake and Cargo builds follow one switch.
 if(DEFINED ENV{TOS_SLHDSA_SHA_NI})
   set(TOS_SLHDSA_SHA_NI_DEFAULT "$ENV{TOS_SLHDSA_SHA_NI}")
@@ -415,17 +419,18 @@ else()
 endif()
 if(DEFINED ENV{TOS_SLHDSA_ARMV8_SHA2})
   set(TOS_SLHDSA_ARMV8_SHA2_DEFAULT "$ENV{TOS_SLHDSA_ARMV8_SHA2}")
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$"
-       AND CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$")
+elseif(CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin)$" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$"
+       AND CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
   set(TOS_SLHDSA_ARMV8_SHA2_DEFAULT ON)
 else()
   set(TOS_SLHDSA_ARMV8_SHA2_DEFAULT OFF)
 endif()
 option(TOS_SLHDSA_ARMV8_SHA2 "SLH-DSA verifier uses the ARMv8 SHA2 SHA-256 backend" ${TOS_SLHDSA_ARMV8_SHA2_DEFAULT})
 if(TOS_SLHDSA_ARMV8_SHA2)
-  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$"
-     OR NOT CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
-    message(FATAL_ERROR "TOS_SLHDSA_ARMV8_SHA2 needs a Linux aarch64 target and GCC or Clang")
+  if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin)$" OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$"
+     OR NOT CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$"
+     OR NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    message(FATAL_ERROR "TOS_SLHDSA_ARMV8_SHA2 needs an aarch64 Linux or macOS target and GCC or Clang")
   endif()
   # The ARMv8 SHA2 transform is vendored unchanged (third-party/bitcoin-sha256/PROVENANCE.md) and
   # built as its upstream builds it; only that file gets the instruction-set flag, so every other

@@ -113,10 +113,26 @@ std::string self_executable(const char* argv0) {
 
 bool run_child(const std::string& exe, const std::string& mode, ChildOutcome& outcome) {
   int pipe_fds[2];
+#if defined(__APPLE__)
+  // pipe2 exists only from macOS 27; set close-on-exec on each end instead.
+  if (::pipe(pipe_fds) != 0) {
+    std::perror("pipe");
+    return false;
+  }
+  for (int fd : pipe_fds) {
+    if (::fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
+      std::perror("fcntl");
+      ::close(pipe_fds[0]);
+      ::close(pipe_fds[1]);
+      return false;
+    }
+  }
+#else
   if (::pipe2(pipe_fds, O_CLOEXEC) != 0) {
     std::perror("pipe2");
     return false;
   }
+#endif
   posix_spawn_file_actions_t actions;
   posix_spawn_file_actions_init(&actions);
   posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDERR_FILENO);

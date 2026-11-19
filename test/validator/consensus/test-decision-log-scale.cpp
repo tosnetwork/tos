@@ -40,6 +40,8 @@
 
 #if defined(TOS_DECISION_LOG_USE_JEMALLOC)
 #include TOS_DECISION_LOG_JEMALLOC_HEADER
+#elif defined(__APPLE__)
+#include <malloc/malloc.h>
 #else
 #include <malloc.h>
 #endif
@@ -151,6 +153,11 @@ std::size_t heap_in_use() {
   }
   require(size == sizeof(allocated), "jemalloc's allocated heap has the expected size");
   return allocated;
+#elif defined(__APPLE__)
+  // The bytes in use across every malloc zone, as mallinfo2 reports them on glibc.
+  malloc_statistics_t stats{};
+  malloc_zone_statistics(nullptr, &stats);
+  return stats.size_in_use;
 #else
   const auto info = mallinfo2();
   return info.uordblks + info.hblkhd;

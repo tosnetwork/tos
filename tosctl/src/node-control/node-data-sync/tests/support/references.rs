@@ -53,6 +53,9 @@ impl References {
                 while !stop.load(Ordering::Acquire) {
                     let (mut socket, _) = match listener.accept() { Ok(value)=>value, Err(e) if e.kind()==std::io::ErrorKind::WouldBlock => { std::thread::sleep(Duration::from_millis(2)); continue; }, Err(e)=>panic!("reference accept: {e}") };
                     if matches!(mode, Mode::Unavailable) { continue; }
+                    // BSD sockets inherit O_NONBLOCK from the listener (Linux ones do not);
+                    // this reader blocks, bounded by the read timeout.
+                    socket.set_nonblocking(false).unwrap();
                     socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
                     let mut header=Vec::new();
                     while !header.ends_with(b"\r\n\r\n") { let mut byte=[0]; if socket.read(&mut byte).unwrap_or(0)!=1 {break;} header.push(byte[0]); assert!(header.len()<8192); }

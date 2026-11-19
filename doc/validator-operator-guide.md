@@ -39,7 +39,8 @@ Linux release archives (x86_64 and arm64) and the node image ship, next to
 
 In the image they are in `/usr/local/bin`. From source, `tos-pq-consensus-key`
 and `tos-pq-vote` are targets of the main build. The key tools handle files
-with POSIX semantics and are not shipped for Windows or macOS.
+with POSIX semantics and are not shipped for Windows or macOS; on macOS, build
+them from source with the validator ([macOS validators](Validator.md#macos-validators)).
 
 ## 2. Run a full node first
 

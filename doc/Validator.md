@@ -35,9 +35,9 @@ Validators are the verification backbone for AI actor workflows. Agent runners, 
 ## Production Hardware Requirements
 
 The following requirements apply to a normal TOS validator participating in
-consensus. They assume a 64-bit Ubuntu 24.04 host, a validator
-binary built with the production configuration, and a node that is not also
-running unrelated workloads.
+consensus. They assume a 64-bit Ubuntu 24.04 host or macOS on Apple silicon,
+a validator binary built with the production configuration, and a node that
+is not also running unrelated workloads.
 
 | Resource | Testnet / development minimum | Recommended production configuration (aligned with mainnet-scale networks) |
 |----------|-----------------------|---------------------------------------|
@@ -46,7 +46,7 @@ running unrelated workloads.
 | Memory | 4 GB RAM | 128 GB RAM |
 | Storage | 100 GB SSD | 2 × 1.92 TB enterprise NVMe SSD; target at least 250k read IOPS and 83k write IOPS per device |
 | Network | 10 Mbps symmetric bandwidth; a public IPv4 address is strongly preferred | 1 Gbps symmetric bandwidth with a fixed public IP |
-| Operating system | Ubuntu 24.04, 64-bit | Ubuntu 24.04, 64-bit, on a dedicated host |
+| Operating system | Ubuntu 24.04, 64-bit, or macOS on Apple silicon; see [macOS validators](#macos-validators) | Ubuntu 24.04, 64-bit, or macOS on Apple silicon, on a dedicated host |
 
 The production values are aligned with the validator-engine, consensus,
 storage, and peer-to-peer operating model that TOS inherits from the network
@@ -65,7 +65,8 @@ Every validator, on testnet and in production, must verify with a hardware
 SHA-256 backend. That means one of:
 
 - an x86-64 CPU that exposes SHA (SHA-NI), SSSE3, SSE4.1 and SSE4.2;
-- an arm64 CPU that exposes the AES, PMULL, SHA1 and SHA2 extensions.
+- an arm64 CPU that exposes the AES, PMULL, SHA1 and SHA2 extensions. Every
+  Apple silicon CPU does.
 
 A validator on the portable backend is not allowed, on either architecture.
 
@@ -91,26 +92,29 @@ The figures below are the time of the verification alone
 | x86-64 server (Xeon 8455C) | 178 µs (`sha-ni`) | 56 ns | 545 µs |
 | x86-64 cloud VM (Xeon 6975P), shared CI runner | 242 µs (`sha-ni`) | 76 ns | 625 µs |
 | arm64 cloud VM (Neoverse-N2), shared CI runner | 188 µs (`armv8-sha2`) | 59 ns | 587 µs |
+| arm64 desktop (Apple M2, macOS 27.2) | 122 µs (`armv8-sha2`) | 38 ns | 612 µs |
 
 The reference row was measured when the price was set, with honest signatures,
 and is scaled here to this input; the other rows are measured with it, the
-last two on the runners of the pull-request checks, which print them on every
-run. The arm64 hardware backend is faster than the reference class. The portable
+two cloud VMs on the runners of the pull-request checks, which print them on
+every run, and the Apple M2 once, by hand, on an otherwise idle machine. The arm64 hardware backend is faster than the reference class. The portable
 backend is slower than the reference class on every host, and about three
 times slower than the hardware backend of the same host.
 A validator on the portable backend would spend far more time on these checks
 than the gas they pay for, and could fall behind on blocks full of them.
 
-What this shows for arm64 is one CPU generation on a shared cloud VM, as
-production hosts are. No arm64 instance of a production provider and no older
-arm64 core has been measured; step 4 of the receipt below is how a host shows
+What this shows for arm64 is one server CPU generation on a shared cloud VM,
+as production hosts are, and one Apple silicon generation. No arm64 instance
+of a production provider, no older arm64 core and no other Apple silicon
+generation has been measured; step 4 of the receipt below is how a host shows
 that it is no slower than the reference. Whether the price also covers the
 bound of 3,894 compressions on the reference class is a separate question,
 still open for both architectures ([GlobalVersions.md](GlobalVersions.md)).
 
 The backend is chosen at run time (`crypto/pq/slhdsa-sha256.c`): from CPUID on
-x86-64, from the kernel's hardware capabilities on arm64. Linux builds with GCC
-or Clang include the backend of their architecture by default
+x86-64, from the kernel's hardware capabilities on arm64 Linux, and from the
+`hw.optional.arm` sysctls on macOS. Linux builds with GCC or Clang, and macOS
+builds on Apple silicon, include the backend of their architecture by default
 (`TOS_SLHDSA_SHA_NI` and `TOS_SLHDSA_ARMV8_SHA2` in `crypto/pq/CMakeLists.txt`),
 and a release's node build refuses to finish without it and names both
 switches in its build record (`slhdsa_sha256`). A CPU that supports the
@@ -123,7 +127,9 @@ Each validator therefore keeps a deployment receipt with:
    `grep -o -w -E 'sha_ni|ssse3|sse4_1|sse4_2' /proc/cpuinfo | sort -u` must
    print all four; on arm64,
    `grep -o -w -E 'aes|pmull|sha1|sha2' /proc/cpuinfo | sort -u` must print all
-   four.
+   four; on macOS,
+   `sysctl hw.optional.arm.FEAT_AES hw.optional.arm.FEAT_PMULL hw.optional.arm.FEAT_SHA1 hw.optional.arm.FEAT_SHA256`
+   must print `1` for all four.
 2. The binary identity: the SHA-256 of the deployed `validator-engine`, the
    source commit, and the backend switch of its build: the `slhdsa_sha256`
    line of a release's build record, or `TOS_SLHDSA_SHA_NI` /
@@ -153,6 +159,34 @@ from a checkout of the release commit, the post-quantum library alone:
 `cmake --build build-pq --target test-pq-slhdsa-vectors bench-pq-slhdsa-verify`.
 
 Repeat the receipt after every hardware, hypervisor or binary change.
+
+### macOS validators
+
+A validator can run on macOS on Apple silicon. It is built from source
+([BUILD.md](../BUILD.md), macOS Development Build): there are no macOS release
+binaries or container images. CI builds and tests the tree on macOS
+(`.github/workflows/build-tos-macos-15-arm64-shared.yml`), which shows the
+source works there, but only the operator's own build and the receipt above
+are evidence for the deployed binary. Build the two receipt programs with the
+same Apple clang and SDK as the validator.
+
+What differs from a Linux host:
+
+- The hardware SHA-256 backend is on by default: step 2 of the receipt reads
+  `TOS_SLHDSA_ARMV8_SHA2=ON` from `CMakeCache.txt`, and step 3 shows that it is
+  the backend selected.
+- Durable writes use `fcntl(F_FULLFSYNC)`, which reaches the storage device;
+  plain `fsync` on macOS does not.
+- The consensus key lock accepts only a local APFS or HFS+ volume and refuses
+  network, FUSE and removable filesystems. Keep the database and keys on the
+  internal volume or a locally attached APFS one.
+- The signing ledger binds its directory to the inode and birth time that
+  `stat` reports; copying the directory elsewhere invalidates it, as on Linux.
+- The systemd units, cgroup limits and `scripts/validator_rss_rocksdb_monitor.sh`
+  in this guide are Linux tools. Supervise the process with launchd and watch
+  its memory with the engine's own statistics.
+- Disable system sleep (`sudo pmset -a sleep 0`). A host that sleeps misses its
+  rounds like one that is down.
 
 ### Production operating profile
 

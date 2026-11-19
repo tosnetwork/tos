@@ -1971,8 +1971,14 @@ set_tests_properties(wallet-quantum-review-sources-self-test PROPERTIES LABELS "
 add_test(NAME varuint-codec-contract
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/executor-parity/test_varuint_codec.py)
 set_tests_properties(varuint-codec-contract PROPERTIES LABELS "source-guard")
-# Conformance vectors and their reference library (test/conformance/README.md).
-add_subdirectory(test/conformance)
+# Conformance vectors and their reference library (test/conformance/README.md). The
+# reference library is linked with GNU ld's --wrap and --exclude-libs, which Apple's
+# linker does not offer, so it is built on Linux only.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_subdirectory(test/conformance)
+else()
+  message(STATUS "Conformance reference library: skipped (needs GNU ld --wrap; Linux only)")
+endif()
 add_test(NAME branch-chain-python-ci-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-branch-chain-python-ci.py)
 set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-guard")
@@ -2227,6 +2233,7 @@ if(TARGET validator-engine AND TARGET tos-pq-consensus-key)
            COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-pq-signer-no-test-clock.py"
                    --nm "${TOS_NM_EXECUTABLE}" --cxx "${CMAKE_CXX_COMPILER}"
                    --source-root "${CMAKE_CURRENT_SOURCE_DIR}"
+                   --sysroot "${CMAKE_OSX_SYSROOT}"
                    --production "$<TARGET_FILE:tos_pq_consensus_signer>"
                    --binary "$<TARGET_FILE:validator-engine>"
                    --binary "$<TARGET_FILE:tos-pq-consensus-key>"
@@ -2535,3 +2542,31 @@ add_executable(test-tl-cli-fixtures test/tl-cli/fixtures.cpp)
 target_include_directories(test-tl-cli-fixtures PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-tl-cli-fixtures PRIVATE tl_api tl_lite_api tl_toslib_api tdutils)
 add_test(NAME test-tl-cli-fixtures COMMAND test-tl-cli-fixtures --verify ${CMAKE_CURRENT_SOURCE_DIR}/test/tl-cli/fixtures.tsv)
+
+# Tests a macOS development build cannot run, by reason. They stay registered
+# and run unchanged on Linux; on macOS,
+# `ctest -LE "linux-only|loopback-aliases|gnu-tools|macos-known-failure"` leaves them out
+# (BUILD.md, macOS Development Build).
+#   linux-only:       the harness reads /proc, uses LD_PRELOAD, or drives a Linux
+#                     container entrypoint.
+#   loopback-aliases: binds sources such as 127.0.0.2, which Linux routes on lo and
+#                     macOS only after `ifconfig lo0 alias`.
+#   gnu-tools:        needs GNU grep (-P) or flock(1).
+foreach(_t wallet-index-replica-capacity startup-catchup-loopback-runner test-proof-verify-live-commit
+           snapshot-import-offline docker-validator-role)
+  set_property(TEST ${_t} APPEND PROPERTY LABELS "linux-only")
+endforeach()
+foreach(_t test-json-rpc-transport quic-admission-global-limit quic-admission-full-table test-adnl-ext-input-budget)
+  set_property(TEST ${_t} APPEND PROPERTY LABELS "loopback-aliases")
+endforeach()
+foreach(_t pending-finality-retry-policy-source n6-live-finality-overlay n6-lite-framed-tcp n6-scale-sweep-minimum-bft)
+  set_property(TEST ${_t} APPEND PROPERTY LABELS "gnu-tools")
+endforeach()
+# Tests whose preconditions do not hold on macOS: loopback socket buffers cannot
+# be pinned as small as the slow-reader case needs, and the heap budget is
+# calibrated against glibc's allocator. They run unchanged on Linux.
+if(APPLE)
+  foreach(_t test-http-server-limits test-rldp2-decoder-heap)
+    set_property(TEST ${_t} APPEND PROPERTY LABELS "macos-known-failure")
+  endforeach()
+endif()

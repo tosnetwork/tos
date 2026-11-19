@@ -1748,18 +1748,21 @@ TEST(WalletIndexSource, a_completion_after_the_deadline_is_a_timeout) {
     ASSERT_EQ(now.outstanding, 0u);
     stop_requested = false;
   }
-  // In time: handed over, and nothing times out.
+  // In time: handed over, and nothing times out. The deadline is far longer than the 5 ms
+  // the reply takes, so a host that stalls this thread for a few milliseconds, as a shared
+  // CI runner does, still completes it in time.
+  const auto in_time_deadline = std::chrono::seconds(1);
   bool checked = false;
   for (int attempt = 0; attempt < 5 && !checked; ++attempt) {
     auto core = make_core();
     auto generation = core->generation();
-    auto ticket = core->acquire(SourceLane::Prefetch, generation, reserve, deadline);
+    auto ticket = core->acquire(SourceLane::Prefetch, generation, reserve, in_time_deadline);
     ASSERT_OK(ticket);
     auto issued = Clock::now();
     auto reply = std::make_shared<SourceReply<int>>(core, ticket.move_as_ok(), SourceLane::Prefetch, generation);
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    if (Clock::now() - issued >= std::chrono::milliseconds(9))
-      continue;  // the host stalled this thread past the deadline; try again
+    if (Clock::now() - issued >= in_time_deadline - std::chrono::milliseconds(100))
+      continue;  // the host stalled this thread almost to the deadline; try again
     reply->complete(42, 8);
     auto result = reply->take();
     ASSERT_OK(result);

@@ -2,7 +2,7 @@
 #pragma once
 
 /* SHA-256 backend of the SLH-DSA verifier when it is built with TOS_SLHDSA_SHA_NI (x86-64) or
- * TOS_SLHDSA_ARMV8_SHA2 (Linux aarch64). The hashes are identical on every path; only CPU
+ * TOS_SLHDSA_ARMV8_SHA2 (aarch64 Linux or macOS). The hashes are identical on every path; only CPU
  * time differs. */
 #include <stdint.h>
 
@@ -20,7 +20,7 @@ const char *tos_slhdsa_sha256_backend(void);
 void tos_slhdsa_sha_ni_compress(uint32_t *sp);
 
 /* The same by the vendored ARMv8 SHA2 transform. aarch64 builds only; only called after the
- * kernel has reported the AES, PMULL, SHA1 and SHA2 extensions. */
+ * system has reported the AES, PMULL, SHA1 and SHA2 extensions. */
 void tos_slhdsa_armv8_sha2_compress(uint32_t *sp);
 
 #ifdef TOS_SLHDSA_SHA256_TESTING
@@ -30,7 +30,8 @@ void tos_slhdsa_sha256_force_portable(int on);
 /* Test builds only: the probe's decision for given CPUID leaf 1 ECX and leaf 7 EBX values. */
 int tos_slhdsa_sha256_accepts_cpu(unsigned leaf1_ecx, unsigned leaf7_ebx);
 #elif defined(__aarch64__)
-/* Test builds only: the probe's decision for a given AT_HWCAP value. */
+/* Test builds only: the probe's decision for a given AT_HWCAP value (on macOS, the same bits
+ * composed from the hw.optional.arm sysctls). */
 int tos_slhdsa_sha256_accepts_hwcap(unsigned long hwcap);
 #endif
 #endif

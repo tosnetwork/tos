@@ -21,6 +21,7 @@ const BENEATH: u64 =
 
 /// `openat2(2)` with explicit resolution rules. There is no fallback: a kernel without it
 /// refuses, rather than resolving a name that another account may have replaced.
+#[cfg(target_os = "linux")]
 fn openat2(dir: i32, name: &std::ffi::CStr, flags: i32, mode: u64, resolve: u64) -> Result<File> {
     #[repr(C)]
     struct OpenHow {
@@ -44,6 +45,77 @@ fn openat2(dir: i32, name: &std::ffi::CStr, flags: i32, mode: u64, resolve: u64)
     // SAFETY: openat2 returned a new descriptor owned here.
     Ok(unsafe { File::from_raw_fd(i32::try_from(raw)?) })
 }
+/// macOS has no `openat2(2)`. The same rules are enforced by resolving the name one
+/// component at a time below `dir`, each with `O_NOFOLLOW`: a symlink anywhere refuses
+/// (`ELOOP`), an absolute name or a `..` component refuses (`EXDEV`, as a lookup leaving
+/// the directory does on Linux), and with `RESOLVE_NO_XDEV` every component must stay on
+/// the device of `dir`. macOS has no magic links, so `RESOLVE_NO_MAGICLINKS` needs no step.
+/// A lookup that is not below a held directory resolves the whole name in one call with
+/// `O_NOFOLLOW_ANY`, which refuses a symlink in any component.
+#[cfg(target_os = "macos")]
+fn openat2(dir: i32, name: &std::ffi::CStr, flags: i32, mode: u64, resolve: u64) -> Result<File> {
+    let mode = libc::c_uint::try_from(mode)?;
+    let open_one = |at: i32, component: &std::ffi::CStr, component_flags: i32| -> Result<File> {
+        // SAFETY: descriptor and terminated name stay valid for the call.
+        let raw = unsafe {
+            libc::openat(at, component.as_ptr(), component_flags | libc::O_CLOEXEC, mode)
+        };
+        if raw < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        // SAFETY: openat returned a new descriptor owned here.
+        Ok(unsafe { File::from_raw_fd(raw) })
+    };
+    if resolve & RESOLVE_BENEATH == 0 {
+        ensure!(
+            resolve & RESOLVE_NO_SYMLINKS != 0,
+            "an unrestricted lookup is never requested here"
+        );
+        // O_NOFOLLOW_ANY covers the last component too, and the kernel refuses it
+        // combined with O_NOFOLLOW (EINVAL).
+        return open_one(dir, name, (flags & !libc::O_NOFOLLOW) | libc::O_NOFOLLOW_ANY);
+    }
+    let escape = || anyhow::Error::from(std::io::Error::from_raw_os_error(libc::EXDEV));
+    let bytes = name.to_bytes();
+    if bytes.starts_with(b"/") {
+        return Err(escape());
+    }
+    let components: Vec<&[u8]> = bytes.split(|byte| *byte == b'/').collect();
+    let (last, parents) = components.split_last().context("empty name")?;
+    let device = |fd: i32| -> Result<u64> {
+        // SAFETY: `stat` is plain integers, for which all-zero is valid.
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: open descriptor and output buffer stay valid for the call.
+        ensure!(
+            unsafe { libc::fstat(fd, &mut stat) } == 0,
+            "cannot inspect held directory: {}",
+            std::io::Error::last_os_error()
+        );
+        Ok(device_of(&stat))
+    };
+    let held_device = if resolve & RESOLVE_NO_XDEV != 0 { Some(device(dir)?) } else { None };
+    let mut current: Option<File> = None;
+    for (index, component) in parents.iter().chain(std::iter::once(last)).enumerate() {
+        if component.is_empty() || *component == b"." || *component == b".." {
+            return Err(escape());
+        }
+        let component = CString::new(*component)?;
+        let component_flags = if index == parents.len() {
+            flags | libc::O_NOFOLLOW
+        } else {
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW
+        };
+        let at = current.as_ref().map_or(dir, AsRawFd::as_raw_fd);
+        let opened = open_one(at, &component, component_flags)?;
+        if let Some(held) = held_device
+            && device(opened.as_raw_fd())? != held
+        {
+            return Err(escape());
+        }
+        current = Some(opened);
+    }
+    current.context("empty name")
+}
 /// Open `name` below the held directory `dir` without following any link or crossing a mount.
 fn open_beneath(dir: i32, name: &str, flags: i32, mode: u64) -> Result<File> {
     let name = CString::new(name)?;
@@ -61,9 +133,7 @@ pub enum Kind {
 fn names(directory: &File) -> Result<Vec<String>> {
     use std::os::unix::ffi::OsStrExt;
     let mut names = Vec::new();
-    for entry in std::fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()))? {
-        ensure!(names.len() < crate::budget::MAX_ALLOCATION_ENTRIES, "directory entry limit");
-        let name = entry?.file_name();
+    for name in directory_entries(directory.as_raw_fd())? {
         names.push(
             std::str::from_utf8(name.as_bytes()).context("non-text directory entry")?.to_owned(),
         );
@@ -107,6 +177,77 @@ pub struct Entry {
 /// target where a field were wider than 64 bits would fail to build, not truncate.
 fn wide(value: impl Into<u64>) -> u64 {
     value.into()
+}
+/// `st_dev` as `MetadataExt::dev` reports it, so identities from `fstatat` and from an
+/// open descriptor compare equal. It is unsigned on Linux and a signed 32-bit `dev_t` on
+/// macOS, which the standard library sign-extends; the same bits are kept here.
+#[cfg(target_os = "linux")]
+fn device_of(stat: &libc::stat) -> u64 {
+    wide(stat.st_dev)
+}
+#[cfg(target_os = "macos")]
+fn device_of(stat: &libc::stat) -> u64 {
+    u64::from_ne_bytes(i64::from(stat.st_dev).to_ne_bytes())
+}
+/// Entry names of the directory open at `fd`, read through that descriptor.
+#[cfg(target_os = "linux")]
+fn directory_entries(fd: i32) -> Result<Vec<std::ffi::OsString>> {
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(format!("/proc/self/fd/{fd}"))? {
+        ensure!(entries.len() < crate::budget::MAX_ALLOCATION_ENTRIES, "directory entry limit");
+        entries.push(entry?.file_name());
+    }
+    Ok(entries)
+}
+/// macOS has no `/proc`. The directory is reopened through its own descriptor as `.`,
+/// which names that same directory and never another, and listed with `fdopendir(3)`.
+#[cfg(target_os = "macos")]
+fn directory_entries(fd: i32) -> Result<Vec<std::ffi::OsString>> {
+    use std::os::unix::ffi::OsStrExt;
+    // SAFETY: descriptor and static terminated name stay valid for the call.
+    let raw = unsafe {
+        libc::openat(fd, c".".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC)
+    };
+    ensure!(raw >= 0, "cannot list held directory: {}", std::io::Error::last_os_error());
+    // SAFETY: on success the stream owns `raw`; on failure it is still ours to close.
+    let stream = unsafe { libc::fdopendir(raw) };
+    if stream.is_null() {
+        let error = std::io::Error::last_os_error();
+        // SAFETY: `raw` was returned by openat above and is not owned by any stream.
+        unsafe { libc::close(raw) };
+        return Err(anyhow::anyhow!("cannot list held directory: {error}"));
+    }
+    struct Stream(*mut libc::DIR);
+    impl Drop for Stream {
+        fn drop(&mut self) {
+            // SAFETY: the stream is open and closed exactly once, here.
+            unsafe { libc::closedir(self.0) };
+        }
+    }
+    let stream = Stream(stream);
+    let mut entries = Vec::new();
+    loop {
+        // readdir signals an error only through errno, so it is cleared first.
+        // SAFETY: errno is thread-local.
+        unsafe { *libc::__error() = 0 };
+        // SAFETY: the stream stays open for the call.
+        let entry = unsafe { libc::readdir(stream.0) };
+        if entry.is_null() {
+            let error = std::io::Error::last_os_error();
+            ensure!(error.raw_os_error() == Some(0), "cannot list held directory: {error}");
+            break;
+        }
+        // SAFETY: readdir returned an entry whose name is terminated and valid until the
+        // next call on this stream.
+        let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
+        let name = name.to_bytes();
+        if name == b"." || name == b".." {
+            continue;
+        }
+        ensure!(entries.len() < crate::budget::MAX_ALLOCATION_ENTRIES, "directory entry limit");
+        entries.push(std::ffi::OsStr::from_bytes(name).to_owned());
+    }
+    Ok(entries)
 }
 fn kind(stat: &libc::stat) -> Kind {
     // `st_mode` and `S_IFMT` are both `mode_t` on every target, so they mask directly.
@@ -195,8 +336,9 @@ impl Root {
                 .checked_mul(512)
                 .context("allocated size overflow")?,
             links: wide(stat.st_nlink),
-            identity: (wide(stat.st_dev), wide(stat.st_ino)),
-            mode: stat.st_mode & 0o7777,
+            identity: (device_of(&stat), wide(stat.st_ino)),
+            // `mode_t` is `u32` on Linux and `u16` on macOS; it widens losslessly.
+            mode: u32::from(stat.st_mode & 0o7777),
             uid: stat.st_uid,
             gid: stat.st_gid,
         }))
@@ -515,15 +657,26 @@ impl Root {
         let directory = self.directory.try_clone()?;
         let mut remaining = crate::budget::MAX_ALLOCATION_ENTRIES;
         hand_over_entry(&directory, owner, invoker, &mut remaining)?;
-        // One filesystem flush makes every ownership change durable before exposure.
-        // SAFETY: held directory descriptor remains valid for the call.
-        ensure!(
-            unsafe { libc::syncfs(directory.as_raw_fd()) } == 0,
-            "cannot flush ownership changes: {}",
-            std::io::Error::last_os_error()
-        );
+        flush_filesystem(&directory)?;
         self.attached()
     }
+}
+/// One filesystem flush makes every ownership change durable before exposure.
+#[cfg(target_os = "linux")]
+fn flush_filesystem(directory: &File) -> Result<()> {
+    // SAFETY: held directory descriptor remains valid for the call.
+    ensure!(
+        unsafe { libc::syncfs(directory.as_raw_fd()) } == 0,
+        "cannot flush ownership changes: {}",
+        std::io::Error::last_os_error()
+    );
+    Ok(())
+}
+/// macOS has no `syncfs(2)`. Every entry whose owner changed was already flushed by
+/// `give`; this flushes the top directory the same way, to the drive's stable storage.
+#[cfg(target_os = "macos")]
+fn flush_filesystem(directory: &File) -> Result<()> {
+    directory.sync_all().context("cannot flush ownership changes")
 }
 fn give(file: &File, (uid, gid): (u32, u32)) -> Result<()> {
     let metadata = file.metadata()?;
@@ -534,6 +687,10 @@ fn give(file: &File, (uid, gid): (u32, u32)) -> Result<()> {
             "cannot give {uid}:{gid} ownership: {}",
             std::io::Error::last_os_error()
         );
+        // Without syncfs(2) each change is made durable where it is made; the standard
+        // library's sync_all is F_FULLFSYNC on macOS.
+        #[cfg(target_os = "macos")]
+        file.sync_all().context("cannot flush ownership change")?;
     }
     Ok(())
 }
@@ -571,7 +728,7 @@ fn hand_over_entry(
             .context("ownership hand-over refuses an unsafe entry")?;
         let opened = child.metadata()?;
         ensure!(
-            (opened.dev(), opened.ino()) == (wide(stat.st_dev), wide(stat.st_ino)),
+            (opened.dev(), opened.ino()) == (device_of(&stat), wide(stat.st_ino)),
             "ownership hand-over entry was replaced"
         );
         hand_over_entry(&child, owner, invoker, remaining)?;
@@ -616,37 +773,30 @@ fn remove_child(parent: i32, name: &std::ffi::CStr, remaining: &mut usize) -> Re
     use std::os::unix::fs::MetadataExt;
     ensure!(*remaining > 0, "cleanup entry limit");
     *remaining -= 1;
-    #[repr(C)]
-    struct OpenHow {
-        flags: u64,
-        mode: u64,
-        resolve: u64,
-    }
-    let how = OpenHow {
-        flags: (libc::O_RDONLY | libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC) as u64,
-        mode: 0,
-        resolve: 1 | 4 | 8, // NO_XDEV, NO_SYMLINKS, BENEATH
+    let file = match openat2(
+        parent,
+        name,
+        libc::O_RDONLY | libc::O_NONBLOCK | libc::O_NOFOLLOW,
+        0,
+        RESOLVE_NO_XDEV | RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH,
+    ) {
+        Ok(file) => file,
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            return Ok(());
+        }
+        // One message carrying the cause, as callers and operators read it:
+        // "refusing unsafe cleanup child: <the refusal>".
+        Err(error) => return Err(anyhow::anyhow!("refusing unsafe cleanup child: {error:#}")),
     };
-    let raw = unsafe {
-        libc::syscall(
-            libc::SYS_openat2,
-            parent,
-            name.as_ptr(),
-            &how,
-            std::mem::size_of::<OpenHow>(),
-        )
-    };
-    if raw < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound {
-        return Ok(());
-    }
-    ensure!(raw >= 0, "refusing unsafe cleanup child: {}", std::io::Error::last_os_error());
-    let file = unsafe { File::from_raw_fd(raw as i32) };
     let meta = file.metadata()?;
     if meta.is_dir() {
-        for entry in std::fs::read_dir(format!("/proc/self/fd/{}", file.as_raw_fd()))? {
+        for entry in directory_entries(file.as_raw_fd())? {
             use std::os::unix::ffi::OsStrExt;
-            let entry = entry?;
-            let child = CString::new(entry.file_name().as_bytes())?;
+            let child = CString::new(entry.as_bytes())?;
             remove_child(file.as_raw_fd(), &child, remaining)?;
         }
         file.sync_all()?;
@@ -657,7 +807,7 @@ fn remove_child(parent: i32, name: &std::ffi::CStr, remaining: &mut usize) -> Re
     ensure!(
         unsafe { libc::fstatat(parent, name.as_ptr(), &mut current, libc::AT_SYMLINK_NOFOLLOW) }
             == 0
-            && wide(current.st_dev) == meta.dev()
+            && device_of(&current) == meta.dev()
             && wide(current.st_ino) == meta.ino(),
         "cleanup child identity changed"
     );
