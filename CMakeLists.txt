@@ -227,11 +227,31 @@ set(CRC32C_INSTALL OFF CACHE BOOL "Install CRC32C's header and library")
 message("Add crc32c")
 function(crc32_scope)
   set(CMAKE_POLICY_VERSION_MINIMUM "3.10")
+  set(CRC32C_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/crc32c")
+  set(CRC32C_SUBDIR_SOURCE "${CRC32C_SOURCE_DIR}")
+  set(CRC32C_SUBDIR_BINARY "")
+  # crc32c chooses its flags by compiler id, and clang-cl reports Clang while
+  # taking MSVC options: a patched copy in the build directory treats it as MSVC.
+  if (WIN32 AND CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
+    set(CRC32C_PATCHED_SOURCE_PARENT "${CMAKE_CURRENT_BINARY_DIR}/third-party-src")
+    set(CRC32C_PATCHED_SOURCE_DIR "${CRC32C_PATCHED_SOURCE_PARENT}/crc32c")
+    set(CRC32C_SUBDIR_BINARY "${CMAKE_CURRENT_BINARY_DIR}/third-party/crc32c-clang-cl")
+    file(REMOVE_RECURSE "${CRC32C_PATCHED_SOURCE_DIR}")
+    file(MAKE_DIRECTORY "${CRC32C_PATCHED_SOURCE_PARENT}")
+    file(COPY "${CRC32C_SOURCE_DIR}" DESTINATION "${CRC32C_PATCHED_SOURCE_PARENT}")
+    set(CRC32C_CMAKE_FILE "${CRC32C_PATCHED_SOURCE_DIR}/CMakeLists.txt")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/CMake/PatchCRC32C.cmake")
+    set(CRC32C_SUBDIR_SOURCE "${CRC32C_PATCHED_SOURCE_DIR}")
+  endif()
   if (NOT MSVC)
     # fix aarch64 build @ crc32c/src/crc32c_arm64_linux_check.h
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-error=address")
   endif()
-  add_subdirectory(third-party/crc32c EXCLUDE_FROM_ALL)
+  if (CRC32C_SUBDIR_BINARY)
+    add_subdirectory("${CRC32C_SUBDIR_SOURCE}" "${CRC32C_SUBDIR_BINARY}" EXCLUDE_FROM_ALL)
+  else()
+    add_subdirectory("${CRC32C_SUBDIR_SOURCE}" EXCLUDE_FROM_ALL)
+  endif()
 endfunction()
 crc32_scope()
 set(CRC32C_FOUND 1)
@@ -287,7 +307,7 @@ if (USE_QUIC)
       set(HAVE_SSL_SET_QUIC_TLS_CBS TRUE CACHE BOOL "OpenSSL QUIC support" FORCE)
     endif()
     add_subdirectory(third-party/ngtcp2 EXCLUDE_FROM_ALL)
-    set(NGTCP2_ROOT ${CMAKE_SOURCE_DIR}/third-party/ngtcp2)
+    set(NGTCP2_ROOT ${TOS_SOURCE_DIR}/third-party/ngtcp2)
   endfunction()
   ngtcp2_scope()
 
@@ -324,7 +344,7 @@ endif()
 
 include(CheckCXXCompilerFlag)
 
-find_package(PkgConfig REQUIRED)
+find_package(PkgConfig QUIET)
 
 if (MINGW)
   option(TOS_USE_STATIC_ZLIB "Prefer static zlib on MinGW to avoid runtime DLLs" ON)
@@ -462,8 +482,12 @@ if (MSVC)
 endif()
 
 if (GCC OR CLANG)
-  add_compile_options(-Wall)
-  add_compile_options(-Wextra)
+  # clang-cl reads -Wall as /Wall, which is -Weverything; the /W4 set above for
+  # MSVC-style compilers is clang's -Wall -Wextra there.
+  if (NOT MSVC)
+    add_compile_options(-Wall)
+    add_compile_options(-Wextra)
+  endif()
 
   add_compile_options(-Wpointer-arith)
   add_compile_options(-Wcast-qual)
@@ -2552,21 +2576,25 @@ add_test(NAME test-tl-cli-fixtures COMMAND test-tl-cli-fixtures --verify ${CMAKE
 #   loopback-aliases: binds sources such as 127.0.0.2, which Linux routes on lo and
 #                     macOS only after `ifconfig lo0 alias`.
 #   gnu-tools:        needs GNU grep (-P) or flock(1).
-foreach(_t wallet-index-replica-capacity startup-catchup-loopback-runner test-proof-verify-live-commit
-           snapshot-import-offline docker-validator-role)
-  set_property(TEST ${_t} APPEND PROPERTY LABELS "linux-only")
-endforeach()
-foreach(_t test-json-rpc-transport quic-admission-global-limit quic-admission-full-table test-adnl-ext-input-budget)
-  set_property(TEST ${_t} APPEND PROPERTY LABELS "loopback-aliases")
-endforeach()
-foreach(_t pending-finality-retry-policy-source n6-live-finality-overlay n6-lite-framed-tcp n6-scale-sweep-minimum-bft)
-  set_property(TEST ${_t} APPEND PROPERTY LABELS "gnu-tools")
-endforeach()
-# Tests whose preconditions do not hold on macOS: loopback socket buffers cannot
-# be pinned as small as the slow-reader case needs, and the heap budget is
-# calibrated against glibc's allocator. They run unchanged on Linux.
-if(APPLE)
-  foreach(_t test-http-server-limits test-rldp2-decoder-heap)
-    set_property(TEST ${_t} APPEND PROPERTY LABELS "macos-known-failure")
+# They are registered only in a full build; a toslib-only build (which every
+# WebAssembly and Android build is) has none of them to label.
+if (NOT TOS_ONLY_TOSLIB)
+  foreach(_t wallet-index-replica-capacity startup-catchup-loopback-runner test-proof-verify-live-commit
+             snapshot-import-offline docker-validator-role)
+    set_property(TEST ${_t} APPEND PROPERTY LABELS "linux-only")
   endforeach()
+  foreach(_t test-json-rpc-transport quic-admission-global-limit quic-admission-full-table test-adnl-ext-input-budget)
+    set_property(TEST ${_t} APPEND PROPERTY LABELS "loopback-aliases")
+  endforeach()
+  foreach(_t pending-finality-retry-policy-source n6-live-finality-overlay n6-lite-framed-tcp n6-scale-sweep-minimum-bft)
+    set_property(TEST ${_t} APPEND PROPERTY LABELS "gnu-tools")
+  endforeach()
+  # Tests whose preconditions do not hold on macOS: loopback socket buffers cannot
+  # be pinned as small as the slow-reader case needs, and the heap budget is
+  # calibrated against glibc's allocator. They run unchanged on Linux.
+  if(APPLE)
+    foreach(_t test-http-server-limits test-rldp2-decoder-heap)
+      set_property(TEST ${_t} APPEND PROPERTY LABELS "macos-known-failure")
+    endforeach()
+  endif()
 endif()

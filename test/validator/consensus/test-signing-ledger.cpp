@@ -25,6 +25,7 @@
 #include <unistd.h>
 #include <vector>
 
+#include "td/actor/TestScheduler.h"
 #include "td/actor/actor.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/logging.h"
@@ -977,7 +978,9 @@ class Driver : public td::actor::Actor {
     ask_into(notar(9, 0xA), &first).start().detach();
     require(co_await wait_until([&] { return gate->held_count.load() == 1; }), "the first write is held");
     ask_into(notar(9, 0xB), &second).start().detach();
-    co_await td::actor::coro_sleep(td::Timestamp::in(0.3));
+    // Virtual time: everything the second request can do without the first write has run
+    // when this returns, and a minute of alarms has fired.
+    co_await td::actor::coro_sleep(td::Timestamp::in(60.0));
     require(second.load() == -1, "the second request is not answered while the first is between check and write");
     require(gate->held_count.load() == 1, "the second request did not reach its write");
     gate->hold = false;
@@ -1075,6 +1078,7 @@ class Driver : public td::actor::Actor {
 }  // namespace
 
 int main() {
+  td::Time::allow_freezes();  // before the first clock read
   SET_VERBOSITY_LEVEL(verbosity_ERROR);
   test_index();
   test_fence_rule();
@@ -1084,13 +1088,20 @@ int main() {
   test_log_format(dir);
   test_header_format();
 
-  td::actor::Scheduler scheduler({2});
+  // One thread and virtual time: whenever nothing is runnable, time jumps to the next
+  // alarm. A wait in a test therefore ends only once every piece of work it allowed has
+  // run, so a check that something did not happen sees a settled ledger.
+  td::actor::TestScheduler scheduler;
+  scheduler.begin_sync();
   td::actor::ActorOwn<Driver> driver;
-  scheduler.run_in_context([&] {
+  scheduler.step([&] {
     driver = td::actor::create_actor<Driver>("signing-ledger-driver");
     td::actor::ask(driver, &Driver::run).detach();
   });
-  while (scheduler.run(1)) {
+  while (scheduler.fire_next_alarm(std::numeric_limits<double>::infinity())) {
   }
-  return 0;
+  // The driver exits the process when it finishes; reaching here means it is waiting for
+  // something that will never happen.
+  fail("harness: the driver is stuck with no work and no alarm pending");
+  return 1;
 }

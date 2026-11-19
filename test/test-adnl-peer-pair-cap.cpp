@@ -35,6 +35,7 @@
 #include "adnl/adnl-test-loopback-implementation.h"
 #include "adnl/adnl.h"
 #include "td/actor/PromiseFuture.h"
+#include "td/actor/TestScheduler.h"
 #include "td/utils/port/path.h"
 #include "td/utils/port/signals.h"
 
@@ -48,6 +49,7 @@ constexpr int kSenders = 5;
 }  // namespace
 
 int main() {
+  td::Time::allow_freezes();  // before the first clock read
   SET_VERBOSITY_LEVEL(verbosity_INFO);
   td::set_default_failure_signal_handler().ensure();
 
@@ -71,9 +73,13 @@ int main() {
   std::atomic<bool> network_manager_ready{false};
   std::atomic<bool> adnl_subscription_ready{false};
 
-  td::actor::Scheduler scheduler({2});
+  // One thread and virtual time: when nothing is runnable, time jumps to the next alarm.
+  // Every wait below ends only after all the work it allowed has run, and the quiet period
+  // after the refused senders can be long without costing anything.
+  td::actor::TestScheduler scheduler;
+  scheduler.begin_sync();
 
-  scheduler.run_in_context([&] {
+  scheduler.step([&] {
     keyring = tos::keyring::Keyring::create(db_root);
     network_manager = td::actor::create_actor<tos::adnl::TestLoopbackNetworkManager>("test network manager");
     adnl = tos::adnl::Adnl::create(db_root, keyring.get());
@@ -108,7 +114,7 @@ int main() {
     td::actor::send_lambda(network_manager, [&] { network_manager_ready.store(true, std::memory_order_release); });
   });
 
-  scheduler.run_in_context([&] {
+  scheduler.step([&] {
     class Callback : public tos::adnl::Adnl::Callback {
      public:
       Callback(std::array<tos::adnl::AdnlNodeIdShort, kSenders>& senders,
@@ -137,19 +143,27 @@ int main() {
     td::actor::send_lambda(adnl, [&] { adnl_subscription_ready.store(true, std::memory_order_release); });
   });
 
-  auto setup_timeout = td::Timestamp::in(10.0);
-  while (!network_manager_ready.load(std::memory_order_acquire) ||
-         !adnl_subscription_ready.load(std::memory_order_acquire)) {
-    if (!scheduler.run(0.1)) {
-      LOG(FATAL) << "scheduler stopped before setup completed";
+  // Waits, in virtual time, until `predicate` holds; fails once `timeout` passes with it
+  // still false, or once nothing is left that could make it true.
+  auto wait_for = [&](auto predicate, double timeout, const char* what) {
+    const double limit = td::Time::now() + timeout;
+    scheduler.settle();
+    while (!predicate()) {
+      if (!scheduler.fire_next_alarm(limit)) {
+        LOG(FATAL) << "timed out waiting for " << what;
+      }
     }
-    if (setup_timeout.is_in_past()) {
-      LOG(FATAL) << "timed out waiting for test setup";
-    }
-  }
+  };
+
+  wait_for(
+      [&] {
+        return network_manager_ready.load(std::memory_order_acquire) &&
+               adnl_subscription_ready.load(std::memory_order_acquire);
+      },
+      10.0, "test setup");
 
   auto send_from = [&](int i) {
-    scheduler.run_in_context([&] {
+    scheduler.step([&] {
       td::BufferSlice msg(2);
       msg.as_slice()[0] = 'T';
       msg.as_slice()[1] = static_cast<char>('0' + i);
@@ -157,23 +171,11 @@ int main() {
     });
   };
 
-  auto wait_for = [&](auto predicate, double timeout, const char* what) {
-    auto deadline = td::Timestamp::in(timeout);
-    while (!predicate()) {
-      if (!scheduler.run(0.05)) {
-        LOG(FATAL) << "scheduler stopped while waiting for " << what;
-      }
-      if (deadline.is_in_past()) {
-        LOG(FATAL) << "timed out waiting for " << what;
-      }
-    }
-  };
-
   // Reads the receiver's outer peer-table size (number of peers_ entries).
   auto peer_table_size = [&]() -> size_t {
     std::atomic<size_t> result{0};
     std::atomic<bool> ready{false};
-    scheduler.run_in_context([&] {
+    scheduler.step([&] {
       auto impl = td::actor::actor_dynamic_cast<tos::adnl::AdnlPeerTableImpl>(adnl.get());
       td::actor::send_closure(impl, &tos::adnl::AdnlPeerTableImpl::get_peer_table_size,
                               td::PromiseCreator::lambda([&](td::Result<size_t> R) {
@@ -202,13 +204,9 @@ int main() {
     send_from(i);
   }
 
-  // Give the refused messages ample scheduler time to (not) arrive.
-  auto quiet = td::Timestamp::in(3.0);
-  while (!quiet.is_in_past()) {
-    if (!scheduler.run(0.05)) {
-      break;
-    }
-  }
+  // A minute of virtual time for the refused messages to (not) arrive: every retry, timer
+  // and delayed delivery due within it has run.
+  scheduler.run_for(60.0);
 
   CHECK(delivered[0].load());
   CHECK(delivered[1].load());

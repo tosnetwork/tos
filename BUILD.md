@@ -10,8 +10,24 @@ The current build focuses on the native TVM execution surface for actor-based ap
 ## Supported Platforms
 
 The node and its tools are built, tested in CI and released for Linux on
-x86-64 and arm64. There are no Windows, Android or WebAssembly builds, build
-scripts or release artifacts.
+x86-64 and arm64. There are no Windows or Android release artifacts.
+
+Windows x86-64 builds the client tools from source, not the node: see
+[Windows Build](#windows-build).
+
+Android covers toslib only, not the node: see
+[Android toslib Build](#android-toslib-build).
+
+WebAssembly covers the contract tools only, not the node: the FunC compiler
+and Fift assembler library (`funcfiftlib`), `fift`, `func`, `tlbc` and the
+transaction emulator. `assembly/wasm/build-wasm.sh` builds them with
+Emscripten from `third-party/`, and `.github/workflows/build-tos-wasm-emscripten.yml`
+builds them with emsdk 4.0.17 on every pull request and push to `main` and runs
+`test/wasm/smoke-test.js` under Node.js: the library reports the commit,
+compiles a contract and rejects one with a syntax error, and the emulator loads.
+They are workflow artifacts, not release assets. An instance of the `funcfiftlib`
+module compiles once: the compiler keeps its state in globals, so create a new
+instance for each compilation.
 
 macOS is built from source: see
 [macOS Development Build](#macos-development-build). On Apple silicon it can
@@ -188,6 +204,64 @@ The labels mark tests that macOS cannot host, not failures of the code they test
   hold there. `test-http-server-limits` cannot pin loopback socket buffers as
   small as its slow-reader case requires, and `test-rldp2-decoder-heap` is
   calibrated against glibc's allocator, which rounds less than the macOS one.
+
+## Windows Build
+
+`assembly/native/build-windows-2022.bat` builds the client tools on Windows
+x86-64 with clang-cl and lld-link from Visual Studio 2022: `lite-client`,
+`validator-engine-console`, `storage-daemon-cli`, `blockchain-explorer`, `fift`,
+`func`, `tol`, `toslib`, `toslibjson`, `toslib-cli`, `emulator`, `create-state`
+and `json2tlo`. Every third-party library is built from `third-party\`.
+
+Run it from the repository root in an "x64 Native Tools Command Prompt for VS
+2022" with the Visual Studio "C++ Clang tools for Windows" component, ninja,
+NASM and Perl on `PATH` (for example `choco install ninja nasm strawberryperl`).
+The configuration also needs Python 3 and Git for Windows, whose bash runs the
+script that verifies the native registry contract:
+
+```bat
+assembly\native\build-windows-2022.bat
+```
+
+The output is in `build-windows\`. Nothing that links the node's own code is
+built: not `validator-engine`, and not the programs that use its key store,
+metrics or RLDP (`storage-daemon`, `dht-server`, `http-proxy`,
+`rldp-http-proxy`, `proxy-liteserver`, `generate-random-id`, `tos-rpc`,
+`tos-wallet-index`). That code relies on POSIX file semantics and is neither
+ported nor compiled on Windows
+([Windows](doc/Validator.md#windows)). CI builds the tools on every pull
+request and push to `main`
+(`.github/workflows/build-tos-windows-2022-x86-64.yml`); there are no Windows
+release artifacts. `tosctl` is not part of the Windows build.
+
+## Android toslib Build
+
+`example/android/build.sh` builds toslib for Android as a JNI library,
+`libnative-lib.so`, for `arm64-v8a`, `armeabi-v7a`, `x86_64` and `x86` (or the
+ABIs named on its command line), at API level 24, with the NDK that
+`ANDROID_NDK_ROOT` names. It needs the [Linux prerequisites](#linux-prerequisites)
+or a macOS development host, a JDK and Ninja:
+
+```bash
+ANDROID_NDK_ROOT=/path/to/android-ndk example/android/build.sh
+test/android/run-jvm-smoke.sh
+```
+
+A cross build cannot run the generators, so the script first builds
+`example/android` for the host. That build generates the TL, TL-B and contract
+sources and the Java API, `src/org/tos/toslib/TosApi.java`, and its own
+`libnative-lib` is what `test/android/run-jvm-smoke.sh` loads in a desktop JVM
+to check the binding: synchronous and asynchronous requests, object
+conversion in both directions, and `Client.close()`. The result is
+`example/android/toslib-android/`: `libs/<ABI>/libnative-lib.so`, stripped;
+`src/` with `org/tos/toslib/Client.java` and `TosApi.java`, which an app
+compiles with its own sources; and `BUILD-INFO` with the commit, the NDK
+version and each file's SHA-256. The Java package is `org.tos.toslib`.
+
+`.github/workflows/build-toslib-android.yml` runs both on every pull request
+and push to `main` with NDK r27d (27.3.13750724), checks each library's ELF
+machine and its exported `JNI_OnLoad`, and keeps the result as the
+`toslib-android` workflow artifact. It is not a release asset.
 
 ## Rust Workspace
 

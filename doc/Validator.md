@@ -197,6 +197,16 @@ What differs from a Linux host:
 - Disable system sleep (`sudo pmset -a sleep 0`). A host that sleeps misses its
   rounds like one that is down.
 
+### Windows
+
+Windows cannot host a validator or a full node: `validator-engine` is not built
+there ([BUILD.md](../BUILD.md), Windows Build). The consensus key file, its lock
+and the signing ledger rely on POSIX ownership and permission bits, `flock`,
+directory `fsync` and inode identity, which Windows does not provide in a form
+those checks can judge, so that code is not ported and not compiled on Windows.
+The Windows client tools, such as `lite-client` and `validator-engine-console`,
+can reach a node running elsewhere.
+
 ### Production operating profile
 
 For a production validator, use one validator process per physical host. Do

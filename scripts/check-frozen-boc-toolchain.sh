@@ -16,13 +16,17 @@ tracked = subprocess.run(
     text=True,
 ).stdout.splitlines()
 
+# The repository root is TOS_SOURCE_DIR, which stays right when TOS is built as
+# a subproject; CMAKE_SOURCE_DIR is accepted where it is still spelled that way.
+markers = ("${TOS_SOURCE_DIR}/scripts/embed-", "${CMAKE_SOURCE_DIR}/scripts/embed-")
+
 resolved = []
 for relative in tracked:
     path = root / relative
     lines = path.read_text().splitlines()
     for line_number, line in enumerate(lines):
-        marker = "${CMAKE_SOURCE_DIR}/scripts/embed-"
-        if marker not in line or ".sh" not in line:
+        marker = next((m for m in markers if m in line), None)
+        if marker is None or ".sh" not in line:
             continue
         script = line.split(marker, 1)[1].split(".sh", 1)[0] + ".sh"
         command_start = line_number
