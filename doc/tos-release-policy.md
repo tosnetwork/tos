@@ -539,7 +539,8 @@ The script refuses to finish unless the cache holds these values, every
 binary with `-V` reports the tagged commit, `tosctl --version` does too, and
 every shipped Mach-O file is built for that architecture only, requires
 macOS 15.0 and no later,
-passes `codesign --verify` (the linker's ad hoc signature) and links only
+passes `codesign --verify` (the script signs every shipped file ad hoc, on both
+architectures, because the Intel linker does not) and links only
 libraries under `/usr/lib` and `/System/Library`. `BUILD-INFO` records the
 build host's macOS and SDK, the compiler, the flags, each file's libraries and
 SHA-256. `scripts/test_release_artifacts.py` fails if either workflow or the
