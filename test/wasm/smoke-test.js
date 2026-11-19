@@ -30,7 +30,10 @@ async function main() {
     fail(`funcfiftlib reports commit ${version.funcFiftLibCommitHash}, not ${commit}`);
   }
 
-  function compile(source) {
+  // The compiler keeps its state in globals and is not reset between runs, so
+  // each compilation gets its own instance of the module.
+  async function compile(source) {
+    const compiler = await CompilerModule();
     compiler.FS.writeFile('/main.fc', source);
     const config = JSON.stringify({ optLevel: 2, sources: ['/main.fc'] });
     const configPtr = compiler._malloc(compiler.lengthBytesUTF8(config) + 1);
@@ -42,14 +45,14 @@ async function main() {
     return result;
   }
 
-  const good = compile('() recv_internal() impure {\n}\n');
+  const good = await compile('() recv_internal() impure {\n}\n');
   if (good.status !== 'ok' || typeof good.codeBoc !== 'string' || good.codeBoc.length === 0) {
     fail(`a valid contract did not compile: ${JSON.stringify(good)}`);
   }
   if (!/^[0-9A-Fa-f]{64}$/.test(good.codeHashHex || '')) {
     fail(`the compiled code has no 256-bit hash: ${good.codeHashHex}`);
   }
-  const bad = compile('() recv_internal() impure {\n');
+  const bad = await compile('() recv_internal() impure {\n');
   if (bad.status !== 'error') {
     fail(`a contract with a syntax error was accepted: ${JSON.stringify(bad)}`);
   }
