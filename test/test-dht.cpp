@@ -141,13 +141,20 @@ int main() {
   wait_for(retry_initial_id_registered, "initial ADNL ID registration");
   CHECK(retry_initial_id_exists);
 
+  // The member subscribes to its ADNL id in start_up, and the id is deleted next; a
+  // subscription that reaches ADNL after the deletion aborts. A fixed wait does not
+  // order the two on a loaded host. A message to the member runs after its start_up,
+  // and a query it sends to ADNL arrives after the subscriptions start_up sent, so
+  // its answer means they are in place.
+  std::atomic<bool> retry_dht_subscribed{false};
   scheduler.run_in_context([&] {
     retry_dht = tos::dht::DhtMember::create(retry_short_id, db_root_, keyring.get(), adnl.get(), -1, 6, 3, true);
+    td::actor::send_lambda(retry_dht.get(), [&, adnl_id = adnl.get()] {
+      td::actor::send_closure(adnl_id, &tos::adnl::Adnl::check_id_exists, retry_short_id,
+                              [&](td::Result<bool>) { retry_dht_subscribed = true; });
+    });
   });
-  auto retry_dht_started_at = td::Timestamp::in(0.5);
-  while (!retry_dht_started_at.is_in_past()) {
-    scheduler.run(0.05);
-  }
+  wait_for(retry_dht_subscribed, "retry DHT member subscriptions");
 
   std::atomic<bool> retry_id_deleted{false};
   bool retry_id_delete_ok = false;

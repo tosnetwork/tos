@@ -126,9 +126,10 @@ void AdnlInboundConnection::query_finished(td::Bits256 query_id, td::Result<td::
     LOG(DEBUG) << "ADNL_EXT_QUERY server_completion id=" << query_id.to_hex() << " outcome=error"
                << " reason=" << result.error();
     auto status = reject_or_close(query_id, ExtQueryFailure{ExtQueryFailureKind::HandlerError, result.move_as_error()});
-    if (status.is_error()) {
-      LOG(INFO) << status;
-      stop();
+    if (status.is_error() && !output_overflowed()) {
+      // Answers queued before this refusal still reach the peer. An overflowed
+      // connection has already stopped: there is nothing left to close in order.
+      begin_closing(status);
     }
     return;
   }
@@ -142,9 +143,8 @@ void AdnlInboundConnection::query_finished(td::Bits256 query_id, td::Result<td::
   // The result could not be framed (typically larger than an external packet may
   // carry). Answer the same ID with a small failure instead, or close.
   auto status = reject_or_close(query_id, ExtQueryFailure{ExtQueryFailureKind::ResponseTooLarge, td::Status::OK()});
-  if (status.is_error()) {
-    LOG(INFO) << status;
-    stop();
+  if (status.is_error() && !output_overflowed()) {
+    begin_closing(status);
   }
 }
 
