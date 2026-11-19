@@ -86,6 +86,9 @@ namespace {
 constexpr td::uint32 SLOTS_PER_LEADER_WINDOW = 4;
 constexpr size_t VALIDATORS = 4;
 constexpr double STEP_TIMEOUT = 15.0;
+// Virtual time before an absence check: whatever the run would still do, including work
+// due on a timer, has happened by then, and waiting costs nothing.
+constexpr double kAbsenceHorizon = 60.0;
 // Cooldown after a refused request in resolver-pin mode: long enough that the steps after the
 // refusal finish while the resolve task still sleeps.
 constexpr double PIN_COOLDOWN_SECONDS = 4.0;
@@ -775,7 +778,7 @@ class Driver : public td::actor::Actor {
     if (!stored) {
       finish(3, "LATE_RESTART_DROPPED: a finalized candidate was dropped before Start");
     }
-    co_await settle(0.5);
+    co_await settle(kAbsenceHorizon);
     auto votes = [&] { return notarize_votes_for(W->id) + notarize_votes_for(X->id) + notarize_votes_for(Fut->id); };
     emit(PSTRING() << "LATE_RESULT before_start Fut_persisted=" << candidate_persisted(Fut->id)
                    << " notarize_votes=" << votes() << " misbehavior_reports=" << misbehavior_reports());
@@ -792,7 +795,7 @@ class Driver : public td::actor::Actor {
     if (!applied) {
       finish(3, "LATE_NOT_APPLIED: the finalized blocks were not applied from the stored candidates");
     }
-    co_await settle(0.5);
+    co_await settle(kAbsenceHorizon);
     if (candidate_persisted(Fut->id) || votes() != 0 || misbehavior_reports() != 0) {
       finish(4, "LATE_VOTED: the run voted or reported after Start");
     }
@@ -834,6 +837,7 @@ class Driver : public td::actor::Actor {
     if (!applied) {
       finish(3, "LATE_NOT_APPLIED: the late candidate never reached the resolver");
     }
+    co_await settle(kAbsenceHorizon);
     if (notarize_votes_for(X->id) != 0 || misbehavior_reports() != 0) {
       finish(4, "LATE_VOTED: a late candidate must only be stored");
     }
@@ -872,7 +876,7 @@ class Driver : public td::actor::Actor {
     if (!co_await wait_until([&] { return candidate_persisted(inside->id); })) {
       finish(1, "LATE_PRECONDITION_FAILED: a late candidate inside the window was not stored");
     }
-    co_await settle(0.5);
+    co_await settle(kAbsenceHorizon);
     emit(PSTRING() << "LATE_RESULT persisted outside=" << candidate_persisted(outside->id)
                    << " inside=" << candidate_persisted(inside->id));
     if (candidate_persisted(outside->id)) {
