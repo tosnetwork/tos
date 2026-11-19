@@ -1,0 +1,91 @@
+name: Android toslib build (JNI)
+
+# The toslib JNI library (libnative-lib.so) for the four Android ABIs and its
+# Java API, built with example/android/build.sh. The host build of the same
+# binding is loaded in a desktop JVM by test/android/run-jvm-smoke.sh first,
+# so a broken binding fails here rather than in an app. It runs on every pull
+# request to main and every push to main, unfiltered by path: toslib reads
+# most of crypto/, tdutils/, tl/ and lite-client/, and a list of what it reads
+# would miss something.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # NDK r27d, installed by the runner's sdkmanager, which checks each package
+  # against the SDK repository's checksums.
+  NDK_VERSION: 27.3.13750724
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+
+    - name: Install system libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git cmake ninja-build autoconf automake libtool \
+          texinfo pkg-config python3 libgflags-dev libreadline-dev libgsl-dev libblas-dev \
+          libgslcblas0 libgmp-dev gperf libssl-dev openjdk-17-jdk-headless
+
+    - name: Install clang-21
+      run: sudo scripts/install-llvm-toolchain.sh 21
+
+    - name: Install Android NDK
+      run: |
+        SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+        test -x "$SDKMANAGER"
+        yes | "$SDKMANAGER" --install "ndk;$NDK_VERSION" >/dev/null
+        NDK="$ANDROID_HOME/ndk/$NDK_VERSION"
+        grep -qx "Pkg.Revision = $NDK_VERSION" "$NDK/source.properties"
+        echo "ANDROID_NDK_ROOT=$NDK" >> "$GITHUB_ENV"
+
+    - name: Build toslib for Android
+      env:
+        CC: clang-21
+        CXX: clang++-21
+        JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+      run: example/android/build.sh
+
+    - name: Run the JNI smoke test in a JVM
+      env:
+        JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+      run: PATH="$JAVA_HOME/bin:$PATH" test/android/run-jvm-smoke.sh
+
+    - name: Check each library is built for its ABI
+      run: |
+        set -euo pipefail
+        cd example/android/toslib-android/libs
+        file arm64-v8a/libnative-lib.so | grep -q 'ELF 64-bit LSB shared object, ARM aarch64'
+        file armeabi-v7a/libnative-lib.so | grep -q 'ELF 32-bit LSB shared object, ARM'
+        file x86_64/libnative-lib.so | grep -q 'ELF 64-bit LSB shared object, x86-64'
+        file x86/libnative-lib.so | grep -q 'ELF 32-bit LSB shared object, Intel 80386'
+        for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+          "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D --defined-only \
+            "$abi/libnative-lib.so" | grep -qw JNI_OnLoad
+        done
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: toslib-android
+        path: example/android/toslib-android
+        if-no-files-found: error
+        retention-days: 14

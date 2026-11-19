@@ -10,22 +10,39 @@ The current build focuses on the native TVM execution surface for actor-based ap
 ## Supported Platforms
 
 The node and its tools are built, tested in CI and released for Linux on
-x86-64 and arm64. There are no Android or WebAssembly builds, build scripts or
-release artifacts, and no Windows release artifacts.
+x86-64 and arm64. There are no Windows or Android release artifacts.
 
 Windows x86-64 builds the client tools from source, not the node: see
 [Windows Build](#windows-build).
 
-macOS on Apple silicon is built from source: see
-[macOS Development Build](#macos-development-build). It can run a node and a
-validator ([macOS validators](doc/Validator.md#macos-validators)). CI builds
-and tests it on every pull request and push to `main`
-(`.github/workflows/build-tos-macos-15-arm64-shared.yml`).
-`.github/workflows/build-tos-macos-15-arm64-release.yml` packages the same
+Android covers toslib only, not the node: see
+[Android toslib Build](#android-toslib-build).
+
+WebAssembly covers the contract tools only, not the node: the FunC compiler
+and Fift assembler library (`funcfiftlib`), `fift`, `func`, `tlbc` and the
+transaction emulator. `assembly/wasm/build-wasm.sh` builds them with
+Emscripten from `third-party/`, and `.github/workflows/build-tos-wasm-emscripten.yml`
+builds them with emsdk 4.0.17 on every pull request and push to `main` and runs
+`test/wasm/smoke-test.js` under Node.js: the library reports the commit,
+compiles a contract and rejects one with a syntax error, and the emulator loads.
+They are workflow artifacts, not release assets. An instance of the `funcfiftlib`
+module compiles once: the compiler keeps its state in globals, so create a new
+instance for each compilation.
+
+macOS is built from source: see
+[macOS Development Build](#macos-development-build). On Apple silicon it can
+run a node and a validator ([macOS validators](doc/Validator.md#macos-validators));
+on Intel it can run a node and the tools. CI builds and tests both on every
+pull request and push to `main`
+(`.github/workflows/build-tos-macos-15-arm64-shared.yml` on Apple silicon,
+`.github/workflows/build-tos-macos-15-x86-64-shared.yml` on Intel).
+`.github/workflows/build-tos-macos-15-arm64-release.yml` and
+`.github/workflows/build-tos-macos-15-x86-64-release.yml` package the same
 build for release on every version tag, with
-`assembly/native/build-macos-release.sh`: Release, Apple clang, `apple-m1`,
-minimum macOS 15.0, the system allocator, and only libraries macOS itself
-provides. Its artifact `tos-arm64-macos` joins the release once that workflow
+`assembly/native/build-macos-release.sh`: Release, Apple clang, `apple-m1` on
+Apple silicon and `x86-64-v2` on Intel, minimum macOS 15.0, the system
+allocator, and only libraries macOS itself provides. Their artifacts
+`tos-arm64-macos` and `tos-x86-64-macos` join the release once each workflow
 has succeeded on a tag ([release policy](doc/tos-release-policy.md)); until
 then there are no macOS release assets.
 
@@ -117,7 +134,7 @@ BOC, its hashes, and a release manifest.
 
 ## macOS Development Build
 
-For Apple silicon, including a validator host. `assembly/native/build-macos-shared.sh -t`
+For Apple silicon, including a validator host, and for Intel. `assembly/native/build-macos-shared.sh -t`
 runs the steps below, as CI does. Every third-party library is built from
 `third-party/`, so Homebrew provides only the build tools:
 
@@ -148,8 +165,10 @@ build with `TOS_BUILD_DIR=$PWD/build-macos` and `scripts/localnet-jsonrpc.py`.
 
 Differences from Linux, by design:
 
-- The SLH-DSA verifier uses the ARMv8 SHA2 backend, as on Linux arm64; the
-  configure output prints `TOS_SLHDSA_ARMV8_SHA2=ON`. A build directory
+- The SLH-DSA verifier uses the hardware SHA-256 backend of the architecture,
+  as on Linux: the configure output prints `TOS_SLHDSA_ARMV8_SHA2=ON` on Apple
+  silicon and `TOS_SLHDSA_SHA_NI=ON` on Intel. Either falls back to the
+  portable backend at run time on a CPU without the extension. A build directory
   configured before this backend was available keeps `OFF` in its cache;
   configure it again with `-DTOS_SLHDSA_ARMV8_SHA2=ON`.
 - The conformance reference library needs GNU ld's `--wrap` and is not built.
@@ -221,6 +240,35 @@ C++ 2015-2022 Redistributable, which a target machine needs) and the DLLs it
 ships. The artifact joins the release once the workflow has succeeded on a tag
 ([release policy](doc/tos-release-policy.md)). `tosctl` is not part of the
 Windows build.
+
+## Android toslib Build
+
+`example/android/build.sh` builds toslib for Android as a JNI library,
+`libnative-lib.so`, for `arm64-v8a`, `armeabi-v7a`, `x86_64` and `x86` (or the
+ABIs named on its command line), at API level 24, with the NDK that
+`ANDROID_NDK_ROOT` names. It needs the [Linux prerequisites](#linux-prerequisites)
+or a macOS development host, a JDK and Ninja:
+
+```bash
+ANDROID_NDK_ROOT=/path/to/android-ndk example/android/build.sh
+test/android/run-jvm-smoke.sh
+```
+
+A cross build cannot run the generators, so the script first builds
+`example/android` for the host. That build generates the TL, TL-B and contract
+sources and the Java API, `src/org/tos/toslib/TosApi.java`, and its own
+`libnative-lib` is what `test/android/run-jvm-smoke.sh` loads in a desktop JVM
+to check the binding: synchronous and asynchronous requests, object
+conversion in both directions, and `Client.close()`. The result is
+`example/android/toslib-android/`: `libs/<ABI>/libnative-lib.so`, stripped;
+`src/` with `org/tos/toslib/Client.java` and `TosApi.java`, which an app
+compiles with its own sources; and `BUILD-INFO` with the commit, the NDK
+version and each file's SHA-256. The Java package is `org.tos.toslib`.
+
+`.github/workflows/build-toslib-android.yml` runs both on every pull request
+and push to `main` with NDK r27d (27.3.13750724), checks each library's ELF
+machine and its exported `JNI_OnLoad`, and keeps the result as the
+`toslib-android` workflow artifact. It is not a release asset.
 
 ## Rust Workspace
 

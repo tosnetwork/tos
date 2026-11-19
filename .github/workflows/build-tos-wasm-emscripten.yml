@@ -1,0 +1,71 @@
+name: Emscripten TOS build (wasm)
+
+# The Fift and FunC tools and the transaction emulator built for WebAssembly
+# with assembly/wasm/build-wasm.sh, then loaded under Node.js by
+# test/wasm/smoke-test.js. It runs on every pull request to main and every push
+# to main, unfiltered by path: the code it compiles is spread across crypto/,
+# tdutils/ and emulator/, and a list of what it reads would miss something.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+
+    # The SDK at a fixed commit of its repository (the 4.0.17 release tag),
+    # installing that release.
+    - name: Check out emsdk
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: emscripten-core/emsdk
+        ref: dadf06a88d62a20b4f711250b8447409352aa4d7
+        path: emsdk
+        persist-credentials: false
+
+    - name: Install system libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git cmake ninja-build autoconf automake libtool \
+          texinfo pkg-config python3 libgflags-dev libreadline-dev libgsl-dev libblas-dev \
+          libgslcblas0 libgmp-dev gperf libssl-dev
+
+    - name: Install clang-21
+      run: sudo scripts/install-llvm-toolchain.sh 21
+
+    - name: Install Emscripten 4.0.17
+      run: |
+        emsdk/emsdk install 4.0.17
+        emsdk/emsdk activate 4.0.17
+
+    - name: Build the WebAssembly tools and run the smoke test
+      env:
+        CC: clang-21
+        CXX: clang++-21
+      run: assembly/wasm/build-wasm.sh emsdk wasm-artifacts
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: tos-wasm
+        path: wasm-artifacts
+        if-no-files-found: error
+        retention-days: 14

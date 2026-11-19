@@ -1,6 +1,6 @@
 #!/bin/bash
-# macOS on Apple silicon: the same targets as build-ubuntu-shared.sh, built with
-# Apple clang against the selected SDK (BUILD.md, macOS Development Build).
+# macOS on Apple silicon or Intel: the same targets as build-ubuntu-shared.sh,
+# built with Apple clang against the selected SDK (BUILD.md, macOS Development Build).
 # There are no macOS release artifacts, so this script has no artifact step.
 
 with_tests=false
@@ -16,7 +16,13 @@ while getopts 'tc' flag; do
 done
 
 test "$(uname -s)" = Darwin || { echo "this script builds on macOS only"; exit 1; }
-test "$(uname -m)" = arm64 || { echo "this script builds on Apple silicon only"; exit 1; }
+# The CPU level a CI build is fixed to, and the hardware SHA-256 backend a
+# validator on this architecture must verify with (doc/Validator.md).
+case "$(uname -m)" in
+  arm64) CI_ARCH=armv8-a SLHDSA_BACKEND=TOS_SLHDSA_ARMV8_SHA2 ;;
+  x86_64) CI_ARCH=x86-64-v2 SLHDSA_BACKEND=TOS_SLHDSA_SHA_NI ;;
+  *) echo "this script builds on arm64 or x86_64 only"; exit 1 ;;
+esac
 
 # Homebrew's GNU ar (binutils) writes archives Apple's linker rejects, and
 # Homebrew LLVM fails the QUIC library's OpenSSL probe: keep both, and GNU
@@ -43,7 +49,7 @@ fi
 # Avoid -march=native with a shared CI ccache.
 CMAKE_EXTRA_ARGS=()
 if [ "${GITHUB_ACTIONS}" = "true" ] || [ "$with_ccache" = true ]; then
-  CMAKE_EXTRA_ARGS+=(-DTOS_ARCH=armv8-a)
+  CMAKE_EXTRA_ARGS+=(-DTOS_ARCH="$CI_ARCH")
 fi
 
 if [ ! -d "build" ]; then
@@ -61,8 +67,8 @@ cmake -GNinja .. \
 test "${PIPESTATUS[0]}" -eq 0 || { echo "Can't configure tos"; exit 1; }
 # A validator on macOS must verify with the hardware SHA-256 backend
 # (doc/Validator.md); a build without it is refused here.
-grep -Fx -- '-- SLH-DSA SHA-256 backend: TOS_SLHDSA_ARMV8_SHA2=ON' configure.txt \
-  || { echo "the ARMv8 SHA2 backend is not enabled"; exit 1; }
+grep -Fx -- "-- SLH-DSA SHA-256 backend: $SLHDSA_BACKEND=ON" configure.txt \
+  || { echo "the hardware SHA-256 backend $SLHDSA_BACKEND is not enabled"; exit 1; }
 
 if [ "$with_tests" = true ]; then
 ninja storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-cli \

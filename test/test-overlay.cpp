@@ -27,6 +27,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -83,7 +84,8 @@ static std::vector<Node> slave_nodes;
 static std::vector<Node *> all_nodes;
 static td::uint32 total_nodes = 4;
 static td::int32 node_slaves_cnt = 3;
-static size_t remaining = 0;
+// Decremented by overlay actors on the scheduler's worker threads, read by the test thread.
+static std::atomic<size_t> remaining{0};
 static td::Bits256 bcast_hash;
 
 class Callback : public tos::overlay::Overlays::Callback {
@@ -102,8 +104,7 @@ class Callback : public tos::overlay::Overlays::Callback {
                          td::BufferSlice data) override {
     CHECK(can_receive_);
     CHECK(td::sha256_bits256(data.as_slice()) == bcast_hash);
-    CHECK(remaining > 0);
-    remaining--;
+    CHECK(remaining.fetch_sub(1, std::memory_order_relaxed) > 0);
   }
 
  private:
@@ -328,12 +329,12 @@ int main(int argc, char *argv[]) {
       if (t.is_in_past()) {
         break;
       }
-      if (!remaining) {
+      if (remaining.load() == 0) {
         break;
       }
     }
 
-    LOG_CHECK(!remaining) << "remaining=" << remaining << " all=" << real_members;
+    LOG_CHECK(remaining.load() == 0) << "remaining=" << remaining.load() << " all=" << real_members;
 
     broadcast = td::BufferSlice(700);
     td::Random::secure_bytes(broadcast.as_slice());
@@ -349,12 +350,12 @@ int main(int argc, char *argv[]) {
       if (t.is_in_past()) {
         break;
       }
-      if (!remaining) {
+      if (remaining.load() == 0) {
         break;
       }
     }
 
-    LOG_CHECK(!remaining) << "remaining=" << remaining;
+    LOG_CHECK(remaining.load() == 0) << "remaining=" << remaining.load();
 
     scheduler.run_in_context([&] {
       root_nodes.clear();
@@ -446,12 +447,12 @@ int main(int argc, char *argv[]) {
       if (t.is_in_past()) {
         break;
       }
-      if (!remaining) {
+      if (remaining.load() == 0) {
         break;
       }
     }
 
-    LOG_CHECK(!remaining) << "remaining=" << remaining;
+    LOG_CHECK(remaining.load() == 0) << "remaining=" << remaining.load();
 
     broadcast = td::BufferSlice(700);
     td::Random::secure_bytes(broadcast.as_slice());
@@ -467,12 +468,12 @@ int main(int argc, char *argv[]) {
       if (t.is_in_past()) {
         break;
       }
-      if (!remaining) {
+      if (remaining.load() == 0) {
         break;
       }
     }
 
-    LOG_CHECK(!remaining) << "remaining=" << remaining;
+    LOG_CHECK(remaining.load() == 0) << "remaining=" << remaining.load();
 
     scheduler.run_in_context([&] {
       root_nodes.clear();
