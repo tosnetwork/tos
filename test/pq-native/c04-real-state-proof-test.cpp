@@ -1077,6 +1077,56 @@ class N5JoinedPublisher final : public td::actor::Actor {
   }
 };
 
+// Completes once the resolver has started at least one finalization and settled every one
+// it started. A finalization spans the finalized-marker read and, when the marker is
+// missing, the AcceptBlock that replaces it, so counts read afterwards are final whatever
+// the database's speed.
+class N5FinalizationSettledWaiter final : public td::actor::Actor {
+ public:
+  void await_settled(sx::BusHandle bus, td::Promise<td::Unit> promise) {
+    await_inner(std::move(bus), std::move(promise)).start().detach();
+  }
+
+ private:
+  td::actor::Task<> await_inner(sx::BusHandle bus, td::Promise<td::Unit> promise) {
+    const auto deadline = td::Timestamp::in(30.0);
+    while (!deadline.is_in_past()) {
+      auto state = co_await bus.publish<sx::QueryFinalizationState>(td::uint32{0}).wrap();
+      if (state.is_error()) {
+        promise.set_error(state.move_as_error_prefix("finalization state query: "));
+        co_return td::Unit{};
+      }
+      const auto &result = state.ok();
+      if (result.finalizations_started >= 1 && result.finalizations_settled == result.finalizations_started) {
+        promise.set_value(td::Unit{});
+        co_return td::Unit{};
+      }
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.01));
+    }
+    promise.set_error(td::Status::Error("the resolver's finalizations did not settle within 30 s"));
+    co_return td::Unit{};
+  }
+};
+
+bool n5_wait_finalizations_settled(td::actor::Scheduler &scheduler, sx::BusHandle bus) {
+  td::actor::ActorOwn<N5FinalizationSettledWaiter> waiter;
+  std::optional<td::Result<td::Unit>> settled;
+  scheduler.run_in_context([&] {
+    waiter = td::actor::create_actor<N5FinalizationSettledWaiter>("n5-finalization-settled");
+    td::actor::send_closure(waiter, &N5FinalizationSettledWaiter::await_settled, bus,
+                            td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) { settled.emplace(std::move(outcome)); }));
+  });
+  while (!settled.has_value()) {
+    scheduler.run(0.01);
+  }
+  scheduler.run_in_context([&] { waiter.reset(); });
+  if (settled->is_error()) {
+    std::cerr << settled->error().to_string() << '\n';
+    return false;
+  }
+  return true;
+}
+
 class N5RestartMarkerWaiter final : public td::actor::Actor {
  public:
   void await_replay(sx::BusHandle bus, consensus::CandidateId id, td::Promise<td::Unit> promise) {
@@ -1807,9 +1857,11 @@ int main(int argc, char **argv) {
     while (n5_replay_state->observed.load(std::memory_order_acquire) == 0 && !replay_deadline.is_in_past()) {
       scheduler.run(0.01);
     }
-    const auto settled = td::Timestamp::in(1.0);
-    while (!settled.is_in_past()) {
-      scheduler.run(0.01);
+    // As in the cut4 replay: once the replayed finalization has settled, a duplicate it
+    // caused has been counted.
+    if (!n5_wait_finalizations_settled(scheduler, bus)) {
+      std::cerr << "N5_CONTINUE_FAILED: the seq1 replay did not settle\n";
+      return 1;
     }
     if (n5_replay_state->observed.load(std::memory_order_acquire) != 1 ||
         n5_replay_state->mismatch.load(std::memory_order_acquire) ||
@@ -2463,11 +2515,11 @@ int main(int argc, char **argv) {
       std::cerr << "N5_CUT4_FAILED: exact saved FinalCert was not replayed once\n";
       return 1;
     }
-    // Give the StateResolver's local RocksDB marker lookup time to settle.
-    // A marker-bypass mutant must call the facade during this same interval.
-    const auto settled = td::Timestamp::in(1.0);
-    while (!settled.is_in_past()) {
-      scheduler.run(0.01);
+    // Wait for the StateResolver to settle the replayed finalization: its marker read has
+    // answered, and a marker-bypass mutant has already called the facade.
+    if (!n5_wait_finalizations_settled(scheduler, bus)) {
+      std::cerr << "N5_CUT4_FAILED: the replayed finalization did not settle\n";
+      return 1;
     }
     const auto observed_after_settle = n5_replay_state->observed.load(std::memory_order_acquire);
     const auto mismatch_after_settle = n5_replay_state->mismatch.load(std::memory_order_acquire);
