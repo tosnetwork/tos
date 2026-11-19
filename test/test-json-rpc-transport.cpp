@@ -629,16 +629,21 @@ TEST(JsonRpcTransport, a_listener_without_a_response_deadline_is_not_constructed
   for (double bad :
        {0.0, -1.0, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN(), 1e300}) {
     with_json_rpc(options_for(false, bad), [](int port) {
-      // Give the listener time to come up if it were going to.
-      std::this_thread::sleep_for(std::chrono::milliseconds(200));
-      int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-      CHECK(fd >= 0);
-      sockaddr_in addr{};
-      addr.sin_family = AF_INET;
-      addr.sin_port = htons(static_cast<uint16_t>(port));
-      addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-      ASSERT_TRUE(::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0);
-      ::close(fd);
+      // Refused for as long as the control below may take to accept: a listener that came
+      // up late would be found here, not only one that came up at once.
+      auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+      do {
+        int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        CHECK(fd >= 0);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(static_cast<uint16_t>(port));
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        const bool connected = ::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0;
+        ::close(fd);
+        ASSERT_TRUE(!connected);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      } while (std::chrono::steady_clock::now() < until);
     });
   }
   // Control: the same scenario with a valid deadline connects.

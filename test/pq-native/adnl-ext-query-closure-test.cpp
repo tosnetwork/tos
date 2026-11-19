@@ -666,11 +666,20 @@ void tcp_controls() {
   require_answered(*retried, "explicit retry TCP answer");
   LOG(INFO) << "Q02_PHASE nonce=" << unanswered->request << " phase=before_release";
   pair.release_held();
+  // A barrier on the same connection: the server sends its answer after the released one,
+  // TCP keeps the order, and the client's connection hands answers over in that order. Once
+  // the barrier is answered, the late answer has reached the client and been dispatched,
+  // so the checks below see its effect rather than a window it may not have reached yet.
+  // The barrier must get its own answer: a late answer handed to another caller fails here.
+  auto barrier = pair.send(nonce(6), 3.0, "barrier-after-release", 0);
+  pair.wait_completed({barrier}, 4.0, "barrier query after the release was not answered");
+  require_answered(*barrier, "barrier after the late answer");
+  // The dispatch above may still have a message on its way to the completed query.
   pair.pump(0.2);
   LOG(INFO) << "Q02_PHASE nonce=" << unanswered->request << " phase=after_release";
   require(unanswered->completions == 1 && outcome_of(*unanswered) == Outcome::Timeout,
           "late answer resurrected a completed caller");
-  require(pair.delivered_count() == 3, "TCP handler delivery count mismatch");
+  require(pair.delivered_count() == 4, "TCP handler delivery count mismatch");
   std::printf(
       "Q02_CONTROL transport=tcp positive_answer_match=true controlled_unanswered=true "
       "explicit_retry_answer_match=true repair_acceptance=false\n");
