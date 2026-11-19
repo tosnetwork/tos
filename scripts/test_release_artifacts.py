@@ -2007,12 +2007,16 @@ def macos_release_problems(workflow: str, script: str) -> list[str]:
     node_files = re.search(r"\nNODE_FILES=\(\n((?:  [a-z-]+=\S+\n)*)\)\n", script)
     found = dict(re.findall(r"  ([a-z-]+)=(\S+)\n", node_files.group(1))) if node_files else None
     if found != NodeBinaryReleaseTest.PATHS:
-        problems.append("the macOS build script does not ship the node binaries from their build paths")
+        problems.append(
+            "the macOS build script does not ship the node binaries from their build paths"
+        )
     versioned = re.search(r"\nVERSIONED_TARGETS=\(([^)]*)\)\n", script)
     if versioned is None or not set(NodeBinaryReleaseTest.VERSIONED_BINARIES) <= set(
         versioned.group(1).split()
     ):
-        problems.append("the macOS build script does not check the commit of every node binary with -V")
+        problems.append(
+            "the macOS build script does not check the commit of every node binary with -V"
+        )
     return problems
 
 
@@ -2049,7 +2053,9 @@ class MacosReleaseTest(unittest.TestCase):
         for old, new in mutants.items():
             with self.subTest(mutant=old):
                 self.assertIn(old, script)
-                self.assertNotEqual(macos_release_problems(workflow, script.replace(old, new, 1)), [])
+                self.assertNotEqual(
+                    macos_release_problems(workflow, script.replace(old, new, 1)), []
+                )
 
     def test_a_weakened_workflow_is_refused(self) -> None:
         workflow, script = self.inputs()
@@ -2063,7 +2069,9 @@ class MacosReleaseTest(unittest.TestCase):
         for old, new in mutants.items():
             with self.subTest(mutant=old):
                 self.assertIn(old, workflow)
-                self.assertNotEqual(macos_release_problems(workflow.replace(old, new, 1), script), [])
+                self.assertNotEqual(
+                    macos_release_problems(workflow.replace(old, new, 1), script), []
+                )
 
 
 if __name__ == "__main__":
