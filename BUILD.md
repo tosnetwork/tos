@@ -20,7 +20,9 @@ Emscripten from `third-party/`, and `.github/workflows/build-tos-wasm-emscripten
 builds them with emsdk 4.0.17 on every pull request and push to `main` and runs
 `test/wasm/smoke-test.js` under Node.js: the library reports the commit,
 compiles a contract and rejects one with a syntax error, and the emulator loads.
-They are workflow artifacts, not release assets.
+They are workflow artifacts, not release assets. An instance of the `funcfiftlib`
+module compiles once: the compiler keeps its state in globals, so create a new
+instance for each compilation.
 
 macOS on Apple silicon is built from source: see
 [macOS Development Build](#macos-development-build). It can run a node and a
