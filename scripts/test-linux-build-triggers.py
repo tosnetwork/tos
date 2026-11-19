@@ -35,7 +35,8 @@ SHARED_BUILDS = ("build-tos-linux-x86-64-shared.yml", "build-tos-linux-arm64-sha
 # The macOS full build also runs on pull requests, so its triggers are not pinned
 # to the Linux shared builds' exact set; it must still run on every push to main.
 MACOS_SHARED_BUILD = "build-tos-macos-15-arm64-shared.yml"
-MAIN_BUILDS = (*SHARED_BUILDS, MACOS_SHARED_BUILD)
+MACOS_X86_64_SHARED_BUILD = "build-tos-macos-15-x86-64-shared.yml"
+MAIN_BUILDS = (*SHARED_BUILDS, MACOS_SHARED_BUILD, MACOS_X86_64_SHARED_BUILD)
 PATTERNS = ("build-tos-linux-*.yml", "build-tos-macos-*.yml")
 EVENTS = {"push", "pull_request", "workflow_dispatch", "workflow_call", "schedule"}
 LIST_KEYS = {"branches", "branches-ignore", "tags", "paths", "paths-ignore", "types"}
@@ -227,6 +228,15 @@ class TreeTest(unittest.TestCase):
                 "workflow_dispatch": None,
                 "workflow_call": None,
             },
+            MACOS_X86_64_SHARED_BUILD: {
+                "pull_request": {
+                    "branches": ["main"],
+                    "types": ["opened", "reopened", "synchronize", "ready_for_review"],
+                },
+                "push": {"branches": ["main"]},
+                "workflow_dispatch": None,
+                "workflow_call": None,
+            },
             "build-tos-linux-x86-64-werror.yml": {
                 "push": {"branches": ["main"]},
                 "pull_request": {
@@ -346,8 +356,12 @@ class RuleTest(unittest.TestCase):
         found = problems(name, {"push": {"tags": ["v*"]}, "workflow_dispatch": None})
         self.assertEqual(found, [f"{name}: does not run on every push to main"])
 
-    def test_the_macos_build_runs_on_every_push_to_main(self) -> None:
-        name = MACOS_SHARED_BUILD
+    def test_the_macos_builds_run_on_every_push_to_main(self) -> None:
+        for name in (MACOS_SHARED_BUILD, MACOS_X86_64_SHARED_BUILD):
+            with self.subTest(name=name):
+                self.check_macos_build_runs_on_every_push_to_main(name)
+
+    def check_macos_build_runs_on_every_push_to_main(self, name: str) -> None:
         self.assertEqual(problems(name, {"pull_request": None, "push": {"branches": ["main"]}}), [])
         found = problems(name, {"pull_request": None})
         self.assertEqual(found, [f"{name}: does not run on every push to main"])

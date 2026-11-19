@@ -13,12 +13,14 @@ The node and its tools are built, tested in CI and released for Linux only, on
 x86-64 and arm64. There are no Windows, Android or WebAssembly builds, build
 scripts or release artifacts, and no macOS release artifacts.
 
-macOS on Apple silicon is built from source: see
-[macOS Development Build](#macos-development-build). It can run a node and a
-validator ([macOS validators](doc/Validator.md#macos-validators)). CI builds
-and tests it on every pull request and push to `main`
-(`.github/workflows/build-tos-macos-15-arm64-shared.yml`), but it is not
-released.
+macOS is built from source: see
+[macOS Development Build](#macos-development-build). On Apple silicon it can
+run a node and a validator ([macOS validators](doc/Validator.md#macos-validators));
+on Intel it can run a node and the tools. CI builds and tests both on every
+pull request and push to `main`
+(`.github/workflows/build-tos-macos-15-arm64-shared.yml` on Apple silicon,
+`.github/workflows/build-tos-macos-15-x86-64-shared.yml` on Intel), but
+neither is released.
 
 One exception is not a node platform: `.github/workflows/quantum-mobile-native.yml`
 also runs on macOS. It compiles and runs the post-quantum native C API in
@@ -108,7 +110,7 @@ BOC, its hashes, and a release manifest.
 
 ## macOS Development Build
 
-For Apple silicon, including a validator host. `assembly/native/build-macos-shared.sh -t`
+For Apple silicon, including a validator host, and for Intel. `assembly/native/build-macos-shared.sh -t`
 runs the steps below, as CI does. Every third-party library is built from
 `third-party/`, so Homebrew provides only the build tools:
 
@@ -139,8 +141,10 @@ build with `TOS_BUILD_DIR=$PWD/build-macos` and `scripts/localnet-jsonrpc.py`.
 
 Differences from Linux, by design:
 
-- The SLH-DSA verifier uses the ARMv8 SHA2 backend, as on Linux arm64; the
-  configure output prints `TOS_SLHDSA_ARMV8_SHA2=ON`. A build directory
+- The SLH-DSA verifier uses the hardware SHA-256 backend of the architecture,
+  as on Linux: the configure output prints `TOS_SLHDSA_ARMV8_SHA2=ON` on Apple
+  silicon and `TOS_SLHDSA_SHA_NI=ON` on Intel. Either falls back to the
+  portable backend at run time on a CPU without the extension. A build directory
   configured before this backend was available keeps `OFF` in its cache;
   configure it again with `-DTOS_SLHDSA_ARMV8_SHA2=ON`.
 - The conformance reference library needs GNU ld's `--wrap` and is not built.

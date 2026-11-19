@@ -170,6 +170,12 @@ source works there, but only the operator's own build and the receipt above
 are evidence for the deployed binary. Build the two receipt programs with the
 same Apple clang and SDK as the validator.
 
+An Intel Mac is not a validator host. CI builds and tests the tree on Intel
+too (`.github/workflows/build-tos-macos-15-x86-64-shared.yml`), and it can run
+a node and the tools, but most Intel Mac CPUs lack SHA-NI, without which a
+validator is not allowed ([CPU instruction set](#cpu-instruction-set)), and no
+Intel Mac has been measured or run as a validator.
+
 What differs from a Linux host:
 
 - The hardware SHA-256 backend is on by default: step 2 of the receipt reads
