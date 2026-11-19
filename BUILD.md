@@ -10,8 +10,17 @@ The current build focuses on the native TVM execution surface for actor-based ap
 ## Supported Platforms
 
 The node and its tools are built, tested in CI and released for Linux only, on
-x86-64 and arm64. There are no Windows, Android or WebAssembly builds, build
-scripts or release artifacts, and no macOS release artifacts.
+x86-64 and arm64. There are no Windows or Android builds, build scripts or
+release artifacts, and no macOS release artifacts.
+
+WebAssembly covers the contract tools only, not the node: the FunC compiler
+and Fift assembler library (`funcfiftlib`), `fift`, `func`, `tlbc` and the
+transaction emulator. `assembly/wasm/build-wasm.sh` builds them with
+Emscripten from `third-party/`, and `.github/workflows/build-tos-wasm-emscripten.yml`
+builds them with emsdk 4.0.17 on every pull request and push to `main` and runs
+`test/wasm/smoke-test.js` under Node.js: the library reports the commit,
+compiles a contract and rejects one with a syntax error, and the emulator loads.
+They are workflow artifacts, not release assets.
 
 macOS on Apple silicon is built from source: see
 [macOS Development Build](#macos-development-build). It can run a node and a
