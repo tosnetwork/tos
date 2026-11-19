@@ -127,8 +127,8 @@ void AdnlInboundConnection::query_finished(td::Bits256 query_id, td::Result<td::
                << " reason=" << result.error();
     auto status = reject_or_close(query_id, ExtQueryFailure{ExtQueryFailureKind::HandlerError, result.move_as_error()});
     if (status.is_error()) {
-      LOG(INFO) << status;
-      stop();
+      // Answers queued before this refusal still reach the peer.
+      begin_closing(status);
     }
     return;
   }
@@ -143,8 +143,7 @@ void AdnlInboundConnection::query_finished(td::Bits256 query_id, td::Result<td::
   // carry). Answer the same ID with a small failure instead, or close.
   auto status = reject_or_close(query_id, ExtQueryFailure{ExtQueryFailureKind::ResponseTooLarge, td::Status::OK()});
   if (status.is_error()) {
-    LOG(INFO) << status;
-    stop();
+    begin_closing(status);
   }
 }
 

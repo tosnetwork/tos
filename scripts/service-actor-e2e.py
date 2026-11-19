@@ -130,7 +130,10 @@ def write_provenance() -> None:
     bytecode_check = subprocess.run(
         [sys.executable, str(REPO / "scripts/check-service-actor-bytecode.py")],
         cwd=REPO, env=compiler_env, check=True, capture_output=True, text=True,
-    ).stdout.strip()
+    ).stdout.strip().splitlines()[-1:]
+    # The checker reports the test-only build first and the release build,
+    # which this run deploys, on its last line.
+    bytecode_check = bytecode_check[0] if bytecode_check else ""
     match = re.fullmatch(
         r"Service Actor bytecode synchronized \(repr_hash=([0-9]{1,78})\)",
         bytecode_check,

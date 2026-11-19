@@ -30,9 +30,10 @@ use chain_block::{
     StateInit,
 };
 use contracts::service_actor::protocol_constants::{
-    ADMISSION_GAS_ALLOWANCE, MINIMUM_OPERATING_RESERVE, PAYOUT_GAS_ALLOWANCE,
+    ADMISSION_GAS_ALLOWANCE, MAX_RESPONSE_SLA_SECS, MINIMUM_OPERATING_RESERVE,
+    PAYOUT_GAS_ALLOWANCE, TEST_PROFILE_MIN_WINDOW_SECS,
 };
-use contracts::service_actor::{RequestSnapshot, decode_request_snapshot};
+use contracts::service_actor::{RequestSnapshot, ServiceActorCodeProfile, decode_request_snapshot};
 use contracts::{ServiceActorContract, ServiceActorData, ServiceActorInit};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
 use tos_vm::stack::StackItem;
@@ -827,6 +828,102 @@ fn deploy_with_out_of_bounds_policy_is_rejected_at_call_time() {
     .unwrap();
     assert_eq!(data.pending_count, 0);
     assert_eq!(data.live_count, 0);
+}
+
+/// Deploys `profile`'s code with the given windows and sends one call: it
+/// must be admitted when `refusal` is `None` and abort with that exit code
+/// otherwise.
+fn deploy_and_call(
+    profile: ServiceActorCodeProfile,
+    response_sla: u32,
+    refund_claim_window: u32,
+    refusal: Option<i32>,
+) {
+    let mut bc =
+        Blockchain::with_global_version(current_network::global_version()).expect("blockchain");
+    bc.set_workchain(-1);
+    let owner = bc.treasury("profile-owner", 100 * TOS).unwrap();
+    let caller = bc.treasury("profile-caller", 100 * TOS).unwrap();
+    let init = ServiceActorInit {
+        owner: owner.address().clone(),
+        authorized_caller: None,
+        open_access: true,
+        price_per_call: TOS / 10,
+        storage_fee: MIN_STORAGE_FEE + MIN_CLEANUP_BOUNTY,
+        cleanup_bounty: MIN_CLEANUP_BOUNTY,
+        rate_limit_per_day: 0,
+        response_sla,
+        refund_claim_window,
+        metadata_hash: [0x11; 32],
+        proof_scheme_hash: [0x22; 32],
+        attestor_pubkey: None,
+    };
+    let service = ServiceActorContract::calculate_address_for(profile, -1, &init).expect("address");
+    let state_init =
+        ServiceActorContract::build_state_init_for(profile, &init).expect("state init");
+    let deploy = MessageBuilder::internal(owner.address(), &service, 20 * TOS)
+        .bounce(false)
+        .state_init(state_init)
+        .body(Cell::default())
+        .build();
+    bc.send_message(deploy).expect("deploy").expect_success();
+    let terms = ServiceActorContract::terms_hash_of_init(&init).unwrap();
+    let msg = MessageBuilder::internal(caller.address(), &service, TOS)
+        .body(ServiceActorContract::call(1, [0xAA; 32], terms).unwrap())
+        .build();
+    let result = bc.send_message(msg).unwrap();
+    match refusal {
+        Some(code) => {
+            result.expect_aborted().expect_exit_code(code);
+        }
+        None => {
+            result.expect_success();
+        }
+    }
+    let stack = bc
+        .run_get_method(&service, "get_service_data", vec![])
+        .unwrap()
+        .expect_success()
+        .stack
+        .clone();
+    let data = ServiceActorContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(
+        stack_to_entries(&stack),
+    ))
+    .unwrap();
+    assert_eq!(data.pending_count, u32::from(refusal.is_none()));
+}
+
+#[test]
+fn ten_minute_windows_are_refused_by_the_release_code_and_admitted_by_the_test_code() {
+    let ten_minutes = TEST_PROFILE_MIN_WINDOW_SECS;
+    assert_eq!(ten_minutes, 600);
+    let release = ServiceActorCodeProfile::Release;
+    let test = ServiceActorCodeProfile::Test;
+    // The release build keeps both one-hour lower bounds.
+    deploy_and_call(release, ten_minutes, ten_minutes, Some(ERR_INVALID_RESPONSE_SLA));
+    deploy_and_call(release, MIN_RESPONSE_SLA, ten_minutes, Some(ERR_INVALID_REFUND_CLAIM_WINDOW));
+    deploy_and_call(release, MIN_RESPONSE_SLA, MIN_REFUND_CLAIM_WINDOW, None);
+    // The test build admits ten minutes, refuses one second less, and keeps
+    // the release upper bound.
+    deploy_and_call(test, ten_minutes, ten_minutes, None);
+    deploy_and_call(test, ten_minutes - 1, ten_minutes, Some(ERR_INVALID_RESPONSE_SLA));
+    deploy_and_call(test, ten_minutes, ten_minutes - 1, Some(ERR_INVALID_REFUND_CLAIM_WINDOW));
+    deploy_and_call(test, MAX_RESPONSE_SLA_SECS + 1, ten_minutes, Some(ERR_INVALID_RESPONSE_SLA));
+}
+
+#[test]
+fn the_test_code_hash_differs_from_the_release_code_hash() {
+    let hash = |profile| {
+        hex::encode(ServiceActorContract::code_for(profile).unwrap().repr_hash().as_slice())
+    };
+    assert_eq!(
+        hash(ServiceActorCodeProfile::Release),
+        "0594f9a5743440f9c5f63913ab790c0ea6f4fd5c627d9962d63e09428e42aa0c"
+    );
+    assert_eq!(
+        hash(ServiceActorCodeProfile::Test),
+        "79a566f5f4281f7abe59cd1c16a7bc3b2d990e840f42b00d55cb0ae4b0545960"
+    );
 }
 
 #[test]
