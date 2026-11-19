@@ -34,6 +34,16 @@ SELF_FILES = {
     "Changelog.md",
     "recent_changelog.md",
 }
+# Conformance sources that probe the legacy getter name on purpose. The
+# get_method exporter calls both get_jetton_data (method id 106029) and
+# get_token_data (84418) on every corpus account, and the pinned vectors
+# record what the C++ node answers for each id. Renaming would give two
+# fixtures the same id and make each legacy row's fixture_id contradict its
+# method_id, so these files keep the legacy name.
+LEGACY_GETTER_PROBES = {
+    "test/conformance/migrate/block-export.cpp",
+    "test/conformance/vectors/get_method/fixtures/rel02-getters.jsonl",
+}
 OLD_GETTER_ID = binascii.crc_hqx(b"get_jetton_data", 0) | 0x10000
 NEW_GETTER_ID = binascii.crc_hqx(b"get_token_data", 0) | 0x10000
 
@@ -43,6 +53,7 @@ def immutable(path: str) -> bool:
     name = Path(path).name
     return (
         path in SELF_FILES
+        or path in LEGACY_GETTER_PROBES
         or path.startswith("third-party/")
         or "evidence" in parts
         or "raw" in parts
@@ -65,6 +76,7 @@ def rename(path: str) -> str:
     parts = Path(path).parts
     retained = (
         path in SELF_FILES
+        or path in LEGACY_GETTER_PROBES
         or path.startswith("third-party/")
         or "evidence" in parts
         or "raw" in parts

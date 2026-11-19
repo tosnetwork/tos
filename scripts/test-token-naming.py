@@ -82,6 +82,14 @@ class TextMigration(unittest.TestCase):
         live = "https://github.com/tosnetwork/tos/blob/main/crypto/smartcont/jetton-wallet.tol"
         self.assertEqual(MIGRATION.transform("doc.md", live), live.replace("jetton", "token"))
 
+    def test_legacy_getter_probes_keep_the_legacy_name(self):
+        text = '"get_jetton_data", "get_token_data" -1:AB:1:get_jetton_data method_id 106029'
+        for path in sorted(MIGRATION.LEGACY_GETTER_PROBES):
+            self.assertEqual(MIGRATION.transform(path, text), text)
+            self.assertEqual(MIGRATION.rename(path), path)
+        # The same text anywhere else is still migrated.
+        self.assertNotEqual(MIGRATION.transform("test/conformance/other.cpp", text), text)
+
     def test_evidence_and_license_contents_unchanged(self):
         for path in [
             "tools/evidence/raw/jetton.log",
