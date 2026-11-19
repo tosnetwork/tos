@@ -36,13 +36,15 @@ on Intel it can run a node and the tools. CI builds and tests both on every
 pull request and push to `main`
 (`.github/workflows/build-tos-macos-15-arm64-shared.yml` on Apple silicon,
 `.github/workflows/build-tos-macos-15-x86-64-shared.yml` on Intel).
-`.github/workflows/build-tos-macos-15-arm64-release.yml` packages the Apple
-silicon build for release on every version tag, with
-`assembly/native/build-macos-release.sh`: Release, Apple clang, `apple-m1`,
-minimum macOS 15.0, the system allocator, and only libraries macOS itself
-provides. Its artifact `tos-arm64-macos` joins the release once that workflow
+`.github/workflows/build-tos-macos-15-arm64-release.yml` and
+`.github/workflows/build-tos-macos-15-x86-64-release.yml` package the same
+build for release on every version tag, with
+`assembly/native/build-macos-release.sh`: Release, Apple clang, `apple-m1` on
+Apple silicon and `x86-64-v2` on Intel, minimum macOS 15.0, the system
+allocator, and only libraries macOS itself provides. Their artifacts
+`tos-arm64-macos` and `tos-x86-64-macos` join the release once each workflow
 has succeeded on a tag ([release policy](doc/tos-release-policy.md)); until
-then there are no macOS release assets. The Intel build is not released.
+then there are no macOS release assets.
 
 One exception is not a node platform: `.github/workflows/quantum-mobile-native.yml`
 also runs on macOS. It compiles and runs the post-quantum native C API in
