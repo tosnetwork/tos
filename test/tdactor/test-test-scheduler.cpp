@@ -1,5 +1,7 @@
-#include "td/actor/TestScheduler.h"
+#include <vector>
+
 #include "td/actor/SharedFuture.h"
+#include "td/actor/TestScheduler.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/tests.h"
 
@@ -478,6 +480,126 @@ TEST(TestScheduler, CleanupDrainsPendingAlarmsWithActor) {
 
     co_return td::Unit{};
   });
+}
+
+// A step returns only once nothing is runnable: a reply that comes back through a
+// coroutine on another actor, and the message that reply sends on, have both happened.
+TEST(TestScheduler, SyncStepSettlesAChainOfReplies) {
+  static int answered = 0;
+  static int recorded = 0;
+  answered = 0;
+  recorded = 0;
+
+  struct Recorder : Actor {
+    void record(int value) {
+      recorded = value;
+    }
+  };
+  struct Answerer : Actor {
+    void answer(int x, td::Promise<int> promise) {
+      answered++;
+      promise.set_value(x * 3);
+    }
+  };
+  struct Requester : Actor {
+    ActorId<Answerer> answerer_;
+    ActorId<Recorder> recorder_;
+    Requester(ActorId<Answerer> answerer, ActorId<Recorder> recorder) : answerer_(answerer), recorder_(recorder) {
+    }
+    void request(int x) {
+      [](Requester* self, int x) -> Task<> {
+        auto value = co_await ask(self->answerer_, &Answerer::answer, x);
+        send_closure(self->recorder_, &Recorder::record, value);
+        co_return td::Unit{};
+      }(this, x)
+                                        .start()
+                                        .detach();
+    }
+  };
+
+  TestScheduler ts;
+  ts.begin_sync();
+  ActorOwn<Answerer> answerer;
+  ActorOwn<Recorder> recorder;
+  ActorOwn<Requester> requester;
+  ts.step([&] {
+    answerer = create_actor<Answerer>("answerer");
+    recorder = create_actor<Recorder>("recorder");
+    requester = create_actor<Requester>("requester", answerer.get(), recorder.get());
+  });
+  ts.step([&] { send_closure(requester, &Requester::request, 7); });
+  EXPECT_EQ(answered, 1);
+  EXPECT_EQ(recorded, 21);
+  ts.step([&] {
+    requester.reset();
+    recorder.reset();
+    answerer.reset();
+  });
+  ts.end_sync();
+}
+
+// An alarm due after the limit neither fires nor moves time; one due by the limit fires
+// at its own time.
+TEST(TestScheduler, SyncFireNextAlarmRespectsTheLimit) {
+  static int fired = 0;
+  static double fired_at = 0;
+  fired = 0;
+  fired_at = 0;
+
+  struct Timed : Actor {
+    void start_up() override {
+      alarm_timestamp() = Timestamp::in(5.0);
+    }
+    void alarm() override {
+      fired++;
+      fired_at = Time::now();
+    }
+  };
+
+  TestScheduler ts;
+  ts.begin_sync();
+  ActorOwn<Timed> timed;
+  ts.step([&] { timed = create_actor<Timed>("timed"); });
+  const double start = Time::now();
+  EXPECT(!ts.fire_next_alarm(start + 4.0));
+  EXPECT_EQ(fired, 0);
+  EXPECT_EQ(Time::now(), start);
+  EXPECT(ts.fire_next_alarm(start + 5.0));
+  EXPECT_EQ(fired, 1);
+  EXPECT_EQ(fired_at, start + 5.0);
+  EXPECT(!ts.fire_next_alarm(start + 100.0));
+  ts.step([&] { timed.reset(); });
+  ts.end_sync();
+}
+
+// run_for fires every alarm due in the interval, in order, and ends exactly at its end.
+TEST(TestScheduler, SyncRunForFiresAlarmsInOrder) {
+  static std::vector<double> ticks;
+  ticks.clear();
+
+  struct Ticker : Actor {
+    void start_up() override {
+      alarm_timestamp() = Timestamp::in(1.0);
+    }
+    void alarm() override {
+      ticks.push_back(Time::now());
+      alarm_timestamp() = Timestamp::in(1.0);
+    }
+  };
+
+  TestScheduler ts;
+  ts.begin_sync();
+  ActorOwn<Ticker> ticker;
+  ts.step([&] { ticker = create_actor<Ticker>("ticker"); });
+  const double start = Time::now();
+  ts.run_for(3.5);
+  EXPECT_EQ(ticks.size(), 3u);
+  for (size_t i = 0; i < ticks.size(); i++) {
+    EXPECT_EQ(ticks[i], start + static_cast<double>(i + 1));
+  }
+  EXPECT_EQ(Time::now(), start + 3.5);
+  ts.step([&] { ticker.reset(); });
+  ts.end_sync();
 }
 
 }  // namespace

@@ -35,11 +35,14 @@
 #include "td/utils/port/path.h"
 #include "td/utils/port/thread_local.h"
 
-// The log runs on Linux only; listing a directory uses POSIX directly.
-#if !TD_PORT_POSIX
-#error "TsFileLog needs a POSIX directory listing"
-#endif
+#if TD_PORT_POSIX
 #include <dirent.h>
+#elif TD_PORT_WINDOWS
+#include "td/utils/port/FromApp.h"
+#include "td/utils/port/wstring_convert.h"
+#else
+#error "TsFileLog needs a directory listing for this platform"
+#endif
 
 namespace td {
 namespace detail {
@@ -69,6 +72,31 @@ Status list_directory(const string &dir, const std::function<void(Slice)> &func)
   if (hook != nullptr) {
     TRY_STATUS(hook(dir));
   }
+#if TD_PORT_WINDOWS
+  TRY_RESULT(wdir, to_wstring(dir));
+  std::wstring pattern = wdir + L"\\*";
+  WIN32_FIND_DATAW data;
+  HANDLE handle =
+      td::FindFirstFileExFromAppW(pattern.c_str(), FindExInfoStandard, &data, FindExSearchNameMatch, nullptr, 0);
+  if (handle == INVALID_HANDLE_VALUE) {
+    return OS_ERROR(PSLICE() << "Can't list directory \"" << dir << '"');
+  }
+  SCOPE_EXIT {
+    FindClose(handle);
+  };
+  while (true) {
+    TRY_RESULT(name, from_wstring(data.cFileName));
+    if (name != "." && name != "..") {
+      func(name);
+    }
+    if (!FindNextFileW(handle, &data)) {
+      if (GetLastError() != ERROR_NO_MORE_FILES) {
+        return OS_ERROR(PSLICE() << "Can't read directory \"" << dir << '"');
+      }
+      return Status::OK();
+    }
+  }
+#else
   DIR *handle = opendir(dir.c_str());
   if (handle == nullptr) {
     return OS_ERROR(PSLICE() << "Can't list directory \"" << dir << '"');
@@ -90,6 +118,7 @@ Status list_directory(const string &dir, const std::function<void(Slice)> &func)
       func(name);
     }
   }
+#endif
 }
 
 // Removes the archives of every per-thread log of `path` beyond the kept

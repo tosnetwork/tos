@@ -38,6 +38,7 @@
 #include "overlay/overlays.h"
 #include "quic/quic-sender.h"
 #include "rldp2/rldp.h"
+#include "td/actor/TestScheduler.h"
 #include "td/utils/crypto.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/logging.h"
@@ -188,10 +189,11 @@ using namespace tos::validator;
 
 class Fixture {
  public:
-  Fixture() : root_(td::mkdtemp("/tmp", "bridge-retirement").move_as_ok()), scheduler_({1}) {
+  Fixture() : root_(td::mkdtemp("/tmp", "bridge-retirement").move_as_ok()) {
     consensus::observe_bridge_bus_for_test([](consensus::BusHandle) { observations.buses++; });
     consensus::observe_bridge_destroyed_for_test([](std::string) { observations.destroyed = true; });
-    scheduler_.run_in_context([&] {
+    scheduler_.begin_sync();
+    scheduler_.step([&] {
       errorlog::ErrorLog::create(root_);
       keys_ = keyring::Keyring::create(root_);
       net_ = td::actor::create_actor<adnl::TestLoopbackNetworkManager>("retirement network");
@@ -212,7 +214,7 @@ class Fixture {
   }
 
   ~Fixture() {
-    scheduler_.run_in_context([&] {
+    scheduler_.step([&] {
       group_.reset();
       manager_.reset();
       overlays_.reset();
@@ -222,9 +224,9 @@ class Fixture {
       keys_.reset();
     });
     pump(0.5);
+    scheduler_.end_sync();
     consensus::observe_bridge_bus_for_test({});
     consensus::observe_bridge_destroyed_for_test({});
-    scheduler_.stop();
     td::rmrf(root_).ignore();
   }
 
@@ -237,14 +239,18 @@ class Fixture {
     require(!observations.destroyed.load(), "the group was destroyed before it was retired");
 
     // Retire the group while the manager still owes the state.
-    scheduler_.run_in_context([&] { td::actor::send_closure(group_, &IValidatorGroup::destroy); });
+    scheduler_.step([&] { td::actor::send_closure(group_, &IValidatorGroup::destroy); });
+    // Retirement wakes the withheld wait at once; one second, far short of the ten-second
+    // retry backoff, is enough, so a group kept alive until its next retry fails here.
     wait_for([] { return observations.destroyed.load(); },
-             "a retired group stayed alive while the manager withheld its initial state", 10.0);
+             "a retired group stayed alive while the manager withheld its initial state", 1.0);
     require(observations.state_waits.load() == 1, "the retired group asked for its state again");
 
     // The manager answers late, with the error a live resolution retries on.
-    scheduler_.run_in_context([&] { td::actor::send_closure(manager_, &WithholdingManager::release_as_timeout); });
-    pump(1.0);
+    scheduler_.step([&] { td::actor::send_closure(manager_, &WithholdingManager::release_as_timeout); });
+    // A live group retries a lapsed wait after a backoff of at least ten seconds; a minute
+    // covers that first retry and the next ones.
+    pump(60.0);
     require(observations.state_waits.load() == 1, "a late answer to a retired group started another wait");
     require(observations.data_waits.load() == 0, "a retired group asked for block data");
     require(observations.buses.load() == 1, "a late answer to a retired group built another bus");
@@ -275,18 +281,20 @@ class Fixture {
     require(td::stat(dir_path).is_ok(), "the group's consensus database directory was not created: " + dir_path);
 
     // Retire the group while the manager still owes both waits.
-    scheduler_.run_in_context(
-        [&] { td::actor::send_closure(group_, &IValidatorGroup::close_for_retirement, generation); });
+    scheduler_.step([&] { td::actor::send_closure(group_, &IValidatorGroup::close_for_retirement, generation); });
+    // As above: at once, well within one retry backoff.
     wait_for([] { return observations.destroyed.load() && observations.closure_count() >= 1; },
              "a retired group stayed alive, or never reported its database closed, while the manager withheld its "
              "initial state",
-             10.0);
+             1.0);
     require(observations.state_waits.load() == 1, "the retired group asked for its state again");
     require(observations.data_waits.load() == 1, "the retired group asked for its block data again");
 
     // The manager answers late, with the error a live resolution retries on.
-    scheduler_.run_in_context([&] { td::actor::send_closure(manager_, &WithholdingManager::release_as_timeout); });
-    pump(1.0);
+    scheduler_.step([&] { td::actor::send_closure(manager_, &WithholdingManager::release_as_timeout); });
+    // A live group retries a lapsed wait after a backoff of at least ten seconds; a minute
+    // covers that first retry and the next ones.
+    pump(60.0);
     require(observations.state_waits.load() == 1, "a late answer to a retired group started another state wait");
     require(observations.data_waits.load() == 1, "a late answer to a retired group started another data wait");
     require(observations.buses.load() == 1, "a late answer to a retired group built another bus");
@@ -311,7 +319,7 @@ class Fixture {
   }
 
   void start_group(BlockIdExt tip) {
-    scheduler_.run_in_context([&] {
+    scheduler_.step([&] {
       NewConsensusConfig config;
       config.protocol_version = 2;
       group_ = IValidatorGroup::create_bridge_observer(
@@ -323,27 +331,29 @@ class Fixture {
     });
   }
 
+  // Waits, in virtual time, until `done` holds; fails once `limit` seconds pass with it
+  // still false, or once nothing is left that could make it true.
   template <class F>
   void wait_for(F&& done, const std::string& what, double limit = 20.0) {
-    auto deadline = td::Timestamp::in(limit);
+    const double deadline = td::Time::now() + limit;
+    scheduler_.settle();
     while (!done()) {
-      scheduler_.run(0.01);
-      if (deadline.is_in_past()) {
+      if (!scheduler_.fire_next_alarm(deadline)) {
         fail(PSTRING() << what << " (state waits " << observations.state_waits.load() << ", data waits "
                        << observations.data_waits.load() << ", buses " << observations.buses.load() << ", destroyed "
                        << observations.destroyed.load() << ")");
       }
     }
   }
+  // Runs every alarm due within `seconds` of virtual time.
   void pump(double seconds) {
-    auto until = td::Timestamp::in(seconds);
-    while (!until.is_in_past()) {
-      scheduler_.run(0.01);
-    }
+    scheduler_.run_for(seconds);
   }
 
   std::string root_;
-  td::actor::Scheduler scheduler_;
+  // One thread and virtual time: each step returns once nothing is runnable, and waiting
+  // through the group's retry backoff costs nothing.
+  td::actor::TestScheduler scheduler_;
   Members members_{5};
   td::actor::ActorOwn<keyring::Keyring> keys_;
   td::actor::ActorOwn<adnl::TestLoopbackNetworkManager> net_;
@@ -357,6 +367,7 @@ class Fixture {
 }  // namespace
 
 int main(int argc, char** argv) {
+  td::Time::allow_freezes();  // before the first clock read
   SET_VERBOSITY_LEVEL(VERBOSITY_NAME(ERROR));
   // No default mode: a registration that loses its argument must fail, not
   // quietly run the other case.

@@ -41,6 +41,7 @@
 #include "block/block.h"
 #include "common/errorcode.h"
 #include "td/actor/BusRuntime.h"
+#include "td/actor/TestScheduler.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/logging.h"
 #include "validator/consensus/bus.h"
@@ -452,15 +453,17 @@ class Driver : public td::actor::Actor {
 }  // namespace
 
 int main() {
+  td::Time::allow_freezes();  // before the first clock read
   SET_VERBOSITY_LEVEL(VERBOSITY_NAME(ERROR));
-  td::actor::Scheduler scheduler({2});
+  // One thread and virtual time: when nothing is runnable, time jumps to the next alarm,
+  // so every wait in the driver ends only after all the work it allowed has run.
+  td::actor::TestScheduler scheduler;
+  scheduler.begin_sync();
   td::actor::ActorOwn<Driver> driver;
-  scheduler.run_in_context([&] {
+  scheduler.step([&] {
     driver = td::actor::create_actor<Driver>("accepter-driver");
     td::actor::ask(driver, &Driver::run).detach();
   });
-  // The driver ends the process; this loop only runs the scheduler.
-  while (scheduler.run(1)) {
-  }
+  scheduler.run_until_no_alarm();
   fail("the scheduler stopped before the driver finished");
 }

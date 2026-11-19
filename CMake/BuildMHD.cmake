@@ -49,6 +49,11 @@ elseif (MSVC)
   if (MHD_MSVC_TOOLSET)
     list(APPEND MHD_MSBUILD_ARGS /p:PlatformToolset=${MHD_MSVC_TOOLSET})
   endif()
+  # lld-link cannot link the whole-program-optimized (/GL) objects MSVC emits
+  # for libmicrohttpd, so whole program optimization is off with it.
+  if (CMAKE_LINKER MATCHES "lld-link(\\.exe)?$")
+    list(APPEND MHD_MSBUILD_ARGS /p:WholeProgramOptimization=false)
+  endif()
 
   if (NOT EXISTS "${MHD_LIBRARY}")
     execute_process(

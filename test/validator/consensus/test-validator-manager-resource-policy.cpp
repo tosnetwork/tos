@@ -7,6 +7,7 @@
 #include <map>
 #include <utility>
 
+#include "td/actor/TestScheduler.h"
 #include "td/actor/actor.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/ScopeGuard.h"
@@ -20,6 +21,8 @@ using namespace tos::validator;
 
 class ValidatorManagerResourcePolicyHarness final : public td::actor::Actor {
  public:
+  static inline bool finished = false;
+
   td::actor::Task<> run() {
     auto self = actor_id(this);
     CHECK(td::actor::detail::get_current_actor_id() == self);
@@ -36,6 +39,7 @@ class ValidatorManagerResourcePolicyHarness final : public td::actor::Actor {
     co_await test_shard_description_admission();
     co_await test_nonfinal_ingress_idempotence();
     CHECK(td::actor::detail::get_current_actor_id() == self);
+    finished = true;
     stop();
     co_return td::Unit{};
   }
@@ -229,15 +233,22 @@ class ValidatorManagerResourcePolicyHarness final : public td::actor::Actor {
 }  // namespace
 
 int main() {
-  td::actor::Scheduler scheduler({4});
+  td::Time::allow_freezes();  // before the first clock read
+  // One thread and virtual time: when nothing is runnable, time jumps to the next alarm,
+  // so every wait in the driver ends only after all the work it allowed has run.
+  td::actor::TestScheduler scheduler;
+  scheduler.begin_sync();
   td::actor::ActorOwn<ValidatorManagerResourcePolicyHarness> harness;
-  scheduler.run_in_context([&] {
+  scheduler.step([&] {
     harness = td::actor::create_actor<ValidatorManagerResourcePolicyHarness>("manager-resource-policy-harness");
     td::actor::ask(harness, &ValidatorManagerResourcePolicyHarness::run).detach();
   });
-  while (scheduler.run(1)) {
+  scheduler.run_until_no_alarm();
+  scheduler.step([&] { harness.reset(); });
+  scheduler.end_sync();
+  if (!ValidatorManagerResourcePolicyHarness::finished) {
+    std::fprintf(stderr, "the harness is stuck with no work and no alarm pending\n");
+    return 1;
   }
-  harness.reset();
-  scheduler.stop();
   return 0;
 }

@@ -1,0 +1,110 @@
+name: MacOS-15 TOS build (shared, x86-64)
+
+# macOS on Intel, the x86-64 counterpart of the Apple silicon build: the same
+# script, targets and tests on an Intel runner, so the x86-64 code paths of
+# macOS (the SHA-NI backend among them) are built and tested too. It runs on
+# every pull request to main and every push to main, unfiltered by path, for
+# the reason the Linux shared builds give.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Explicit public namespace for disposable CI networks.
+  TOS_AUTH_NETWORK_TAG: "4343434343434343434343434343434343434343434343434343434343434343"
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 360
+
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        fetch-depth: 0
+
+    - name: Date Stamp
+      id: date-stamp
+      run: |
+        echo "timestamp=$(date -u "+%Y%m%d%H%M_%S")" >> "$GITHUB_OUTPUT"
+
+    - name: Install build tools
+      run: |
+        # ripgrep: the source-guard tests search the tree with it, as on Linux.
+        brew install ninja pkg-config autoconf automake libtool ccache ripgrep
+
+    - name: Restore cache TOS
+      id: cache-tos
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-${{ runner.arch }}-macos-15-intel-shared-ccache-${{ steps.date-stamp.outputs.timestamp }}
+        restore-keys: ${{ runner.os }}-${{ runner.arch }}-macos-15-intel-shared-ccache
+
+    # Rust toolchain needed for Rust crates under tosctl/src.
+    - name: Install repository-pinned Rust toolchain
+      run: scripts/install-rust-toolchain.sh
+
+    - name: Build TOS
+      env:
+        CCACHE_MAXSIZE: 2G
+      run: |
+        cp assembly/native/build-macos-shared.sh .
+        chmod +x build-macos-shared.sh
+        ./build-macos-shared.sh -t -c
+
+    - name: Print ccache stats after TOS build
+      if: ${{ always() }}
+      run: |
+        ccache -sp
+        ccache -z
+
+    - name: Save cache TOS
+      if: ${{ success() }}
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ~/.ccache
+        key: ${{ steps.cache-tos.outputs.cache-primary-key }}
+
+    # The suite reads git history and runs uv-based harnesses.
+    - name: Install uv
+      uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+    # Linux routes all of 127.0.0.0/8 on lo; macOS only the addresses aliased
+    # on lo0. The loopback-aliases tests bind sources up to 127.0.0.39.
+    - name: Alias loopback sources
+      run: |
+        for i in $(seq 2 39); do sudo ifconfig lo0 alias "127.0.0.$i" up; done
+
+    # Labels (CMakeLists.txt, BUILD.md): linux-only and gnu-tools need Linux or
+    # GNU tooling; macos-known-failure lists the tests whose preconditions do
+    # not hold on macOS. Serial, as on a three-core runner parallel tests
+    # contend for time-bounded steps.
+    - name: Run Tests
+      env:
+        TMPDIR: /private/tmp
+      run: |
+        cd build
+        ctest --output-on-failure --timeout 1800 -LE 'linux-only|gnu-tools|macos-known-failure'
+
+    - name: Run node data tools tests
+      env:
+        TMPDIR: /private/tmp
+      run: |
+        # The same PATH as the build: GNU ar writes archives Apple's linker rejects.
+        PATH="$(echo "$PATH" | tr ':' '\n' | grep -v -E 'binutils|llvm|coreutils' | paste -sd: -)"
+        export PATH="/usr/bin:$PATH"
+        cargo test --locked --release --manifest-path tosctl/src/Cargo.toml -p node-data-sync

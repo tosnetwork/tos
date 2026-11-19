@@ -65,6 +65,7 @@
 #include "consensus/utils.h"
 #include "crypto/pq/consensus-pq-signer.h"
 #include "td/actor/BusRuntime.h"
+#include "td/actor/TestScheduler.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/port/signals.h"
 #include "vm/boc.h"
@@ -786,6 +787,7 @@ class Driver : public td::actor::Actor {
 }  // namespace
 
 int main(int argc, char** argv) {
+  td::Time::allow_freezes();  // before the first clock read
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
   // A crash inside the resolver's teardown is one of the two outcomes this test guards
   // against; print where it happened.
@@ -799,14 +801,25 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "usage: %s [cold-read]\n", argv[0]);
     return 2;
   }
-  // The cold-read mode blocks one worker thread on the held read; the rest keep running.
-  td::actor::Scheduler scheduler({static_cast<size_t>(mode == Mode::ColdRead ? 4 : 2)});
   td::actor::ActorOwn<Driver> driver;
-  scheduler.run_in_context([&] {
+  auto start = [&] {
     driver = td::actor::create_actor<Driver>("c10-driver");
     td::actor::ask(driver, &Driver::run).detach();
-  });
-  while (scheduler.run(1)) {
+  };
+  if (mode == Mode::ColdRead) {
+    // The cold-read mode blocks one worker thread on the held read; the rest keep running.
+    td::actor::Scheduler scheduler({4});
+    scheduler.run_in_context(start);
+    while (scheduler.run(1)) {
+    }
+    return 1;
   }
-  return 0;
+  // One thread and virtual time: when nothing is runnable, time jumps to the next alarm, so
+  // every wait in the driver ends only after all the work it allowed has run.
+  td::actor::TestScheduler scheduler;
+  scheduler.begin_sync();
+  scheduler.step(start);
+  scheduler.run_until_no_alarm();
+  std::fprintf(stderr, "the driver is stuck with no work and no alarm pending\n");
+  return 1;
 }
