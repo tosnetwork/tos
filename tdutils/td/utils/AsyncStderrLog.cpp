@@ -46,6 +46,11 @@ struct Output {
     }
   }
   bool write_all(Slice data) const {
+    // A process started without a stderr has nothing to duplicate; writing to
+    // the invalid descriptor would end the process in the C runtime.
+    if (fd < 0) {
+      return false;
+    }
     while (!data.empty()) {
       const auto chunk = static_cast<unsigned>(std::min<size_t>(data.size(), INT_MAX));
       const int n = _write(fd, data.data(), chunk);

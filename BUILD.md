@@ -196,7 +196,9 @@ and `json2tlo`. Every third-party library is built from `third-party\`.
 
 Run it from the repository root in an "x64 Native Tools Command Prompt for VS
 2022" with the Visual Studio "C++ Clang tools for Windows" component, ninja,
-NASM and Perl on `PATH` (for example `choco install ninja nasm strawberryperl`):
+NASM and Perl on `PATH` (for example `choco install ninja nasm strawberryperl`).
+The configuration also needs Python 3 and Git for Windows, whose bash runs the
+script that verifies the native registry contract:
 
 ```bat
 assembly\native\build-windows-2022.bat

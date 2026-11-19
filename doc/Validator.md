@@ -198,8 +198,8 @@ there ([BUILD.md](../BUILD.md), Windows Build). The consensus key file, its lock
 and the signing ledger rely on POSIX ownership and permission bits, `flock`,
 directory `fsync` and inode identity, which Windows does not provide in a form
 those checks can judge, so that code is not ported and not compiled on Windows.
-The Windows client tools (`lite-client`, `validator-engine-console`, `fift`,
-`func`, `toslib`) can reach a node running elsewhere.
+The Windows client tools, such as `lite-client` and `validator-engine-console`,
+can reach a node running elsewhere.
 
 ### Production operating profile
 
