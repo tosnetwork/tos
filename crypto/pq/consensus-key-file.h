@@ -46,6 +46,7 @@ enum class ConsensusKeyFileError {
   derivation_failed,   // the backend refused the seed
   already_exists,      // creating one would replace a key that is already there
   write_failed,        // creating one did not complete
+  unsupported_platform,  // this operating system cannot protect a key file (Windows)
 };
 
 // What went wrong, in the words an operator needs to fix it.

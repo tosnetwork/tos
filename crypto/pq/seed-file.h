@@ -15,13 +15,27 @@
 
 #include <array>
 #include <cstddef>
-#include <fcntl.h>
 #include <openssl/crypto.h>
 #include <optional>
 #include <string>
 #include <string_view>
+
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
+
+// The protections below are POSIX ownership and permission bits. Windows keeps access in
+// ACLs, which none of these checks can judge, so a Windows build refuses every seed file
+// instead of reading one under weaker rules.
+#ifdef _WIN32
+#define TOS_SEED_FILES_SUPPORTED 0
+#else
+#define TOS_SEED_FILES_SUPPORTED 1
+#endif
 
 namespace tos::pq::detail {
 
@@ -36,7 +50,11 @@ class Descriptor {
   }
   ~Descriptor() {
     if (fd_ >= 0) {
+#ifdef _WIN32
+      ::_close(fd_);
+#else
       ::close(fd_);
+#endif
     }
   }
   Descriptor(const Descriptor&) = delete;
@@ -75,11 +93,16 @@ inline std::string parent_directory(std::string_view path) {
 // Anyone who can write the directory can replace the key in it, so the directory is part
 // of what protects the key and is checked with it.
 inline bool directory_is_private(std::string_view path) noexcept {
+#if !TOS_SEED_FILES_SUPPORTED
+  static_cast<void>(path);
+  return false;
+#else
   struct stat st{};
   if (::stat(parent_directory(path).c_str(), &st) != 0) {
     return false;
   }
   return (st.st_mode & (S_IWGRP | S_IWOTH)) == 0;
+#endif
 }
 
 // Which protection a file failed. The caller maps these onto its own error type, so the
@@ -92,14 +115,20 @@ enum class SeedFileRefusal {
   directory_writable,
   wrong_size,
   read_failed,
+  unsupported_platform,  // this operating system cannot enforce the protections
 };
 
 // Opens `path` the way a seed is read: read-only, close-on-exec, not following a symlink,
 // and without blocking, so a FIFO at the path is refused by the checks below rather than
 // waited on until something writes to it. Returns -1 when it cannot be opened.
 inline int open_seed_file(std::string_view path) noexcept {
+#if !TOS_SEED_FILES_SUPPORTED
+  static_cast<void>(path);
+  return -1;
+#else
   const std::string name(path);
   return ::open(name.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+#endif
 }
 
 // Check the file open at `fd` (from open_seed_file) against every protection and read its
@@ -108,6 +137,12 @@ inline int open_seed_file(std::string_view path) noexcept {
 // one the descriptor refers to, whatever the path names by now.
 inline std::optional<SeedFileRefusal> read_protected_seed_from(int fd, std::string_view path,
                                                                SeedBuffer& seed) noexcept {
+#if !TOS_SEED_FILES_SUPPORTED
+  static_cast<void>(fd);
+  static_cast<void>(path);
+  static_cast<void>(seed);
+  return SeedFileRefusal::unsupported_platform;
+#else
   struct stat st{};
   if (::fstat(fd, &st) != 0) {
     return SeedFileRefusal::cannot_open;
@@ -149,16 +184,21 @@ inline std::optional<SeedFileRefusal> read_protected_seed_from(int fd, std::stri
     read_so_far += static_cast<std::size_t>(n);
   }
   return std::nullopt;
+#endif
 }
 
 // Read the seed at `path`, or say which protection refused it. A symlink is refused
 // rather than followed: the path an operator configured is the file that is read.
 inline std::optional<SeedFileRefusal> read_protected_seed(std::string_view path, SeedBuffer& seed) noexcept {
+#if !TOS_SEED_FILES_SUPPORTED
+  return read_protected_seed_from(-1, path, seed);
+#else
   Descriptor fd(open_seed_file(path));
   if (!fd.valid()) {
     return SeedFileRefusal::cannot_open;
   }
   return read_protected_seed_from(fd.get(), path, seed);
+#endif
 }
 
 }  // namespace tos::pq::detail

@@ -1,6 +1,6 @@
 name: Windows TOS build (x86-64)
 
-# The node and its tools built on Windows with clang-cl and lld-link from
+# The client tools built on Windows with clang-cl and lld-link from
 # Visual Studio 2022 (assembly/native/build-windows-2022.bat). It runs on every
 # pull request to main and every push to main, unfiltered by path, for the
 # reason the Linux shared builds give.

@@ -3,15 +3,19 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
 #include <string>
+
+#include "seed-file.h"
+
+#if TOS_SEED_FILES_SUPPORTED
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 #include "consensus-key-file.h"
-#include "seed-file.h"
 
 namespace tos::pq {
 namespace {
@@ -43,6 +47,8 @@ ConsensusKeyFileError consensus_key_refusal(detail::SeedFileRefusal refusal) noe
       return ConsensusKeyFileError::wrong_size;
     case detail::SeedFileRefusal::read_failed:
       return ConsensusKeyFileError::read_failed;
+    case detail::SeedFileRefusal::unsupported_platform:
+      return ConsensusKeyFileError::unsupported_platform;
   }
   return ConsensusKeyFileError::read_failed;
 }
@@ -80,6 +86,8 @@ const char* describe(ConsensusKeyFileError error) noexcept {
       return "a consensus key is already there; remove it deliberately to replace it";
     case ConsensusKeyFileError::write_failed:
       return "the consensus key could not be written";
+    case ConsensusKeyFileError::unsupported_platform:
+      return "consensus keys are kept only on Linux and macOS, where the key file's protections can be checked";
   }
   return "the consensus key file was refused";
 }
@@ -128,6 +136,11 @@ namespace {
 // copy of this would be a second set of durability rules, and the one that got them
 // wrong would be the one nobody ran.
 std::variant<ConsensusPQKey, ConsensusKeyFileError> place_seed(std::string_view path, SeedBuffer& seed) noexcept {
+#if !TOS_SEED_FILES_SUPPORTED
+  static_cast<void>(path);
+  static_cast<void>(seed);
+  return ConsensusKeyFileError::unsupported_platform;
+#else
   const std::string name(path);
   auto store = ValidatorPQKeyStore::from_seed(
       std::string_view(reinterpret_cast<const char*>(seed.bytes.data()), seed.bytes.size()));
@@ -219,12 +232,18 @@ std::variant<ConsensusPQKey, ConsensusKeyFileError> place_seed(std::string_view 
     }
   }
   return store->consensus_key();
+#endif
 }
 
 // A key is created, never replaced: rotating one is removing the old file deliberately.
 // This answers the ordinary case before any work is done; the one that actually decides
 // it is the link in `place_seed`, which cannot be raced.
 ConsensusKeyFileError* nothing_is_there(std::string_view path, ConsensusKeyFileError& slot) noexcept {
+#if !TOS_SEED_FILES_SUPPORTED
+  static_cast<void>(path);
+  slot = ConsensusKeyFileError::unsupported_platform;
+  return &slot;
+#else
   const std::string name(path);
   struct stat existing{};
   if (::lstat(name.c_str(), &existing) == 0) {
@@ -236,6 +255,7 @@ ConsensusKeyFileError* nothing_is_there(std::string_view path, ConsensusKeyFileE
     return &slot;
   }
   return nullptr;
+#endif
 }
 
 }  // namespace

@@ -10,8 +10,11 @@ The current build focuses on the native TVM execution surface for actor-based ap
 ## Supported Platforms
 
 The node and its tools are built, tested in CI and released for Linux only, on
-x86-64 and arm64. There are no Windows, Android or WebAssembly builds, build
-scripts or release artifacts, and no macOS release artifacts.
+x86-64 and arm64. There are no Android or WebAssembly builds, build scripts or
+release artifacts, and no Windows or macOS release artifacts.
+
+Windows x86-64 builds the client tools from source, not the node: see
+[Windows Build](#windows-build).
 
 macOS on Apple silicon is built from source: see
 [macOS Development Build](#macos-development-build). It can run a node and a
@@ -176,6 +179,32 @@ The labels mark tests that macOS cannot host, not failures of the code they test
   hold there. `test-http-server-limits` cannot pin loopback socket buffers as
   small as its slow-reader case requires, and `test-rldp2-decoder-heap` is
   calibrated against glibc's allocator, which rounds less than the macOS one.
+
+## Windows Build
+
+`assembly/native/build-windows-2022.bat` builds the client tools on Windows
+x86-64 with clang-cl and lld-link from Visual Studio 2022: `lite-client`,
+`validator-engine-console`, `fift`, `func`, `tol`, `toslib`, `toslibjson`,
+`toslib-cli`, `emulator`, `storage-daemon`, `storage-daemon-cli`,
+`blockchain-explorer`, `dht-server`, `http-proxy`, `rldp-http-proxy`,
+`proxy-liteserver`, `create-state`, `generate-random-id`, `json2tlo`, `tos-rpc`
+and `tos-wallet-index`. Every third-party library is built from
+`third-party\`.
+
+Run it from the repository root in an "x64 Native Tools Command Prompt for VS
+2022" with the Visual Studio "C++ Clang tools for Windows" component, ninja,
+NASM and Perl on `PATH` (for example `choco install ninja nasm strawberryperl`):
+
+```bat
+assembly\native\build-windows-2022.bat
+```
+
+The output is in `build-windows\`. `validator-engine` is not built: its key
+file, key lock and signing ledger need POSIX file semantics
+([Windows](doc/Validator.md#windows)). CI builds the tools on every pull
+request and push to `main`
+(`.github/workflows/build-tos-windows-2022-x86-64.yml`); there are no Windows
+release artifacts. `tosctl` is not part of the Windows build.
 
 ## Rust Workspace
 
