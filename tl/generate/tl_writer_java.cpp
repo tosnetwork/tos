@@ -20,6 +20,7 @@
 #include <cassert>
 
 #include "tl_writer_java.h"
+#include "tl_writer_java_names.h"
 
 namespace td {
 
@@ -113,6 +114,9 @@ std::string TD_TL_writer_java::gen_class_name(std::string name) const {
     } else {
       result += name[i];
     }
+  }
+  if (colliding_type_names.count(name) != 0) {
+    result += java_type_collision_suffix();
   }
   return result;
 }

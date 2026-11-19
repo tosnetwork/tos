@@ -28,11 +28,13 @@
 */
 #include <algorithm>
 #include <string>
+#include <utility>
 
 #include "td/tl/tl_config.h"
 #include "td/tl/tl_generate.h"
 
 #include "tl_writer_java.h"
+#include "tl_writer_java_names.h"
 
 int main(int argc, char *argv[]) {
   if (argc < 5) {
@@ -46,6 +48,8 @@ int main(int argc, char *argv[]) {
   std::string package_name = package;
   std::replace(package_name.begin(), package_name.end(), '/', '.');
   destination += "/" + package + "/" + api_name + ".java";
-  td::tl::write_tl_to_file(td::tl::read_tl_config_from_file(source), destination,
-                           td::TD_TL_writer_java(api_name, package_name));
+  td::tl::tl_config config = td::tl::read_tl_config_from_file(source);
+  auto colliding_type_names = td::java_colliding_type_names(config);
+  td::tl::write_tl_to_file(config, destination,
+                           td::TD_TL_writer_java(api_name, package_name, std::move(colliding_type_names)));
 }

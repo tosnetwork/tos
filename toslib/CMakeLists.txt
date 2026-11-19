@@ -61,6 +61,14 @@ target_link_libraries(toslib PUBLIC tdactor tdutils tl_toslib_api)
 
 if (TOSLIB_ENABLE_JNI AND NOT ANDROID) # jni is available by default on Android
   if (NOT JNI_FOUND)
+    # Only jni.h and the JVM library are used. FindJNI also requires AWT, which
+    # a headless JDK does not ship, so give it placeholders it never links.
+    if (NOT JAVA_AWT_LIBRARY)
+      set(JAVA_AWT_LIBRARY NotNeeded)
+    endif()
+    if (NOT JAVA_AWT_INCLUDE_PATH)
+      set(JAVA_AWT_INCLUDE_PATH NotNeeded)
+    endif()
     find_package(JNI REQUIRED)
   endif()
   message(STATUS "Found JNI: ${JNI_INCLUDE_DIRS} ${JNI_LIBRARIES}")

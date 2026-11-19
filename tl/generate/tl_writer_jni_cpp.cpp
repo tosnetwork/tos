@@ -20,6 +20,7 @@
 #include <cassert>
 #include <cstdio>
 
+#include "tl_writer_java_names.h"
 #include "tl_writer_jni_cpp.h"
 
 namespace td {
@@ -617,7 +618,15 @@ std::string TD_TL_writer_jni_cpp::gen_java_field_name(std::string name) const {
   return result;
 }
 
+// name is a C++ class name (gen_class_name or gen_main_class_name of a TL name).
 std::string TD_TL_writer_jni_cpp::gen_basic_java_class_name(std::string name) const {
+  std::string suffix;
+  for (const auto &type_name : colliding_type_names) {
+    if (gen_class_name(type_name) == name) {
+      suffix = java_type_collision_suffix();
+      break;
+    }
+  }
   std::string result;
   bool next_to_upper = true;
   for (std::size_t i = 0; i < name.size(); i++) {
@@ -632,7 +641,7 @@ std::string TD_TL_writer_jni_cpp::gen_basic_java_class_name(std::string name) co
       result += name[i];
     }
   }
-  return result;
+  return result + suffix;
 }
 
 std::string TD_TL_writer_jni_cpp::gen_java_class_name(std::string name) const {

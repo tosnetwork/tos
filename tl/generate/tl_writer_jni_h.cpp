@@ -80,6 +80,7 @@ std::string TD_TL_writer_jni_h::gen_output_begin() const {
   return "#pragma once\n\n"
          "#include \"tl/TlObject.h\"\n\n"
          "#include <cstdint>\n"
+         "#include <optional>\n"
          "#include <utility>\n"
          "#include <vector>\n\n"
          "#include <jni.h>\n\n" +

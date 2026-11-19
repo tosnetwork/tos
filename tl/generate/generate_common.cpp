@@ -27,6 +27,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "td/tl/tl_config.h"
@@ -37,6 +38,7 @@
 #include "tl_writer_cpp.h"
 #include "tl_writer_h.h"
 #include "tl_writer_hpp.h"
+#include "tl_writer_java_names.h"
 #include "tl_writer_jni_cpp.h"
 #include "tl_writer_jni_h.h"
 
@@ -48,9 +50,11 @@ static void generate_cpp(const std::string &directory, const std::string &tl_nam
                          const std::vector<std::string> &ext_h_includes) {
   std::string path = directory + "/" + tl_name;
   td::tl::tl_config config = td::tl::read_tl_config_from_file("scheme/" + tl_name + ".tlo");
-  td::tl::write_tl_to_file(
-      config, path + ".cpp",
-      WriterCpp(tl_name, string_type, bytes_type, secure_string_type, secure_bytes_type, ext_cpp_includes));
+  WriterCpp writer_cpp(tl_name, string_type, bytes_type, secure_string_type, secure_bytes_type, ext_cpp_includes);
+  if constexpr (std::is_same_v<WriterCpp, td::TD_TL_writer_jni_cpp>) {
+    writer_cpp.set_colliding_type_names(td::java_colliding_type_names(config));
+  }
+  td::tl::write_tl_to_file(config, path + ".cpp", writer_cpp);
   td::tl::write_tl_to_file(
       config, path + ".h",
       WriterH(tl_name, string_type, bytes_type, secure_string_type, secure_bytes_type, ext_h_includes));

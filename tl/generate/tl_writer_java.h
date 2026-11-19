@@ -20,7 +20,9 @@
 #pragma once
 
 #include <cstdint>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "td/tl/tl_writer.h"
@@ -35,10 +37,13 @@ class TD_TL_writer_java : public tl::TL_writer {
   static const std::string base_function_class_name;
 
   const std::string package_name;
+  const std::set<std::string> colliding_type_names;
 
  public:
-  TD_TL_writer_java(const std::string &tl_name, const std::string &package_name)
-      : TL_writer(tl_name), package_name(package_name) {
+  // colliding_type_names: java_colliding_type_names() of the schema written.
+  TD_TL_writer_java(const std::string &tl_name, const std::string &package_name,
+                    std::set<std::string> colliding_type_names)
+      : TL_writer(tl_name), package_name(package_name), colliding_type_names(std::move(colliding_type_names)) {
   }
 
   int get_max_arity() const override;

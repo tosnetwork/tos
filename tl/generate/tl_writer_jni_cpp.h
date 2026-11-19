@@ -21,7 +21,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "tl_writer_cpp.h"
@@ -36,6 +38,10 @@ class TD_TL_writer_jni_cpp : public TD_TL_writer_cpp {
                                const std::vector<tl::var_description> &vars, int storer_type) const;
 
   std::string package_name;
+
+  // The TL names java_colliding_type_names() returned for the schema written;
+  // the Java class of each takes java_type_collision_suffix().
+  std::set<std::string> colliding_type_names;
 
   std::string gen_java_field_name(std::string name) const;
 
@@ -54,6 +60,10 @@ class TD_TL_writer_jni_cpp : public TD_TL_writer_cpp {
                        const std::string &secure_string_type, const std::string &secure_bytes_type,
                        const std::vector<std::string> &ext_include)
       : TD_TL_writer_cpp(tl_name, string_type, bytes_type, secure_string_type, secure_bytes_type, ext_include) {
+  }
+
+  void set_colliding_type_names(std::set<std::string> names) {
+    colliding_type_names = std::move(names);
   }
 
   bool is_built_in_simple_type(const std::string &name) const override;
