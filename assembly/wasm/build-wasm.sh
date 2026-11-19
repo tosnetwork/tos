@@ -65,11 +65,12 @@ cp -R third-party/sodium "$SODIUM"
 [ -f "$SODIUM/src/libsodium/.libs/libsodium.a" ] || die "libsodium was not built"
 
 OPENSSL=$BUILD/3pp_emscripten/openssl_em
+# no-afalgeng: the Linux kernel crypto engine needs kernel headers Emscripten lacks.
 cp -R third-party/openssl "$OPENSSL"
 (
   cd "$OPENSSL"
   CC=emcc CXX=em++ AR=emar RANLIB=emranlib NM=emnm ARFLAGS=rcs \
-    ./Configure linux-generic32 no-asm no-shared no-dso no-unit-test no-tests no-apps no-threads enable-quic
+    ./Configure linux-generic32 no-asm no-shared no-dso no-unit-test no-tests no-apps no-threads no-afalgeng enable-quic
   emmake make -j"$JOBS" build_libs CROSS_COMPILE=
 )
 for f in libssl.a libcrypto.a include/openssl/quic.h; do
