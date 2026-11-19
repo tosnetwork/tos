@@ -507,9 +507,12 @@ the release's `SHA256SUMS` before relying on it.
 
 ### macOS binaries
 
-`.github/workflows/build-tos-macos-15-arm64-release.yml` runs on every `v*` tag
-and uploads the artifact `tos-arm64-macos`, built on `macos-15` with
-`assembly/native/build-macos-release.sh`. It holds the node binaries of the
+Two workflows run `assembly/native/build-macos-release.sh` on every `v*` tag:
+`.github/workflows/build-tos-macos-15-arm64-release.yml` on `macos-15` uploads
+`tos-arm64-macos` for Apple silicon, and
+`.github/workflows/build-tos-macos-15-x86-64-release.yml` on `macos-15-intel`
+uploads `tos-x86-64-macos` for Intel Macs. The script builds for the
+architecture of the host it runs on. Each artifact holds the node binaries of the
 table above, `tosctl`, the tools of the Linux tool zip (`fift`, `func`, `tol`,
 `proxy-liteserver`, `rldp-http-proxy`, `http-proxy`, `storage-daemon`,
 `storage-daemon-cli`, `toslib-cli`, `tos-pq-key`, `tos-pq-vote`,
@@ -518,32 +521,40 @@ directories, and `BUILD-INFO`. The recipe is the macOS build the shared macOS
 workflow tests:
 
 - `CMAKE_BUILD_TYPE=Release`, Apple clang with the runner's macOS SDK;
-- `TOS_ARCH=apple-m1` (the baseline of every Apple silicon CPU, which the
-  top-level CMake file selects on Apple silicon in any case), RocksDB's
-  `PORTABLE=armv8-a`, and `tosctl` built with `-C target-cpu=apple-m1`;
+- on Apple silicon, `TOS_ARCH=apple-m1` (the baseline of every Apple silicon
+  CPU, which the top-level CMake file selects on Apple silicon in any case),
+  RocksDB's `PORTABLE=armv8-a`, and `tosctl` built with
+  `-C target-cpu=apple-m1`; on Intel, `TOS_ARCH`, `PORTABLE` and the `tosctl`
+  target CPU all `x86-64-v2`, the level the Intel CI build is fixed to;
 - minimum macOS 15.0 (`CMAKE_OSX_DEPLOYMENT_TARGET` and
   `MACOSX_DEPLOYMENT_TARGET`) for the C, C++ and Rust code alike;
 - the system allocator: the macOS build and its tests do not use jemalloc;
-- the ARMv8 SHA-256 backend (`TOS_SLHDSA_ARMV8_SHA2=ON`);
+- the architecture's hardware SHA-256 backend: `TOS_SLHDSA_ARMV8_SHA2=ON` on
+  Apple silicon, `TOS_SLHDSA_SHA_NI=ON` on Intel (selected at run time when the
+  CPU has the SHA extensions, the portable backend otherwise);
 - `SOURCE_DATE_EPOCH`, no compiler cache, and `tosctl` built with
   `--locked` and the pinned toolchain, as for the Linux node binaries.
 
 The script refuses to finish unless the cache holds these values, every
 binary with `-V` reports the tagged commit, `tosctl --version` does too, and
-every shipped Mach-O file is arm64 only, requires macOS 15.0 and no later,
+every shipped Mach-O file is built for that architecture only, requires
+macOS 15.0 and no later,
 passes `codesign --verify` (the linker's ad hoc signature) and links only
 libraries under `/usr/lib` and `/System/Library`. `BUILD-INFO` records the
 build host's macOS and SDK, the compiler, the flags, each file's libraries and
-SHA-256. `scripts/test_release_artifacts.py` fails if the workflow or the
-script loses a recipe flag or a check.
+SHA-256. `scripts/test_release_artifacts.py` fails if either workflow or the
+script loses a recipe flag or a check. An Intel Mac is not a validator host
+([macOS validators](Validator.md#macos-validators)); the Intel artifact is for
+nodes and tools.
 
 The binaries are not notarized. A file downloaded with a browser carries the
 quarantine attribute and Gatekeeper refuses to start it; after checking it
 against `SHA256SUMS`, remove the attribute with
 `xattr -d com.apple.quarantine <file>`.
 
-The artifact joins the `full` set, under names of the form
-`<binary>-macos-arm64`, once the workflow has succeeded on a tag, as
+Each artifact joins the `full` set, under names of the form
+`<binary>-macos-arm64` and `<binary>-macos-x86-64`, once its workflow has
+succeeded on a tag, as
 [Cutting a release](#cutting-a-release) requires of every new build input.
 
 ### Cutting a release

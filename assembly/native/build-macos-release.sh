@@ -1,25 +1,28 @@
 #!/usr/bin/env bash
-# Build the macOS release binaries for Apple silicon.
+# Build the macOS release binaries for the architecture of the build host.
 #
 #   assembly/native/build-macos-release.sh <output dir> [jobs]
 #
 # Run from the root of a clean checkout of the commit to release, on macOS on
-# Apple silicon with Xcode or the Command Line Tools. The recipe is the macOS
-# build of BUILD.md (macOS Development Build) that CI tests, fixed for release:
+# Apple silicon or Intel with Xcode or the Command Line Tools. The recipe is the
+# macOS build of BUILD.md (macOS Development Build) that CI tests, fixed for
+# release:
 #
-#   Release, Apple clang with the selected macOS SDK,
-#   TOS_ARCH = apple-m1, RocksDB's PORTABLE = armv8-a, minimum macOS 15.0,
+#   Release, Apple clang with the selected macOS SDK, minimum macOS 15.0,
+#   on Apple silicon TOS_ARCH = apple-m1 and RocksDB's PORTABLE = armv8-a,
+#   on Intel TOS_ARCH and PORTABLE = x86-64-v2,
 #   SOURCE_DATE_EPOCH = the commit time of HEAD, no compiler cache.
 #
 # The allocator is the system one. The macOS build and its CI run without
 # jemalloc, so a macOS release built with it would not be the tested product.
 # The fixed CPU level and minimum macOS keep the binaries from depending on the
-# build host's CPU or operating system; every Apple silicon Mac that runs
-# macOS 15 or later can run them.
+# build host's CPU or operating system; every Mac of that architecture that
+# runs macOS 15 or later can run them.
 #
 # The script refuses to finish unless the recipe is in effect: the configured
-# cache holds these values and enables the ARMv8 SHA-256 backend, every Mach-O
-# file it ships is arm64, requires no macOS newer than 15.0, carries a valid
+# cache holds these values and enables the architecture's hardware SHA-256
+# backend, every Mach-O file it ships is built for that architecture alone,
+# requires no macOS newer than 15.0, carries a valid
 # signature and links only libraries under /usr/lib and /System/Library, and
 # every binary with -V reports the commit it was built from.
 #
@@ -28,7 +31,7 @@
 #
 #   cargo build --release --locked -p tosctl (in tosctl/src),
 #   the Rust toolchain rust-toolchain.toml pins,
-#   RUSTFLAGS = -C target-cpu=apple-m1, the baseline of every Apple silicon CPU,
+#   RUSTFLAGS = -C target-cpu at the same CPU level as the C++ build,
 #   C sources of its dependencies compiled with Apple clang, no compiler wrapper.
 #
 # The output directory receives the node binaries, tosctl, the tools, the two
@@ -44,17 +47,33 @@ OUT=$1
 JOBS=${2:-$(sysctl -n hw.ncpu)}
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "jobs must be a positive integer"
 [ "$(uname -s)" = Darwin ] || die "this script builds on macOS only"
-[ "$(uname -m)" = arm64 ] || die "this script builds on Apple silicon only"
 if [ ! -f CMakeLists.txt ] || [ ! -d validator-engine ]; then die "run from the repository root"; fi
 [ -z "$(git status --porcelain --untracked-files=no)" ] || die "the checkout has local changes"
 [ ! -e "$OUT" ] || die "$OUT already exists"
 
-# apple-m1 is the baseline of every Apple silicon CPU; the top-level CMake file
-# selects it on Apple silicon whatever TOS_ARCH says, so it is set here to be
-# what the cache records. RocksDB reads its own level from PORTABLE.
-CPU=apple-m1
-ROCKSDB_CPU=armv8-a
-RUST_CPU=apple-m1
+# The CPU level of each architecture, and the hardware SHA-256 backend its
+# validators verify with (doc/Validator.md). apple-m1 is the baseline of every
+# Apple silicon CPU; the top-level CMake file selects it on Apple silicon
+# whatever TOS_ARCH says, so it is set here to be what the cache records.
+# x86-64-v2 is the level the Intel CI build is fixed to. RocksDB reads its own
+# level from PORTABLE.
+case "$(uname -m)" in
+  arm64)
+    ARCH=arm64
+    CPU=apple-m1
+    ROCKSDB_CPU=armv8-a
+    RUST_CPU=apple-m1
+    SLHDSA_BACKEND=TOS_SLHDSA_ARMV8_SHA2
+    ;;
+  x86_64)
+    ARCH=x86_64
+    CPU=x86-64-v2
+    ROCKSDB_CPU=x86-64-v2
+    RUST_CPU=x86-64-v2
+    SLHDSA_BACKEND=TOS_SLHDSA_SHA_NI
+    ;;
+  *) die "this script builds on arm64 or x86_64 only" ;;
+esac
 MACOS_MIN=15.0
 REV=$(git rev-parse HEAD)
 SOURCE_DATE_EPOCH=$(git log -1 --format=%ct HEAD)
@@ -133,7 +152,7 @@ rm -rf "$BUILD"
 cmake -S . -B "$BUILD" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" -DCMAKE_SYSROOT="$SDKROOT" \
-  -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOS_MIN" \
+  -DCMAKE_OSX_ARCHITECTURES="$ARCH" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOS_MIN" \
   -DTOS_ARCH="$CPU" -DPORTABLE="$ROCKSDB_CPU" \
   -DTOS_USE_JEMALLOC=OFF
 cmake --build "$BUILD" --parallel "$JOBS" --target "${TARGETS[@]}"
@@ -144,7 +163,7 @@ cmake --build "$BUILD" --parallel "$JOBS" --target "${TARGETS[@]}"
 cmake -S crypto/pq/tools -B "$BUILD/pq-key" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" -DCMAKE_SYSROOT="$SDKROOT" \
-  -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOS_MIN" \
+  -DCMAKE_OSX_ARCHITECTURES="$ARCH" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOS_MIN" \
   -DOPENSSL_ROOT_DIR="$PWD/$BUILD/third-party/openssl" -DOPENSSL_USE_STATIC_LIBS=TRUE
 cmake --build "$BUILD/pq-key" --parallel "$JOBS" --target tos-pq-key
 TOOL_FILES+=(tos-pq-key=pq-key/tos-pq-key)
@@ -157,21 +176,22 @@ cached() {
 [ "$(cached TOS_ARCH)" = "$CPU" ] || die "TOS_ARCH is not $CPU"
 [ "$(cached PORTABLE)" = "$ROCKSDB_CPU" ] || die "PORTABLE is not $ROCKSDB_CPU"
 [ "$(cached CMAKE_OSX_DEPLOYMENT_TARGET)" = "$MACOS_MIN" ] || die "CMAKE_OSX_DEPLOYMENT_TARGET is not $MACOS_MIN"
-[ "$(cached CMAKE_OSX_ARCHITECTURES)" = arm64 ] || die "CMAKE_OSX_ARCHITECTURES is not arm64"
+[ "$(cached CMAKE_OSX_ARCHITECTURES)" = "$ARCH" ] || die "CMAKE_OSX_ARCHITECTURES is not $ARCH"
 [ "$(cached CMAKE_CXX_COMPILER)" = "$CXX" ] || die "the C++ compiler is not Apple clang++"
 [ "$(cached TOS_USE_JEMALLOC)" = OFF ] || die "TOS_USE_JEMALLOC is not OFF"
 # The SLH-DSA check is priced for a hardware SHA-256 backend (doc/Validator.md).
 # A node binary built without it would verify with the portable backend on
 # every CPU, so it is not a validator's binary.
-[ "$(cached TOS_SLHDSA_ARMV8_SHA2)" = ON ] || die "TOS_SLHDSA_ARMV8_SHA2 is not ON"
+[ "$(cached "$SLHDSA_BACKEND")" = ON ] || die "$SLHDSA_BACKEND is not ON"
 
-# A shipped Mach-O file: arm64 only, no newer macOS than the minimum, a valid
-# signature (Apple silicon runs no unsigned code; the linker signs ad hoc), and
+# A shipped Mach-O file: this architecture only, no newer macOS than the minimum,
+# a valid signature (Apple silicon runs no unsigned code; the linker signs ad
+# hoc, and the check holds the Intel files to the same), and
 # no library that a stock macOS does not provide.
 check_macho() {
   local file=$1 archs minos id dep
   archs=$(lipo -archs "$file") || die "$file is not a Mach-O file"
-  [ "$archs" = arm64 ] || die "$file is built for '$archs', not arm64"
+  [ "$archs" = "$ARCH" ] || die "$file is built for '$archs', not $ARCH"
   minos=$(otool -l "$file" | awk '$1 == "cmd" { build = ($2 == "LC_BUILD_VERSION") } build && $1 == "minos" { print $2; exit }')
   [ "$minos" = "$MACOS_MIN" ] || die "$file requires macOS '$minos', not $MACOS_MIN"
   codesign --verify "$file" || die "$file has no valid signature"
@@ -240,7 +260,7 @@ cp -R crypto/fift/lib "$OUT/lib"
   echo "sdk $(xcrun --sdk macosx --show-sdk-version) $SDKROOT"
   echo "compiler $("$CXX" --version | head -1)"
   echo "flags CMAKE_BUILD_TYPE=Release TOS_ARCH=$CPU PORTABLE=$ROCKSDB_CPU CMAKE_OSX_DEPLOYMENT_TARGET=$MACOS_MIN TOS_USE_JEMALLOC=OFF"
-  echo "slhdsa_sha256 TOS_SLHDSA_ARMV8_SHA2=$(cached TOS_SLHDSA_ARMV8_SHA2)"
+  echo "slhdsa_sha256 $SLHDSA_BACKEND=$(cached "$SLHDSA_BACKEND")"
   echo "allocator system"
   echo "$RUSTC_VERSION"
   echo "$CARGO_VERSION"
