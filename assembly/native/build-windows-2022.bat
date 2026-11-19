@@ -1,8 +1,8 @@
 @echo off
 REM Windows x86-64: the client tools, built with clang-cl and lld-link from
-REM Visual Studio 2022 (BUILD.md, Windows Build). validator-engine is not built:
-REM its signing ledger and consensus key checks need POSIX file semantics, and a
-REM Windows build of them refuses every key (doc/Validator.md). Run it from the repository root
+REM Visual Studio 2022 (BUILD.md, Windows Build). Nothing that links the node's
+REM own code is built: no validator-engine, and none of the daemons that use its
+REM key store, metrics or RLDP (doc/Validator.md). Run it from the repository root
 REM in an "x64 Native Tools Command Prompt for VS 2022", with ninja, NASM, Perl
 REM and the Visual Studio LLVM toolset (clang-cl) on PATH. Every third-party
 REM library is built from third-party\.
@@ -40,10 +40,8 @@ if errorlevel 1 (
   exit /b 1
 )
 
-ninja -C build-windows %KEEP_GOING% storage-daemon storage-daemon-cli blockchain-explorer fift func tol ^
-  toslib toslibjson toslib-cli lite-client validator-engine-console ^
-  generate-random-id json2tlo dht-server http-proxy rldp-http-proxy create-state emulator ^
-  proxy-liteserver tos-rpc tos-wallet-index
+ninja -C build-windows %KEEP_GOING% lite-client validator-engine-console storage-daemon-cli ^
+  blockchain-explorer fift func tol toslib toslibjson toslib-cli emulator create-state json2tlo
 if errorlevel 1 (
   echo Can't compile tos
   exit /b 1
