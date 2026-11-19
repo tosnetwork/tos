@@ -482,8 +482,12 @@ if (MSVC)
 endif()
 
 if (GCC OR CLANG)
-  add_compile_options(-Wall)
-  add_compile_options(-Wextra)
+  # clang-cl reads -Wall as /Wall, which is -Weverything; the /W4 set above for
+  # MSVC-style compilers is clang's -Wall -Wextra there.
+  if (NOT MSVC)
+    add_compile_options(-Wall)
+    add_compile_options(-Wextra)
+  endif()
 
   add_compile_options(-Wpointer-arith)
   add_compile_options(-Wcast-qual)

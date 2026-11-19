@@ -194,11 +194,9 @@ Windows cannot host a validator or a full node: `validator-engine` is not built
 there ([BUILD.md](../BUILD.md), Windows Build). The consensus key file, its lock
 and the signing ledger rely on POSIX ownership and permission bits, `flock`,
 directory `fsync` and inode identity, which Windows does not provide in a form
-those checks can judge. A Windows build of the key file and lock code refuses
-every key with "consensus keys are kept only on Linux and macOS" rather than
-reading one under weaker rules. The Windows client tools (`lite-client`,
-`validator-engine-console`, `fift`, `func`, `toslib`) can reach a node running
-elsewhere.
+those checks can judge, so that code is not ported and not compiled on Windows.
+The Windows client tools (`lite-client`, `validator-engine-console`, `fift`,
+`func`, `toslib`) can reach a node running elsewhere.
 
 ### Production operating profile
 

@@ -184,12 +184,9 @@ The labels mark tests that macOS cannot host, not failures of the code they test
 
 `assembly/native/build-windows-2022.bat` builds the client tools on Windows
 x86-64 with clang-cl and lld-link from Visual Studio 2022: `lite-client`,
-`validator-engine-console`, `fift`, `func`, `tol`, `toslib`, `toslibjson`,
-`toslib-cli`, `emulator`, `storage-daemon`, `storage-daemon-cli`,
-`blockchain-explorer`, `dht-server`, `http-proxy`, `rldp-http-proxy`,
-`proxy-liteserver`, `create-state`, `generate-random-id`, `json2tlo`, `tos-rpc`
-and `tos-wallet-index`. Every third-party library is built from
-`third-party\`.
+`validator-engine-console`, `storage-daemon-cli`, `blockchain-explorer`, `fift`,
+`func`, `tol`, `toslib`, `toslibjson`, `toslib-cli`, `emulator`, `create-state`
+and `json2tlo`. Every third-party library is built from `third-party\`.
 
 Run it from the repository root in an "x64 Native Tools Command Prompt for VS
 2022" with the Visual Studio "C++ Clang tools for Windows" component, ninja,
@@ -199,8 +196,12 @@ NASM and Perl on `PATH` (for example `choco install ninja nasm strawberryperl`):
 assembly\native\build-windows-2022.bat
 ```
 
-The output is in `build-windows\`. `validator-engine` is not built: its key
-file, key lock and signing ledger need POSIX file semantics
+The output is in `build-windows\`. Nothing that links the node's own code is
+built: not `validator-engine`, and not the programs that use its key store,
+metrics or RLDP (`storage-daemon`, `dht-server`, `http-proxy`,
+`rldp-http-proxy`, `proxy-liteserver`, `generate-random-id`, `tos-rpc`,
+`tos-wallet-index`). That code relies on POSIX file semantics and is neither
+ported nor compiled on Windows
 ([Windows](doc/Validator.md#windows)). CI builds the tools on every pull
 request and push to `main`
 (`.github/workflows/build-tos-windows-2022-x86-64.yml`); there are no Windows

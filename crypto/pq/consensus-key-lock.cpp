@@ -1,15 +1,9 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
 #include <cerrno>
 #include <cstring>
+#include <fcntl.h>
 #include <map>
 #include <mutex>
-#include <utility>
-
-#include "consensus-key-file.h"
-#include "consensus-key-lock.h"
-
-#if TOS_SEED_FILES_SUPPORTED
-#include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #if defined(__APPLE__)
@@ -19,11 +13,13 @@
 #include <sys/statfs.h>
 #endif
 #include <unistd.h>
-#endif
+#include <utility>
+
+#include "consensus-key-file.h"
+#include "consensus-key-lock.h"
 
 namespace tos::pq {
 
-#if TOS_SEED_FILES_SUPPORTED
 namespace {
 
 // One open file description holding the exclusive flock. Closing it is what releases the
@@ -139,7 +135,6 @@ std::variant<std::shared_ptr<KeyFileLock>, std::string> acquire(int fd) {
 }
 
 }  // namespace
-#endif
 
 bool consensus_key_lock_supported_filesystem(std::uint64_t f_type) noexcept {
   // Local filesystems, from <linux/magic.h>. Everything else is refused: network and
@@ -171,12 +166,6 @@ bool consensus_key_lock_supported_darwin_filesystem(std::string_view type_name, 
 
 std::variant<std::shared_ptr<const ValidatorPQKeyStore>, std::string> load_locked_consensus_key(
     std::string_view path, std::uint32_t expire_at) {
-#if !TOS_SEED_FILES_SUPPORTED
-  // The key file itself is refused on this platform, so there is nothing to lock.
-  static_cast<void>(path);
-  static_cast<void>(expire_at);
-  return std::string(describe(ConsensusKeyFileError::unsupported_platform));
-#else
   // Opened once, as the key file rules open it: no symlink followed, and without blocking,
   // so a FIFO is refused instead of waited on. Everything after this happens through this
   // one descriptor: the file locked is the file judged and read, whatever the path names
@@ -215,7 +204,6 @@ std::variant<std::shared_ptr<const ValidatorPQKeyStore>, std::string> load_locke
   holder->store.set_expire_at(expire_at);
   // Every copy of this pointer shares the holder, and with it the lock.
   return std::shared_ptr<const ValidatorPQKeyStore>(holder, &holder->store);
-#endif
 }
 
 }  // namespace tos::pq
