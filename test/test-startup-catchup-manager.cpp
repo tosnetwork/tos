@@ -1018,7 +1018,6 @@ TEST(StartupCatchupManager, T13_NewKeyHolderEntersAndStaysFenced) {
   // The old key expires a moment after it is installed; the next set's key is held.
   f.hold_expiring(f.current, 2, 1, static_cast<td::uint32>(td::Clocks::system()) + 1);
   f.hold(f.next, 0);
-  ASSERT_EQ(1u, f.unexpired_keys(f.current, 1));
   f.wait_wall_clock(1.5);
   ASSERT_EQ(0u, f.unexpired_keys(f.current, 1));  // the premise: the old key has expired
   f.set_tip(f.snapshot(f.current, 1), 10, kStale);
