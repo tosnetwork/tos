@@ -230,9 +230,16 @@ metrics or RLDP (`storage-daemon`, `dht-server`, `http-proxy`,
 `tos-wallet-index`). That code relies on POSIX file semantics and is neither
 ported nor compiled on Windows
 ([Windows](doc/Validator.md#windows)). CI builds the tools on every pull
-request and push to `main`
-(`.github/workflows/build-tos-windows-2022-x86-64.yml`); there are no Windows
-release artifacts. `tosctl` is not part of the Windows build.
+request, every push to `main` and every version tag
+(`.github/workflows/build-tos-windows-2022-x86-64.yml`), and
+`assembly/native/package-windows.ps1` packages them into the artifact
+`tos-x86-64-windows`: the tools, `smartcont\`, `lib\` and `BUILD-INFO`. The
+package refuses a missing file, a tool whose `-V` does not report the commit,
+and any DLL other than Windows' own, the Microsoft C/C++ runtime (the Visual
+C++ 2015-2022 Redistributable, which a target machine needs) and the DLLs it
+ships. The artifact joins the release once the workflow has succeeded on a tag
+([release policy](doc/tos-release-policy.md)). `tosctl` is not part of the
+Windows build.
 
 ## Android toslib Build
 

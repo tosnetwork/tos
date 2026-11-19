@@ -2108,5 +2108,121 @@ class MacosReleaseTest(unittest.TestCase):
         self.assertNotEqual(macos_release_problems(name, swapped, script), [])
 
 
+def windows_release_problems(workflow: str, script: str) -> list[str]:
+    """Why the Windows package would not be the checked client-tool build."""
+    problems: list[str] = []
+    name = WindowsReleaseTest.WORKFLOW
+    head, _, jobs = workflow.partition("\njobs:\n")
+    if "    tags: ['v*']\n" not in head:
+        problems.append(f"{name} does not run on version tags")
+    for pattern, why in (
+        (r"(?m)^\s*(?:- )?if:", "a condition"),
+        (r"(?m)^\s*continue-on-error:", "a tolerated failure"),
+    ):
+        if re.search(pattern, jobs):
+            problems.append(f"{name} has {why}; the build must always run whole")
+    build = "        call assembly\\native\\build-windows-2022.bat -k\n"
+    package = (
+        "        pwsh -NoProfile -File assembly\\native\\package-windows.ps1"
+        " -BuildDir build-windows -OutDir tos-windows\n"
+    )
+    if not 0 <= jobs.find(build) < jobs.find(package):
+        problems.append(f"{name} does not package the build it made")
+    for line in ("        name: tos-x86-64-windows\n", "        path: tos-windows\n"):
+        if line not in jobs:
+            problems.append(f"{name} lost {line.strip()!r}")
+    if "ccache" in workflow or "actions/cache" in workflow:
+        problems.append(f"{name} reuses cached objects")
+    for line in (
+        "if (Test-Path $OutDir) { Fail ",
+        "if (git status --porcelain --untracked-files=no) { Fail ",
+        "  if (-not (Test-Path -PathType Leaf $path)) { Fail ",
+        '  if ($out -notmatch "Commit: $Rev") { Fail ',
+        "  $text = dumpbin /nologo /dependents $file | Out-String\n",
+        "    if (-not $ok) { Fail ",
+        "  if ($deps.Count -eq 0) { Fail ",
+        "Set-Content -Path (Join-Path $OutDir 'BUILD-INFO')",
+    ):
+        if line not in script:
+            problems.append(f"the Windows package script lost {line.strip()!r}")
+    for tool in WindowsReleaseTest.NOT_BUILT:
+        if f"'{tool}.exe'" in script:
+            problems.append(f"the Windows package ships {tool}, which Windows does not build")
+    return problems
+
+
+class WindowsReleaseTest(unittest.TestCase):
+    """The Windows package is the CI build of the client tools, checked file by file."""
+
+    WORKFLOW = "build-tos-windows-2022-x86-64.yml"
+    # Everything that links node code; build-windows-2022.bat builds none of it.
+    NOT_BUILT = (
+        "validator-engine",
+        "storage-daemon",
+        "dht-server",
+        "http-proxy",
+        "rldp-http-proxy",
+        "proxy-liteserver",
+        "generate-random-id",
+        "tos-rpc",
+        "tos-wallet-index",
+    )
+
+    def inputs(self) -> tuple[str, str]:
+        return (
+            (HERE.parent / ".github" / "workflows" / self.WORKFLOW).read_text(),
+            (HERE.parent / "assembly" / "native" / "package-windows.ps1").read_text(),
+        )
+
+    def test_repository_packages_the_windows_build(self) -> None:
+        self.assertEqual(windows_release_problems(*self.inputs()), [])
+
+    def test_the_build_script_builds_no_node_code(self) -> None:
+        script = (HERE.parent / "assembly" / "native" / "build-windows-2022.bat").read_text()
+        _, _, targets = script.partition("ninja -C build-windows %KEEP_GOING% ")
+        targets = targets.partition("\nif errorlevel")[0].replace("^", " ").split()
+        self.assertIn("lite-client", targets)
+        self.assertEqual([t for t in targets if t in self.NOT_BUILT], [])
+
+    def test_a_weakened_script_is_refused(self) -> None:
+        workflow, script = self.inputs()
+        mutants = {
+            "    if (-not $ok) { Fail ": "    if ($false) { Fail ",
+            "  if ($deps.Count -eq 0) { Fail ": "  if ($false) { Fail ",
+            '  if ($out -notmatch "Commit: $Rev") { Fail ': "  if ($false) { Fail ",
+            "  if (-not (Test-Path -PathType Leaf $path)) { Fail ": "  if ($false) { Fail ",
+            "if (git status --porcelain --untracked-files=no) { Fail ": "if ($false) { Fail ",
+            "  'lite-client.exe'              = 'lite-client\\lite-client.exe'\n": (
+                "  'lite-client.exe'              = 'lite-client\\lite-client.exe'\n"
+                "  'validator-engine.exe'         = 'validator-engine\\validator-engine.exe'\n"
+            ),
+            "  'json2tlo.exe'                 = 'utils\\json2tlo.exe'\n": (
+                "  'json2tlo.exe'                 = 'utils\\json2tlo.exe'\n"
+                "  'dht-server.exe'               = 'dht-server\\dht-server.exe'\n"
+            ),
+        }
+        for old, new in mutants.items():
+            with self.subTest(mutant=old):
+                self.assertIn(old, script)
+                self.assertNotEqual(
+                    windows_release_problems(workflow, script.replace(old, new, 1)), []
+                )
+
+    def test_a_weakened_workflow_is_refused(self) -> None:
+        workflow, script = self.inputs()
+        mutants = {
+            "    tags: ['v*']\n": "",
+            "        name: tos-x86-64-windows\n": "        name: tos-windows\n",
+            "    runs-on: windows-2022\n": "    runs-on: windows-2022\n    continue-on-error: true\n",
+            "        pwsh -NoProfile -File": "        echo pwsh -NoProfile -File",
+        }
+        for old, new in mutants.items():
+            with self.subTest(mutant=old):
+                self.assertIn(old, workflow)
+                self.assertNotEqual(
+                    windows_release_problems(workflow.replace(old, new, 1), script), []
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

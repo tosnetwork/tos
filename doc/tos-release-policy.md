@@ -558,6 +558,34 @@ Each artifact joins the `full` set, under names of the form
 succeeded on a tag, as
 [Cutting a release](#cutting-a-release) requires of every new build input.
 
+### Windows client tools
+
+`.github/workflows/build-tos-windows-2022-x86-64.yml` builds the Windows
+client tools with clang-cl and lld-link on `windows-2022` on every `v*` tag
+(and every pull request and push to `main`), and
+`assembly/native/package-windows.ps1` packages them into the artifact
+`tos-x86-64-windows`: `lite-client`, `validator-engine-console`,
+`storage-daemon-cli`, `blockchain-explorer`, `fift`, `func`, `tol`,
+`create-state`, `json2tlo`, `toslib-cli`, `toslibjson.dll` and `emulator.dll`,
+with the `smartcont` and `lib` directories and `BUILD-INFO`. There is no
+`validator-engine`, no daemon that links node code and no `tosctl`: Windows
+cannot host a node ([Windows](Validator.md#windows)).
+
+The script refuses to finish unless every listed file was built, the tools
+with `-V` report the tagged commit, the checkout is clean, and every file
+loads only Windows system DLLs, the Microsoft C/C++ runtime or a DLL of the
+package. The runtime is not shipped: a target machine needs the Visual C++
+2015-2022 Redistributable. `BUILD-INFO` records the commit, the compiler, the
+flags, each file's DLLs and SHA-256. `scripts/test_release_artifacts.py` fails
+if the workflow or the script loses one of these checks.
+
+The Windows build is compiled, not tested: the test suite assumes POSIX
+semantics in many places and is not built there.
+
+The artifact joins the `full` set as `tos-windows-x86-64.zip` once the
+workflow has succeeded on a tag, as [Cutting a release](#cutting-a-release)
+requires of every new build input.
+
 ### Cutting a release
 
 1. Push the tag on the reviewed commit: `git tag v<version> <commit>` and
