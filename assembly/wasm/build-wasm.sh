@@ -8,8 +8,8 @@
 # The node and the validator are not built for WebAssembly: this build covers
 # the libraries that compile and test contracts in a browser or under Node.js.
 #
-# Every third-party library is built from third-party/ with Emscripten, as the
-# native build builds them. The WebAssembly build does not run the code
+# Every third-party library is built from third-party/ with Emscripten: libsodium
+# by this script, the others by the CMake build. The WebAssembly build does not run the code
 # generators (tlbc and the Fift smart-contract envelopes), so a native build of
 # fift and smc-envelope first writes their output into the source tree.
 #
@@ -51,6 +51,18 @@ unset CC CXX
 
 BUILD=build-wasm
 rm -rf "$BUILD"
+# libsodium is the one library the Emscripten configuration expects already
+# built, under the build directory; it comes from third-party/sodium too.
+SODIUM=$BUILD/3pp_emscripten/libsodium
+mkdir -p "$(dirname "$SODIUM")"
+cp -R third-party/sodium "$SODIUM"
+(
+  cd "$SODIUM"
+  emconfigure ./configure --disable-ssp --disable-shared --without-pthreads
+  emmake make -j"$JOBS"
+)
+[ -f "$SODIUM/src/libsodium/.libs/libsodium.a" ] || die "libsodium was not built"
+
 emcmake cmake -S . -B "$BUILD" -G Ninja -DUSE_EMSCRIPTEN=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build "$BUILD" --parallel "$JOBS" --target funcfiftlib fift func tlbc emulator-emscripten
 
