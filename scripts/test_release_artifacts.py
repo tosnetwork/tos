@@ -1922,5 +1922,149 @@ class NodeBinaryReleaseTest(unittest.TestCase):
                 )
 
 
+def macos_release_problems(workflow: str, script: str) -> list[str]:
+    """Why the macOS release build would not be the macOS recipe.
+
+    The macOS binaries are the build the shared macOS workflow tests, fixed to
+    a CPU level and a minimum macOS, and checked to need nothing a stock macOS
+    does not provide.
+    """
+    problems: list[str] = []
+    name = MacosReleaseTest.WORKFLOW
+    head, _, jobs = workflow.partition("\njobs:\n")
+    if re.findall(r"(?m)^  [A-Za-z0-9_-]+:$", jobs) != ["  build:"]:
+        problems.append(f"{name} must have exactly the one build job")
+    for pattern, why in (
+        (r"(?m)^\s*(?:- )?if:", "a condition"),
+        (r"(?m)^\s*continue-on-error:", "a tolerated failure"),
+        (r"(?m)^\s*strategy:", "a matrix"),
+    ):
+        if re.search(pattern, jobs):
+            problems.append(f"{name} has {why}; the build must always run whole")
+    for line in (
+        "    runs-on: macos-15\n",
+        "      run: assembly/native/build-macos-release.sh macos-binaries\n",
+        "        name: tos-arm64-macos\n",
+        "        path: macos-binaries\n",
+    ):
+        if line not in jobs:
+            problems.append(f"{name} lost {line.strip()!r}")
+    if "ccache" in workflow or "actions/cache" in workflow:
+        problems.append(f"{name} reuses cached objects")
+    install_rust = "      run: scripts/install-rust-toolchain.sh\n"
+    build_step = "      run: assembly/native/build-macos-release.sh macos-binaries\n"
+    if not 0 <= workflow.find(install_rust) < workflow.find(build_step):
+        problems.append(f"{name} does not install the pinned Rust toolchain first")
+    for path in (*NodeBinaryReleaseTest.RUST_INPUTS, "assembly/native/build-macos-release.sh"):
+        if f"      - '{path}'\n" not in head:
+            problems.append(f"{name} does not run when {path} changes")
+    recipe = [
+        '[ "$(uname -m)" = arm64 ] || die ',
+        "\nCPU=apple-m1\nROCKSDB_CPU=armv8-a\nRUST_CPU=apple-m1\nMACOS_MIN=15.0\n",
+        "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct HEAD)\nexport SOURCE_DATE_EPOCH\n",
+        "\nexport MACOSX_DEPLOYMENT_TARGET=$MACOS_MIN\n",
+        "export CCACHE_DISABLE=1\n",
+        "\nunset TOS_SLHDSA_SHA_NI TOS_SLHDSA_ARMV8_SHA2\n",
+        "  -DCMAKE_BUILD_TYPE=Release \\\n",
+        '  -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOS_MIN" \\\n',
+        '  -DTOS_ARCH="$CPU" -DPORTABLE="$ROCKSDB_CPU" \\\n',
+        # The recipe read back from the configured cache ...
+        '\n[ "$(cached CMAKE_BUILD_TYPE)" = Release ] || die ',
+        '\n[ "$(cached TOS_ARCH)" = "$CPU" ] || die ',
+        '\n[ "$(cached PORTABLE)" = "$ROCKSDB_CPU" ] || die ',
+        '\n[ "$(cached CMAKE_OSX_DEPLOYMENT_TARGET)" = "$MACOS_MIN" ] || die ',
+        '\n[ "$(cached TOS_SLHDSA_ARMV8_SHA2)" = ON ] || die ',
+        # ... every shipped Mach-O file checked ...
+        '\n  [ "$archs" = arm64 ] || die ',
+        '\n  [ "$minos" = "$MACOS_MIN" ] || die ',
+        '\n  codesign --verify "$file" || die ',
+        "\n      /usr/lib/*|/System/Library/*) ;;\n"
+        '      *) die "$file links $dep, which macOS does not provide" ;;\n',
+        '\nfor name in "${SHIPPED[@]}"; do\n  check_macho "$OUT/$name"\ndone\n',
+        # ... the commit every binary with -V reports ...
+        '\n  "$BUILD/$path" -V | grep -q "Commit: $REV" || die ',
+        # ... and tosctl as the Linux node recipe builds it.
+        '\n[[ "$RUSTC_VERSION" == "rustc $RUST_CHANNEL "* ]] || die ',
+        '\n[[ "$CARGO_VERSION" == "cargo $RUST_CHANNEL "* ]] || die ',
+        '\nTOSCTL_RUSTFLAGS="-C target-cpu=$RUST_CPU"\n',
+        '\n  export RUSTC_WRAPPER="" CARGO_BUILD_RUSTC_WRAPPER="" CARGO_INCREMENTAL=0\n',
+        "\n  unset CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_TARGET GIT_COMMIT GIT_COMMIT_DATE\n",
+        "\n  export GIT_BRANCH=HEAD\n",
+        "\nunset RUSTC CARGO_BUILD_RUSTC RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER\n",
+        '[ -z "$(git status --porcelain --untracked-files=no)" ] || die "the tosctl build changed the checkout"\n',
+        '\n"$TOSCTL" --version | grep -qx "COMMIT_ID: $REV" || die ',
+    ]
+    for line in recipe:
+        if line not in script:
+            problems.append(f"the macOS build script lost {line.strip()!r}")
+    cargo_builds = re.findall(r"(?m)^\s*cargo build\b.*$", script)
+    if [line.split() for line in cargo_builds] != [
+        ["cargo", "build", "--release", "--locked", "-p", "tosctl", "-j", '"$JOBS"']
+    ]:
+        problems.append("the macOS build script does not build tosctl with --release --locked")
+    if "native" in re.sub(r"(?m)#.*$", "", script) or "sccache" in script:
+        problems.append("the macOS build script uses the build host's CPU or a compiler cache")
+    node_files = re.search(r"\nNODE_FILES=\(\n((?:  [a-z-]+=\S+\n)*)\)\n", script)
+    found = dict(re.findall(r"  ([a-z-]+)=(\S+)\n", node_files.group(1))) if node_files else None
+    if found != NodeBinaryReleaseTest.PATHS:
+        problems.append("the macOS build script does not ship the node binaries from their build paths")
+    versioned = re.search(r"\nVERSIONED_TARGETS=\(([^)]*)\)\n", script)
+    if versioned is None or not set(NodeBinaryReleaseTest.VERSIONED_BINARIES) <= set(
+        versioned.group(1).split()
+    ):
+        problems.append("the macOS build script does not check the commit of every node binary with -V")
+    return problems
+
+
+class MacosReleaseTest(unittest.TestCase):
+    """The macOS release build is the tested macOS recipe, checked for portability."""
+
+    WORKFLOW = "build-tos-macos-15-arm64-release.yml"
+
+    def inputs(self) -> tuple[str, str]:
+        return (
+            (HERE.parent / ".github" / "workflows" / self.WORKFLOW).read_text(),
+            (HERE.parent / "assembly" / "native" / "build-macos-release.sh").read_text(),
+        )
+
+    def test_repository_builds_the_macos_recipe(self) -> None:
+        self.assertEqual(macos_release_problems(*self.inputs()), [])
+
+    def test_a_weakened_script_is_refused(self) -> None:
+        workflow, script = self.inputs()
+        mutants = {
+            "MACOS_MIN=15.0\n": "MACOS_MIN=27.0\n",
+            "\nCPU=apple-m1\n": "\nCPU=native\n",
+            '  [ "$archs" = arm64 ] || die ': '  [ "$archs" = arm64 ] || echo ',
+            '  [ "$minos" = "$MACOS_MIN" ] || die ': "  true || die ",
+            "      /usr/lib/*|/System/Library/*) ;;": "      /usr/lib/*|/System/Library/*|/opt/*) ;;",
+            '  codesign --verify "$file" || die ': '  codesign --verify "$file" || echo ',
+            '  check_macho "$OUT/$name"\n': "  true\n",
+            '"$BUILD/$path" -V | grep -q "Commit: $REV" || die ': "true || die ",
+            "export CCACHE_DISABLE=1\n": "",
+            "  dht-server=dht-server/dht-server\n": "",
+            'cargo build --release --locked -p tosctl -j "$JOBS"': 'cargo build --release -p tosctl -j "$JOBS"',
+            '[ "$(cached TOS_SLHDSA_ARMV8_SHA2)" = ON ] || die ': "true || die ",
+        }
+        for old, new in mutants.items():
+            with self.subTest(mutant=old):
+                self.assertIn(old, script)
+                self.assertNotEqual(macos_release_problems(workflow, script.replace(old, new, 1)), [])
+
+    def test_a_weakened_workflow_is_refused(self) -> None:
+        workflow, script = self.inputs()
+        mutants = {
+            "run: assembly/native/build-macos-release.sh macos-binaries": "run: make",
+            "    runs-on: macos-15\n": "    runs-on: macos-15\n    continue-on-error: true\n",
+            "    - name: Upload artifacts\n": "    - uses: actions/cache@x\n    - name: Upload artifacts\n",
+            "      - 'tosctl/src/Cargo.lock'\n": "",
+            "        name: tos-arm64-macos\n": "        name: tos-macos\n",
+        }
+        for old, new in mutants.items():
+            with self.subTest(mutant=old):
+                self.assertIn(old, workflow)
+                self.assertNotEqual(macos_release_problems(workflow.replace(old, new, 1), script), [])
+
+
 if __name__ == "__main__":
     unittest.main()

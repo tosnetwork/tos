@@ -163,12 +163,15 @@ Repeat the receipt after every hardware, hypervisor or binary change.
 ### macOS validators
 
 A validator can run on macOS on Apple silicon. It is built from source
-([BUILD.md](../BUILD.md), macOS Development Build): there are no macOS release
-binaries or container images. CI builds and tests the tree on macOS
-(`.github/workflows/build-tos-macos-15-arm64-shared.yml`), which shows the
-source works there, but only the operator's own build and the receipt above
-are evidence for the deployed binary. Build the two receipt programs with the
-same Apple clang and SDK as the validator.
+([BUILD.md](../BUILD.md), macOS Development Build). CI builds and tests the
+tree on macOS (`.github/workflows/build-tos-macos-15-arm64-shared.yml`), which
+shows the source works there, but only the operator's own build and the
+receipt above are evidence for the deployed binary. Build the two receipt
+programs with the same Apple clang and SDK as the validator. There are no
+container images for macOS. Release binaries for macOS
+(`assembly/native/build-macos-release.sh`) are published only once their build
+workflow has succeeded on a release tag ([tos-release-policy.md](tos-release-policy.md));
+until a release lists them, build from source.
 
 What differs from a Linux host:
 

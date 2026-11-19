@@ -353,7 +353,9 @@ come from the two AppImage workflows (artifacts `tos-x86_64-linux` and
 `tos-arm64-linux`); the `full` set adds the node binaries, built separately
 with the node recipe (artifacts `tos-node-x86_64-linux` and
 `tos-node-arm64-linux`, see [Node binaries](#node-binaries)). There are
-no macOS, Windows, Android or WebAssembly release artifacts.
+no Windows, Android or WebAssembly release artifacts. macOS on Apple silicon
+has a release build ([macOS binaries](#macos-binaries)) that is not yet in a
+release set.
 The binaries are built on Ubuntu 24.04 and need glibc 2.39 or newer. The
 node container image is published for the same two architectures, from a
 builder image published for both (`scripts/test_container_platforms.py`).
@@ -502,6 +504,47 @@ build under another cargo home directory is not expected to match. Neither
 has been verified across GitHub-hosted runners, so the
 release makes no reproducibility claim; compare a host build's SHA-256 with
 the release's `SHA256SUMS` before relying on it.
+
+### macOS binaries
+
+`.github/workflows/build-tos-macos-15-arm64-release.yml` runs on every `v*` tag
+and uploads the artifact `tos-arm64-macos`, built on `macos-15` with
+`assembly/native/build-macos-release.sh`. It holds the node binaries of the
+table above, `tosctl`, the tools of the Linux tool zip (`fift`, `func`, `tol`,
+`proxy-liteserver`, `rldp-http-proxy`, `http-proxy`, `storage-daemon`,
+`storage-daemon-cli`, `toslib-cli`, `tos-pq-key`, `tos-pq-vote`,
+`libtoslibjson.dylib`, `libemulator.dylib`), the `smartcont` and `lib`
+directories, and `BUILD-INFO`. The recipe is the macOS build the shared macOS
+workflow tests:
+
+- `CMAKE_BUILD_TYPE=Release`, Apple clang with the runner's macOS SDK;
+- `TOS_ARCH=apple-m1` (the baseline of every Apple silicon CPU, which the
+  top-level CMake file selects on Apple silicon in any case), RocksDB's
+  `PORTABLE=armv8-a`, and `tosctl` built with `-C target-cpu=apple-m1`;
+- minimum macOS 15.0 (`CMAKE_OSX_DEPLOYMENT_TARGET` and
+  `MACOSX_DEPLOYMENT_TARGET`) for the C, C++ and Rust code alike;
+- the system allocator: the macOS build and its tests do not use jemalloc;
+- the ARMv8 SHA-256 backend (`TOS_SLHDSA_ARMV8_SHA2=ON`);
+- `SOURCE_DATE_EPOCH`, no compiler cache, and `tosctl` built with
+  `--locked` and the pinned toolchain, as for the Linux node binaries.
+
+The script refuses to finish unless the cache holds these values, every
+binary with `-V` reports the tagged commit, `tosctl --version` does too, and
+every shipped Mach-O file is arm64 only, requires macOS 15.0 and no later,
+passes `codesign --verify` (the linker's ad hoc signature) and links only
+libraries under `/usr/lib` and `/System/Library`. `BUILD-INFO` records the
+build host's macOS and SDK, the compiler, the flags, each file's libraries and
+SHA-256. `scripts/test_release_artifacts.py` fails if the workflow or the
+script loses a recipe flag or a check.
+
+The binaries are not notarized. A file downloaded with a browser carries the
+quarantine attribute and Gatekeeper refuses to start it; after checking it
+against `SHA256SUMS`, remove the attribute with
+`xattr -d com.apple.quarantine <file>`.
+
+The artifact joins the `full` set, under names of the form
+`<binary>-macos-arm64`, once the workflow has succeeded on a tag, as
+[Cutting a release](#cutting-a-release) requires of every new build input.
 
 ### Cutting a release
 

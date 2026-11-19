@@ -218,6 +218,25 @@ class TreeTest(unittest.TestCase):
                 "workflow_dispatch": None,
                 "workflow_call": None,
             },
+            "build-tos-macos-15-arm64-release.yml": {
+                "push": {"tags": ["v*"]},
+                "pull_request": {
+                    "branches": ["main"],
+                    "types": ["opened", "reopened", "synchronize", "ready_for_review"],
+                    "paths": [
+                        ".github/workflows/build-tos-macos-15-arm64-release.yml",
+                        "assembly/native/build-macos-release.sh",
+                        "scripts/release-artifacts.json",
+                        "rust-toolchain.toml",
+                        "scripts/install-rust-toolchain.sh",
+                        "tosctl/src/Cargo.lock",
+                        "tosctl/src/common/build/build.rs",
+                        "tosctl/src/node-control/nodectl/src/app_cli_args.rs",
+                    ],
+                },
+                "workflow_dispatch": None,
+                "workflow_call": None,
+            },
             MACOS_SHARED_BUILD: {
                 "pull_request": {
                     "branches": ["main"],
