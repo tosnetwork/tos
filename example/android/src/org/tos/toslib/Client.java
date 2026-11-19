@@ -72,18 +72,19 @@ public final class Client implements Runnable, AutoCloseable {
 
         readLock.lock();
         try {
-            if (isClientDestroyed) {
-                if (resultHandler != null) {
-                    handleResult(new TosApi.Error(500, "Client is closed"), resultHandler, exceptionHandler);
-                }
+            if (!isClientDestroyed) {
+                long queryId = currentQueryId.incrementAndGet();
+                handlers.put(queryId, new Handler(resultHandler, exceptionHandler));
+                nativeClientSend(nativeClientId, queryId, query);
                 return;
             }
-
-            long queryId = currentQueryId.incrementAndGet();
-            handlers.put(queryId, new Handler(resultHandler, exceptionHandler));
-            nativeClientSend(nativeClientId, queryId, query);
         } finally {
             readLock.unlock();
+        }
+        // The handler runs without the lock: it may call close(), which takes the
+        // write lock and could never get it from a thread holding the read lock.
+        if (resultHandler != null) {
+            handleResult(new TosApi.Error(500, "Client is closed"), resultHandler, exceptionHandler);
         }
     }
 

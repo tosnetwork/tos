@@ -64,6 +64,9 @@ public final class ToslibJniSmokeTest {
                 "a request after close is answered with an error: " + afterClose);
         client.close();
         check(true, "a second close returns");
+        // A handler that reacts to the "closed" error by closing must not block.
+        client.send(new TosApi.GetLogVerbosityLevel(), object -> client.close());
+        check(true, "a close from the handler of a refused request returns");
 
         System.out.println("toslib JNI smoke test: " + checks + " checks passed");
     }
