@@ -185,9 +185,8 @@ cached() {
 [ "$(cached "$SLHDSA_BACKEND")" = ON ] || die "$SLHDSA_BACKEND is not ON"
 
 # A shipped Mach-O file: this architecture only, no newer macOS than the minimum,
-# a valid signature (Apple silicon runs no unsigned code; the linker signs ad
-# hoc, and the check holds the Intel files to the same), and
-# no library that a stock macOS does not provide.
+# a valid signature (signed ad hoc below), and no library that a stock macOS
+# does not provide.
 check_macho() {
   local file=$1 archs minos id dep
   archs=$(lipo -archs "$file") || die "$file is not a Mach-O file"
@@ -246,6 +245,13 @@ for entry in "${NODE_FILES[@]}" "${TOOL_FILES[@]}"; do
 done
 install -m 0755 "$TOSCTL" "$OUT/tosctl"
 SHIPPED+=(tosctl)
+# Apple silicon runs no unsigned code. Its linker signs ad hoc, but the Intel
+# linker does not, so every shipped file is signed ad hoc here, on both, the
+# same way. The identifier is the file name, so the signature, and the
+# SHA-256 in BUILD-INFO, depend only on the file signed.
+for name in "${SHIPPED[@]}"; do
+  codesign --force --sign - "$OUT/$name" || die "cannot sign $name"
+done
 for name in "${SHIPPED[@]}"; do
   check_macho "$OUT/$name"
 done

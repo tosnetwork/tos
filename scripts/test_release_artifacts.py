@@ -1990,6 +1990,8 @@ def macos_release_problems(name: str, workflow: str, script: str) -> list[str]:
         '\n  codesign --verify "$file" || die ',
         "\n      /usr/lib/*|/System/Library/*) ;;\n"
         '      *) die "$file links $dep, which macOS does not provide" ;;\n',
+        # ... signed ad hoc first, which the Intel linker does not do ...
+        '\n  codesign --force --sign - "$OUT/$name" || die ',
         '\nfor name in "${SHIPPED[@]}"; do\n  check_macho "$OUT/$name"\ndone\n',
         # ... the commit every binary with -V reports ...
         '\n  "$BUILD/$path" -V | grep -q "Commit: $REV" || die ',
@@ -2064,6 +2066,7 @@ class MacosReleaseTest(unittest.TestCase):
             "      /usr/lib/*|/System/Library/*) ;;": "      /usr/lib/*|/System/Library/*|/opt/*) ;;",
             '  codesign --verify "$file" || die ': '  codesign --verify "$file" || echo ',
             '  check_macho "$OUT/$name"\n': "  true\n",
+            '  codesign --force --sign - "$OUT/$name" || die ': "  true || die ",
             '"$BUILD/$path" -V | grep -q "Commit: $REV" || die ': "true || die ",
             "export CCACHE_DISABLE=1\n": "",
             "  dht-server=dht-server/dht-server\n": "",
