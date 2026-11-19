@@ -92,7 +92,77 @@ class TestScheduler {
     Time::unfreeze();
   }
 
+  // Driving the scheduler from ordinary code instead of a control coroutine, for fixtures
+  // whose test bodies are plain functions. Between begin_sync() and end_sync() time is
+  // frozen, and each step returns only once no runnable work is left: whatever the step
+  // caused, including replies and the work those replies caused, has happened, and work
+  // that has not happened is waiting for an alarm. An assertion made between steps sees a
+  // settled system, so an assertion that something did not happen means it.
+  void begin_sync() {
+    CHECK(!sync_);
+    Time::freeze();
+    sync_ = true;
+  }
+
+  // Runs `f` in the scheduler's context, then every piece of work it made runnable.
+  template <class F>
+  void step(F &&f) {
+    CHECK(sync_);
+    ContextImpl context(this);
+    core::SchedulerContext::Guard guard(&context);
+    f();
+    drain_all();
+  }
+
+  void settle() {
+    step([] {});
+  }
+
+  // Moves time to the earliest pending alarm, if it is due at or before `limit`, fires it
+  // and settles. Returns false when no alarm is due by then: nothing will happen before
+  // `limit` unless a step makes it happen.
+  bool fire_next_alarm(double limit) {
+    CHECK(sync_);
+    if (heap_.empty() || heap_.top_key() > limit) {
+      return false;
+    }
+    Time::jump_in_future(heap_.top_key());
+    settle();
+    return true;
+  }
+
+  // Fires every alarm due by `now + delta` in order, then leaves time at `now + delta`.
+  void run_for(double delta) {
+    double limit = Time::now() + delta;
+    while (fire_next_alarm(limit)) {
+    }
+    Time::jump_in_future(limit);
+    settle();
+  }
+
+  // Settles, then keeps moving time to the next alarm until no alarm is left. For a test
+  // whose driver ends the process itself: returning means the driver waits for something
+  // that nothing is left to do.
+  void run_until_no_alarm() {
+    settle();
+    while (fire_next_alarm(std::numeric_limits<double>::infinity())) {
+    }
+  }
+
+  // Runs the remaining alarms and discards whatever is left; every actor must be stopped.
+  void end_sync() {
+    CHECK(sync_);
+    {
+      ContextImpl context(this);
+      core::SchedulerContext::Guard guard(&context);
+      cleanup();
+    }
+    Time::unfreeze();
+    sync_ = false;
+  }
+
  private:
+  bool sync_{false};
   std::deque<core::ActorInfoPtr> io_queue_;
   std::deque<core::SchedulerToken> cpu_queue_;
 

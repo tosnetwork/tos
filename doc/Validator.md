@@ -173,6 +173,12 @@ container images for macOS. Release binaries for macOS
 workflow has succeeded on a release tag ([tos-release-policy.md](tos-release-policy.md));
 until a release lists them, build from source.
 
+An Intel Mac is not a validator host. CI builds and tests the tree on Intel
+too (`.github/workflows/build-tos-macos-15-x86-64-shared.yml`), and it can run
+a node and the tools, but most Intel Mac CPUs lack SHA-NI, without which a
+validator is not allowed ([CPU instruction set](#cpu-instruction-set)), and no
+Intel Mac has been measured or run as a validator.
+
 What differs from a Linux host:
 
 - The hardware SHA-256 backend is on by default: step 2 of the receipt reads

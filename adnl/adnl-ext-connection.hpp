@@ -213,6 +213,11 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   }
 
  protected:
+  // Closes in order: input is no longer parsed, the answers already queued go
+  // out, then the socket closes, bounded by kClosingSeconds. A refusal that
+  // ends a connection uses this instead of stop(), which drops queued answers.
+  void begin_closing(const td::Status &reason);
+
   td::BufferedFd<AdnlExtSocket> buffered_fd_;
   td::actor::ActorId<AdnlExtConnection> self_;
   std::unique_ptr<Callback> callback_;
@@ -285,7 +290,6 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   bool read_eof_ = false;
   bool write_shut_ = false;
   td::Timestamp closing_deadline_;
-  void begin_closing(const td::Status &reason);
   void closing_loop();
   std::size_t pending_output_limit_ = adnl_ext_max_pending_output_bytes;
   std::shared_ptr<AdnlExtOutputBudget> server_output_budget_;

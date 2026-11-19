@@ -75,6 +75,7 @@
 #include "consensus/utils.h"
 #include "crypto/pq/consensus-pq-signer.h"
 #include "td/actor/BusRuntime.h"
+#include "td/actor/TestScheduler.h"
 #include "td/actor/coro_utils.h"
 #include "vm/boc.h"
 
@@ -502,6 +503,8 @@ void rewrite_log_in_place(const std::string& path, const std::function<bool(cons
   emit(PSTRING() << "DLR_LOG_REWRITTEN records=" << seq);
 }
 
+constexpr double kAbsenceHorizon = 60.0;
+
 class Driver : public td::actor::Actor {
  public:
   explicit Driver(Mode mode) : mode_(mode), target_(target_leads(mode) ? 0 : 1) {
@@ -565,8 +568,10 @@ class Driver : public td::actor::Actor {
     co_return true;
   }
 
-  td::actor::Task<> settle(double seconds) {
-    co_await td::actor::coro_sleep(td::Timestamp::in(seconds));
+  // Time is virtual, so a wait costs nothing: every check that something did not happen
+  // waits a full minute, far past any retry or timer that could still make it happen.
+  td::actor::Task<> settle() {
+    co_await td::actor::coro_sleep(td::Timestamp::in(kAbsenceHorizon));
     co_return td::Unit{};
   }
 
@@ -694,7 +699,7 @@ class Driver : public td::actor::Actor {
     stopped_.reset();
     runtime_.reset();
     ledger_.reset();
-    co_await settle(0.1);
+    co_await settle();
     emit("DLR_STOPPED");
     co_return td::Unit{};
   }
@@ -741,7 +746,7 @@ class Driver : public td::actor::Actor {
     // The leader equivocates: another candidate for slot 0.
     auto b = leader_candidate(2);
     bus_.publish<CandidateReceived>(b);
-    co_await settle(1.5);
+    co_await settle();
     const bool b_signed = signed_count(2, notar_text(b)) > 0;
     if (mode_ == Mode::JournalLossWithoutLog) {
       // The control: without the log nothing remembers notarize(A).
@@ -763,7 +768,7 @@ class Driver : public td::actor::Actor {
     auto a = co_await notarize_a();
     co_await stop_node();
     co_await start_node();
-    co_await settle(1.0);
+    co_await settle();
     require(signed_count(2, notar_text(a)) == 0, "notarize(A) was signed again although its bytes were kept");
     if (auto conflict = conflicting_votes()) {
       finish(4, "DLR_CONFLICT: " + *conflict);
@@ -780,7 +785,7 @@ class Driver : public td::actor::Actor {
     co_await start_node();
     auto b = leader_candidate(2);
     bus_.publish<CandidateReceived>(b);
-    co_await settle(1.5);
+    co_await settle();
     require(signatures_made() == before, "a session whose log lost a decision its journal holds signed something");
     require(signed_count(2, notar_text(b)) == 0, "the node notarized B");
     co_await stop_node();
@@ -795,13 +800,13 @@ class Driver : public td::actor::Actor {
     if (!co_await wait_until([] { return produced_in(1) > 0; })) {
       finish(1, "DLR_PRECONDITION_FAILED: the leader produced nothing in window 0");
     }
-    co_await settle(1.0);
+    co_await settle();
     co_await stop_node();
     rewrite_log_in_place(log_path(), [](const signing::Decision&) { return false; });
     lose_pool_state();
     const auto before = signatures_made();
     co_await start_node();
-    co_await settle(2.0);
+    co_await settle();
     const auto again = produced_in(2);
     const auto made = signatures_made() - before;
     co_await stop_node();
@@ -821,7 +826,7 @@ class Driver : public td::actor::Actor {
     admission_->stopped->store(true, std::memory_order_release);
     const auto before = signatures_made();
     release_window_gate();
-    co_await settle(1.5);
+    co_await settle();
     const auto made = signatures_made() - before;
     const auto candidates = produced_in(1);
     co_await stop_node();
@@ -836,7 +841,7 @@ class Driver : public td::actor::Actor {
     if (!co_await wait_until([] { return produced_in(1) > 0; })) {
       finish(1, "DLR_PRECONDITION_FAILED: the leader produced nothing in window 0");
     }
-    co_await settle(1.0);
+    co_await settle();
     co_await stop_node();
     if (mode_ == Mode::WindowJournalRollback) {
       lose_pool_state();
@@ -848,7 +853,7 @@ class Driver : public td::actor::Actor {
       }
     }
     co_await start_node();
-    co_await settle(2.0);
+    co_await settle();
     const auto again = produced_in(2);
     const auto conflict = conflicting_candidates();
     co_await stop_node();
@@ -866,6 +871,7 @@ class Driver : public td::actor::Actor {
 }  // namespace
 
 int main(int argc, char** argv) {
+  td::Time::allow_freezes();  // before the first clock read
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
   const std::vector<std::pair<std::string, Mode>> modes = {
       {"journal-loss", Mode::JournalLoss},
@@ -893,13 +899,18 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "\n");
     return 2;
   }
-  td::actor::Scheduler scheduler({2});
+  // One thread and virtual time: when nothing is runnable, time jumps to the next alarm,
+  // so every wait in the driver ends only after all the work it allowed has run.
+  td::actor::TestScheduler scheduler;
+  scheduler.begin_sync();
   td::actor::ActorOwn<Driver> driver;
-  scheduler.run_in_context([&] {
+  scheduler.step([&] {
     driver = td::actor::create_actor<Driver>("dlr-driver", *mode);
     td::actor::ask(driver, &Driver::run).detach();
   });
-  while (scheduler.run(1)) {
-  }
-  return 0;
+  scheduler.run_until_no_alarm();
+  // The driver ends the process with its verdict; reaching here means it waits for
+  // something nothing is left to do.
+  std::fprintf(stderr, "the driver is stuck with no work and no alarm pending\n");
+  return 1;
 }

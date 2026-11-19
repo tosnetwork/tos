@@ -20,6 +20,7 @@
 #include "metrics/native-core-snapshot.h"
 #include "td/actor/BusRuntime.h"
 #include "td/actor/SharedFuture.h"
+#include "td/actor/TestScheduler.h"
 #include "td/actor/coro_utils.h"
 
 using namespace tos;
@@ -766,6 +767,7 @@ class Driver : public td::actor::Actor {
 }  // namespace
 
 int main(int argc, char **argv) {
+  td::Time::allow_freezes();  // before the first clock read
   if (argc != 2 && argc != 3)
     return 2;
   mode = argv[1];
@@ -773,13 +775,25 @@ int main(int argc, char **argv) {
     output_directory = argv[2];
   // The stopped-cleanup modes need a worker for each concurrent cleanup, and spare.
   const bool stopped_cleanup = mode == "pool-stopped-duplicate" || mode == "producer-stop-ordering";
-  td::actor::Scheduler scheduler({stopped_cleanup ? 12 : 2});
   td::actor::ActorOwn<Driver> driver;
-  scheduler.run_in_context([&] {
+  auto start = [&] {
     driver = td::actor::create_actor<Driver>("c04-driver");
     td::actor::ask(driver, &Driver::run).detach();
-  });
-  while (scheduler.run(1)) {
+  };
+  if (stopped_cleanup) {
+    td::actor::Scheduler scheduler({12});
+    scheduler.run_in_context(start);
+    while (scheduler.run(1)) {
+    }
+    return 1;
   }
+  // The other modes run on one thread and virtual time: when nothing is runnable, time
+  // jumps to the next alarm, so every wait in the driver ends only after all the work it
+  // allowed has run.
+  td::actor::TestScheduler scheduler;
+  scheduler.begin_sync();
+  scheduler.step(start);
+  scheduler.run_until_no_alarm();
+  std::fprintf(stderr, "the driver is stuck with no work and no alarm pending\n");
   return 1;
 }

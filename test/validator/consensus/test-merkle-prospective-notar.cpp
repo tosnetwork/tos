@@ -72,6 +72,7 @@
 #include "consensus/utils.h"
 #include "crypto/pq/consensus-pq-signer.h"
 #include "td/actor/BusRuntime.h"
+#include "td/actor/TestScheduler.h"
 #include "td/actor/coro_utils.h"
 #include "tos/quorum.h"
 #include "validator/fabric.h"
@@ -1537,6 +1538,7 @@ bool state_resolver_mutant_stale_anchor() {
 #endif
 
 int main(int argc, char* argv[]) {
+  td::Time::allow_freezes();  // before the first clock read
   if (argc != 3) {
     std::fprintf(stderr,
                  "usage: %s hold-release|hold-refuse|no-hold|hold-wrong-slot|peer-consensus|sibling|delayed-anchor "
@@ -1576,13 +1578,18 @@ int main(int argc, char* argv[]) {
   emit("MERKLE_ACTOR_BUILD resolver=production");
 #endif
 
-  td::actor::Scheduler scheduler({2});
+  // One thread and virtual time: when nothing is runnable, time jumps to the next alarm,
+  // so every wait in the driver ends only after all the work it allowed has run.
+  td::actor::TestScheduler scheduler;
+  scheduler.begin_sync();
   td::actor::ActorOwn<Driver> driver;
-  scheduler.run_in_context([&] {
+  scheduler.step([&] {
     driver = td::actor::create_actor<Driver>("merkle-driver", mode, n.move_as_ok());
     td::actor::ask(driver, &Driver::run).detach();
   });
-  while (scheduler.run(1)) {
-  }
-  return 0;
+  scheduler.run_until_no_alarm();
+  // The driver ends the process with its verdict; reaching here means it waits for
+  // something nothing is left to do.
+  std::fprintf(stderr, "the driver is stuck with no work and no alarm pending\n");
+  return 1;
 }

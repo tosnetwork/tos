@@ -618,7 +618,13 @@ struct RawQuicEndpointState {
     } else {
       inbound_cid = cid;
       inbound_local_public_key = local_public_key.as_slice().str();
+      inbound_peer_public_keys.push_back(peer_public_key.as_slice().str());
     }
+  }
+
+  std::vector<std::string> get_inbound_peer_public_keys() const {
+    std::lock_guard guard(mutex);
+    return inbound_peer_public_keys;
   }
 
   void remember_local_stream(tos::quic::QuicStreamID sid) {
@@ -671,6 +677,8 @@ struct RawQuicEndpointState {
   std::optional<tos::quic::QuicConnectionId> inbound_cid;
   std::optional<std::string> outbound_local_public_key;
   std::optional<std::string> inbound_local_public_key;
+  // Every accepted inbound connection's peer key, in order.
+  std::vector<std::string> inbound_peer_public_keys;
   std::unordered_set<tos::quic::QuicStreamID> locally_opened_streams;
   std::unordered_set<tos::quic::QuicStreamID> closed_streams;
   size_t closed_stream_count = 0;
@@ -1458,8 +1466,29 @@ TEST(QuicSniDispatch, UnknownSniFailsHandshake) {
                        .wrap();
     LOG_CHECK(result.is_ok()) << "connect failed before handshake: " << result.error();
     static_cast<void>(result.move_as_ok());
-    co_await td::actor::coro_sleep(td::Timestamp::in(0.2));
-    ASSERT_TRUE(!server.state->get_inbound_local_public_key().has_value());
+    // A barrier: a second connection from the same endpoint, with its own client key and no
+    // SNI. Its handshake starts after the refused one, on the same sockets, so once the
+    // server has accepted it the refused handshake has been decided; an accepted one would
+    // be on the list too.
+    auto barrier_key = make_quic_key(server.port * 31 + 4);
+    auto barrier = co_await td::actor::ask(client.server, &tos::quic::QuicServer::connect, td::Slice("127.0.0.1"),
+                                           server.port, clone_quic_key(barrier_key), td::Slice("tos"), td::Slice(""))
+                       .wrap();
+    LOG_CHECK(barrier.is_ok()) << "barrier connect failed before handshake: " << barrier.error();
+    static_cast<void>(barrier.move_as_ok());
+    const auto barrier_peer = pubkey_bytes(barrier_key);
+    const auto deadline = td::Timestamp::in(5.0);
+    while (true) {
+      auto peers = server.state->get_inbound_peer_public_keys();
+      if (std::find(peers.begin(), peers.end(), barrier_peer) != peers.end()) {
+        break;
+      }
+      ASSERT_TRUE(!deadline.is_in_past());
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.005));
+    }
+    auto peers = server.state->get_inbound_peer_public_keys();
+    ASSERT_EQ(peers.size(), 1u);
+    ASSERT_TRUE(peers[0] == barrier_peer);
     co_return td::Unit{};
   });
 }
