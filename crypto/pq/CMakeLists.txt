@@ -386,22 +386,22 @@ set(TOS_SLHDSA_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third-party/slhdsa-
 # SHA-256 backend of the SLH-DSA verifier. Either switch ON builds crypto/pq/slhdsa-sha256.c (a
 # hardware compression with a portable fallback chosen at run time) in place of the imported
 # sha2_256.c; the hashes are the same either way. TOS_SLHDSA_SHA_NI is the x86-64 SHA-NI backend,
-# default on for Linux x86-64 with GCC or Clang; TOS_SLHDSA_ARMV8_SHA2 is the ARMv8 SHA2 backend,
+# default on for x86-64 Linux and macOS with GCC or Clang; TOS_SLHDSA_ARMV8_SHA2 is the ARMv8 SHA2 backend,
 # default on for Linux aarch64 with GCC or Clang and for macOS on Apple silicon. Both are off
 # elsewhere. The environment variable
 # of the same name sets each default, so the CMake and Cargo builds follow one switch.
 if(DEFINED ENV{TOS_SLHDSA_SHA_NI})
   set(TOS_SLHDSA_SHA_NI_DEFAULT "$ENV{TOS_SLHDSA_SHA_NI}")
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$"
-       AND CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$")
+elseif(CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin)$" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$"
+       AND CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
   set(TOS_SLHDSA_SHA_NI_DEFAULT ON)
 else()
   set(TOS_SLHDSA_SHA_NI_DEFAULT OFF)
 endif()
 option(TOS_SLHDSA_SHA_NI "SLH-DSA verifier uses the SHA-NI SHA-256 backend" ${TOS_SLHDSA_SHA_NI_DEFAULT})
 if(TOS_SLHDSA_SHA_NI)
-  if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" OR NOT CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$"
-     OR NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
+  if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" OR NOT CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$"
+     OR NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     message(FATAL_ERROR "TOS_SLHDSA_SHA_NI needs an x86-64 target and GCC or Clang")
   endif()
   # The SHA-NI transform is vendored unchanged (third-party/bitcoin-sha256/PROVENANCE.md) and

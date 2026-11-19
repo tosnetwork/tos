@@ -3,7 +3,7 @@
 // SHA-256 backend of the SLH-DSA verifier for Cargo builds, included by every build script that
 // compiles the imported SLH-DSA code. The rule is the one in crypto/pq/CMakeLists.txt, so the C++
 // and Rust builds follow the same switches, each 1/0 (ON/OFF, TRUE/FALSE, YES/NO) when set:
-// TOS_SLHDSA_SHA_NI, otherwise SHA-NI on Linux x86-64, and TOS_SLHDSA_ARMV8_SHA2, otherwise the
+// TOS_SLHDSA_SHA_NI, otherwise SHA-NI on x86-64 Linux and macOS, and TOS_SLHDSA_ARMV8_SHA2, otherwise the
 // ARMv8 SHA2 extension on aarch64 Linux and macOS. Either builds crypto/pq/slhdsa-sha256.c in place of the
 // imported sha2_256.c; the hashes are identical, only CPU time differs.
 
@@ -99,7 +99,8 @@ pub fn slhdsa_sha256(root: &std::path::Path) -> SlhdsaSha256 {
     let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let endian = std::env::var("CARGO_CFG_TARGET_ENDIAN").unwrap_or_default();
     let armv8_target = (os == "linux" || os == "macos") && arch == "aarch64" && endian == "little";
-    let sha_ni = slhdsa_sha256_switch("TOS_SLHDSA_SHA_NI", os == "linux" && arch == "x86_64");
+    let sha_ni_target = (os == "linux" || os == "macos") && arch == "x86_64";
+    let sha_ni = slhdsa_sha256_switch("TOS_SLHDSA_SHA_NI", sha_ni_target);
     let armv8_sha2 = slhdsa_sha256_switch("TOS_SLHDSA_ARMV8_SHA2", armv8_target);
     if sha_ni && arch != "x86_64" {
         panic!("TOS_SLHDSA_SHA_NI needs an x86-64 target, not {arch}");
