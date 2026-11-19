@@ -1,13 +1,21 @@
+#include "td/utils/port/config.h"
+
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <chrono>
+#include <climits>
 #include <condition_variable>
 #include <cstring>
-#include <fcntl.h>
 #include <mutex>
+#if TD_PORT_WINDOWS
+#include <io.h>
+#else
+#include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
+#endif
 
 #include "td/utils/AsyncStderrLog.h"
 #include "td/utils/port/signals.h"
@@ -27,6 +35,30 @@ void count_drop(bool error) {
   }
 }
 
+#if TD_PORT_WINDOWS
+// Windows has no SIGPIPE: a write to a closed pipe fails with an error.
+struct Output {
+  explicit Output(int source) : fd(_dup(source)) {
+  }
+  ~Output() {
+    if (fd >= 0) {
+      _close(fd);
+    }
+  }
+  bool write_all(Slice data) const {
+    while (!data.empty()) {
+      const auto chunk = static_cast<unsigned>(std::min<size_t>(data.size(), INT_MAX));
+      const int n = _write(fd, data.data(), chunk);
+      if (n <= 0) {
+        return false;
+      }
+      data.remove_prefix(static_cast<size_t>(n));
+    }
+    return true;
+  }
+  int fd;
+};
+#else
 struct Output {
   explicit Output(int source) : fd(fcntl(source, F_DUPFD_CLOEXEC, 3)) {
 #ifdef F_SETNOSIGPIPE
@@ -71,6 +103,7 @@ struct Output {
   bool restore_sigpipe{false};
 #endif
 };
+#endif
 
 }  // namespace
 
@@ -85,11 +118,15 @@ struct AsyncStderrLog::State {
   }
 
   void run() {
+#if TD_PORT_WINDOWS
+    const bool can_write = true;
+#else
     // EPIPE is a failure of this diagnostic record, never a process signal.
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGPIPE);
     const bool can_write = pthread_sigmask(SIG_BLOCK, &mask, nullptr) == 0;
+#endif
     std::unique_lock lock(mutex);
     for (;;) {
       work.wait(lock, [&] { return closing || count != 0; });

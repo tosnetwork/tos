@@ -324,7 +324,7 @@ endif()
 
 include(CheckCXXCompilerFlag)
 
-find_package(PkgConfig REQUIRED)
+find_package(PkgConfig QUIET)
 
 if (MINGW)
   option(TOS_USE_STATIC_ZLIB "Prefer static zlib on MinGW to avoid runtime DLLs" ON)

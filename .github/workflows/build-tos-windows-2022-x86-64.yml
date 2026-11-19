@@ -1,0 +1,48 @@
+name: Windows TOS build (x86-64)
+
+# The node and its tools built on Windows with clang-cl and lld-link from
+# Visual Studio 2022 (assembly/native/build-windows-2022.bat). It runs on every
+# pull request to main and every push to main, unfiltered by path, for the
+# reason the Linux shared builds give.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: cmd
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 300
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+
+    # The runner image ships Chocolatey, Strawberry Perl and the Visual Studio
+    # LLVM toolset; ninja and NASM come from Chocolatey.
+    - name: Install build tools
+      run: choco install -y --no-progress ninja nasm
+
+    - name: Build TOS
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        if errorlevel 1 exit /b 1
+        set "PATH=%PATH%;C:\Program Files\NASM"
+        call assembly\native\build-windows-2022.bat -k
+        if errorlevel 1 exit /b 1
