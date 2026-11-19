@@ -581,19 +581,19 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   set(NATIVE_REGISTRY_CPP "${SMARTCONT_AUTO_DIR}/native-registry-code.cpp")
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Native Service Registry BOC"
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    WORKING_DIRECTORY ${TOS_SOURCE_DIR}
     COMMAND ${CMAKE_COMMAND} -E env
       FUNC_BIN=$<TARGET_FILE:func>
       FIFT_BIN=$<TARGET_FILE:fift>
-      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
+      ${TOS_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
       ${NATIVE_REGISTRY_CPP} native-registry
     MAIN_DEPENDENCY smartcont/native-registry-code.fc
     DEPENDS func fift smartcont/stdlib.fc smartcont/pq.fc smartcont/pq-bytes.fc
       smartcont/tos-service-native-registry-v1.boc.base64
       smartcont/tos-service-native-registry-v1.release.json
-      ${CMAKE_SOURCE_DIR}/scripts/build-tos-service-native-registry-v1.sh
-      ${CMAKE_SOURCE_DIR}/scripts/test-tos-service-native-registry-v1.sh
-      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
+      ${TOS_SOURCE_DIR}/scripts/build-tos-service-native-registry-v1.sh
+      ${TOS_SOURCE_DIR}/scripts/test-tos-service-native-registry-v1.sh
+      ${TOS_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
     OUTPUT ${NATIVE_REGISTRY_CPP}
   )
   add_custom_target(gen_fif_smartcont_auto_native_registry_code DEPENDS ${NATIVE_REGISTRY_CPP})

@@ -10,8 +10,11 @@ The current build focuses on the native TVM execution surface for actor-based ap
 ## Supported Platforms
 
 The node and its tools are built, tested in CI and released for Linux only, on
-x86-64 and arm64. There are no Windows, Android or WebAssembly builds, build
-scripts or release artifacts, and no macOS release artifacts.
+x86-64 and arm64. There are no Windows or WebAssembly builds, build scripts or
+release artifacts, and no macOS or Android release artifacts.
+
+Android covers toslib only, not the node: see
+[Android toslib Build](#android-toslib-build).
 
 macOS on Apple silicon is built from source: see
 [macOS Development Build](#macos-development-build). It can run a node and a
@@ -176,6 +179,35 @@ The labels mark tests that macOS cannot host, not failures of the code they test
   hold there. `test-http-server-limits` cannot pin loopback socket buffers as
   small as its slow-reader case requires, and `test-rldp2-decoder-heap` is
   calibrated against glibc's allocator, which rounds less than the macOS one.
+
+## Android toslib Build
+
+`example/android/build.sh` builds toslib for Android as a JNI library,
+`libnative-lib.so`, for `arm64-v8a`, `armeabi-v7a`, `x86_64` and `x86` (or the
+ABIs named on its command line), at API level 24, with the NDK that
+`ANDROID_NDK_ROOT` names. It needs the [Linux prerequisites](#linux-prerequisites)
+or a macOS development host, a JDK and Ninja:
+
+```bash
+ANDROID_NDK_ROOT=/path/to/android-ndk example/android/build.sh
+test/android/run-jvm-smoke.sh
+```
+
+A cross build cannot run the generators, so the script first builds
+`example/android` for the host. That build generates the TL, TL-B and contract
+sources and the Java API, `src/org/tos/toslib/TosApi.java`, and its own
+`libnative-lib` is what `test/android/run-jvm-smoke.sh` loads in a desktop JVM
+to check the binding: synchronous and asynchronous requests, object
+conversion in both directions, and `Client.close()`. The result is
+`example/android/toslib-android/`: `libs/<ABI>/libnative-lib.so`, stripped;
+`src/` with `org/tos/toslib/Client.java` and `TosApi.java`, which an app
+compiles with its own sources; and `BUILD-INFO` with the commit, the NDK
+version and each file's SHA-256. The Java package is `org.tos.toslib`.
+
+`.github/workflows/build-toslib-android.yml` runs both on every pull request
+and push to `main` with NDK r27d (27.3.13750724), checks each library's ELF
+machine and its exported `JNI_OnLoad`, and keeps the result as the
+`toslib-android` workflow artifact. It is not a release asset.
 
 ## Rust Workspace
 

@@ -287,7 +287,7 @@ if (USE_QUIC)
       set(HAVE_SSL_SET_QUIC_TLS_CBS TRUE CACHE BOOL "OpenSSL QUIC support" FORCE)
     endif()
     add_subdirectory(third-party/ngtcp2 EXCLUDE_FROM_ALL)
-    set(NGTCP2_ROOT ${CMAKE_SOURCE_DIR}/third-party/ngtcp2)
+    set(NGTCP2_ROOT ${TOS_SOURCE_DIR}/third-party/ngtcp2)
   endfunction()
   ngtcp2_scope()
 
