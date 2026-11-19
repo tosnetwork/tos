@@ -1,5 +1,3 @@
-#include "td/utils/port/config.h"
-
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -8,6 +6,8 @@
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
+
+#include "td/utils/port/config.h"
 #if TD_PORT_WINDOWS
 #include <io.h>
 #else

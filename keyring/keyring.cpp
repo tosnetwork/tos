@@ -17,21 +17,21 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+
 #include "common/errorcode.h"
 #include "common/io.hpp"
 #include "td/utils/PathView.h"
 #include "td/utils/Random.h"
 #include "td/utils/filesystem.h"
-#include "td/utils/port/path.h"
 #include "td/utils/port/FileFd.h"
 #include "td/utils/port/Stat.h"
+#include "td/utils/port/path.h"
 #include "td/utils/port/platform.h"
 
 #include "keyring.hpp"
-
-#include <cerrno>
-#include <cstdio>
-#include <cstring>
 #if !TD_PORT_WINDOWS
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -140,8 +140,8 @@ void KeyringImpl::add_key(PrivateKey key, bool is_temp, td::Promise<td::Unit> pr
       if (r_written.is_error() || r_written.ok() == 0) {
         fd.close();
         td::unlink(tmp_name).ignore();
-        LOG(FATAL) << "keyring: write " << tmp_name << " failed: "
-                   << (r_written.is_error() ? r_written.error() : td::Status::Error("wrote nothing"));
+        LOG(FATAL) << "keyring: write " << tmp_name
+                   << " failed: " << (r_written.is_error() ? r_written.error() : td::Status::Error("wrote nothing"));
       }
       data.remove_prefix(r_written.ok());
     }
