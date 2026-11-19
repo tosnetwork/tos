@@ -23,17 +23,21 @@
 #include "td/utils/Random.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
+#include "td/utils/port/FileFd.h"
 #include "td/utils/port/Stat.h"
+#include "td/utils/port/platform.h"
 
 #include "keyring.hpp"
 
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#if !TD_PORT_WINDOWS
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
 
 namespace tos {
 
@@ -72,12 +76,14 @@ td::Result<KeyringImpl::PrivateKeyDescr*> KeyringImpl::load_key(PublicKeyHash ke
   // turn host/backup compromise into key compromise. Don't refuse to load
   // (operators with intentionally-relaxed perms exist and we don't want to
   // brick a running validator), but make the misconfiguration loud.
+#if !TD_PORT_WINDOWS
   struct stat st;
   if (::stat(name.c_str(), &st) == 0 && (st.st_mode & 0077) != 0) {
     LOG(ERROR) << "keyring: key file " << name << " has insecure permissions "
                << std::oct << (st.st_mode & 0777) << std::dec
                << " (expected 0600). Run: chmod 0600 " << name;
   }
+#endif
 
   auto R = td::read_file_secure(td::CSlice{name});
   if (R.is_error()) {
@@ -113,6 +119,43 @@ void KeyringImpl::add_key(PrivateKey key, bool is_temp, td::Promise<td::Unit> pr
     auto name = db_root_ + "/" + short_id.bits256_value().to_hex();
     auto tmp_name = name + ".tmp";
 
+#if TD_PORT_WINDOWS
+    // Windows has no mode bits: the file takes the ACL of the key directory, so
+    // the directory is what keeps the key private. The write is still exclusive,
+    // flushed and renamed into place, so an interrupted write leaves no half key.
+    auto write_tmp = [&]() { return td::FileFd::open(tmp_name, td::FileFd::Write | td::FileFd::CreateNew); };
+    auto r_fd = write_tmp();
+    if (r_fd.is_error()) {
+      LOG(WARNING) << "keyring: removing stale " << tmp_name << " (likely from a previous crashed write)";
+      td::unlink(tmp_name).ignore();
+      r_fd = write_tmp();
+    }
+    if (r_fd.is_error()) {
+      LOG(FATAL) << "keyring: cannot open " << tmp_name << " for write: " << r_fd.error();
+    }
+    auto fd = r_fd.move_as_ok();
+    auto data = S.as_slice();
+    while (!data.empty()) {
+      auto r_written = fd.write(data);
+      if (r_written.is_error() || r_written.ok() == 0) {
+        fd.close();
+        td::unlink(tmp_name).ignore();
+        LOG(FATAL) << "keyring: write " << tmp_name << " failed: "
+                   << (r_written.is_error() ? r_written.error() : td::Status::Error("wrote nothing"));
+      }
+      data.remove_prefix(r_written.ok());
+    }
+    if (auto status = fd.sync(); status.is_error()) {
+      fd.close();
+      td::unlink(tmp_name).ignore();
+      LOG(FATAL) << "keyring: sync " << tmp_name << " failed: " << status;
+    }
+    fd.close();
+    if (auto status = td::rename(tmp_name, name); status.is_error()) {
+      td::unlink(tmp_name).ignore();
+      LOG(FATAL) << "keyring: rename " << tmp_name << " -> " << name << " failed: " << status;
+    }
+#else
     // Write the temp file with mode 0600
     // FROM CREATION so the umask-honoring `td::atomic_write_file` cannot
     // leave the key material readable by other users for the brief window
@@ -170,6 +213,7 @@ void KeyringImpl::add_key(PrivateKey key, bool is_temp, td::Promise<td::Unit> pr
       LOG(ERROR) << "keyring: failed to chmod " << name
                  << " to 0600: " << td::Status::PosixError(errno, "chmod");
     }
+#endif
   }
   promise.set_value(td::Unit());
 }

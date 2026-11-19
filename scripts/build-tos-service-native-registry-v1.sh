@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# pwd -W gives a Windows path under Git Bash, which the native Windows compilers
+# and FIFTPATH need; elsewhere the plain path is used.
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && { pwd -W 2>/dev/null || pwd; })
+PYTHON3=${PYTHON3:-python3}
 # These defaults are only a convenience for a developer invoking this script
 # directly. CMake's frozen-artifact rule passes its just-built target paths.
 FUNC_BIN=${FUNC_BIN:-"$REPO_ROOT/build/crypto/func"}
@@ -32,7 +35,7 @@ HASH_OUTPUT=$(FIFTPATH="$REPO_ROOT/crypto/fift/lib" "$FIFT_BIN" -s \
   "$REPO_ROOT/crypto/smartcont/hash-code-boc.fif" "$OUTPUT")
 ACTUAL_CODE_HASH=$(printf '%s\n' "$HASH_OUTPUT" | sed -n 's/^tvm-cell-sha256:\([0-9a-f]*\).*/\1/p')
 ACTUAL_CODE_HASH=$(printf '%064s' "$ACTUAL_CODE_HASH" | tr ' ' 0)
-BOC_METADATA=$(python3 - "$OUTPUT" <<'PY'
+BOC_METADATA=$("$PYTHON3" - "$OUTPUT" <<'PY'
 import hashlib
 import pathlib
 import sys
