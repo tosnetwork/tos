@@ -6,9 +6,16 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # directly. CI passes the compilers it has just built.
 FUNC_BIN=${FUNC_BIN:-"$REPO_ROOT/build/crypto/func"}
 FIFT_BIN=${FIFT_BIN:-"$REPO_ROOT/build/crypto/fift"}
-OUTPUT=${1:-"$REPO_ROOT/crypto/smartcont/artifacts/tos-service-actor-v1.boc"}
-# The release manifest is the one place the pins live.
-MANIFEST="$REPO_ROOT/crypto/smartcont/tos-service-actor-v1.release.json"
+# SERVICE_ACTOR_PROFILE selects the build: "release" (the default) compiles
+# the checked-in source; "test" compiles the TEST-NETWORK-ONLY build whose
+# minimum response SLA and refund claim window are lowered (see
+# scripts/tos_service_actor_profile.py). Each profile has its own manifest.
+PROFILE=${SERVICE_ACTOR_PROFILE:-release}
+PROFILE_TOOL="$REPO_ROOT/scripts/tos_service_actor_profile.py"
+DEFAULT_OUTPUT=$(python3 "$PROFILE_TOOL" default-output "$PROFILE")
+OUTPUT=${1:-"$DEFAULT_OUTPUT"}
+# The profile's manifest is the one place its pins live.
+MANIFEST=$(python3 "$PROFILE_TOOL" manifest "$PROFILE")
 PINS=$(python3 - "$MANIFEST" <<'PY'
 import json
 import re
@@ -37,6 +44,7 @@ done
 mkdir -p "$(dirname "$OUTPUT")"
 BUILD_DIR=$(mktemp -d)
 trap 'rm -rf "$BUILD_DIR"' EXIT
+SOURCE=$(python3 "$PROFILE_TOOL" source "$PROFILE" "$BUILD_DIR/source")
 
 # The release manifest records this argument vector; the placeholders are
 # substituted here and nowhere else.
@@ -51,7 +59,7 @@ for argument in "${FUNC_ARGUMENTS[@]}"; do
 done
 "$FUNC_BIN" "${FUNC_COMMAND[@]}" \
   "$REPO_ROOT/crypto/smartcont/stdlib.fc" \
-  "$REPO_ROOT/crypto/smartcont/service-actor-code.fc"
+  "$SOURCE"
 FIFTPATH="$REPO_ROOT/crypto/fift/lib" "$FIFT_BIN" \
   "$BUILD_DIR/service-actor-v1.fif"
 
@@ -83,6 +91,7 @@ if [[ "$ACTUAL_BOC_BYTES" != "$EXPECTED_BOC_BYTES" ]]; then
   exit 1
 fi
 
+printf 'profile=%s\n' "$PROFILE"
 printf 'code_hash=tvm-cell-sha256:%s\n' "$ACTUAL_CODE_HASH"
 printf 'boc_sha256=sha256:%s\n' "$ACTUAL_BOC_SHA256"
 printf 'boc_bytes=%s\n' "$ACTUAL_BOC_BYTES"

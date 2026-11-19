@@ -1,0 +1,67 @@
+name: MacOS-15 TOS build (release, arm64)
+
+# The macOS release binaries for Apple silicon, built with
+# assembly/native/build-macos-release.sh: Release, Apple clang, a fixed CPU
+# level, minimum macOS 15.0, the system allocator and SOURCE_DATE_EPOCH set to
+# the commit time. The same script builds tosctl with the pinned Rust toolchain
+# and the committed Cargo.lock. The shared macOS build tests this recipe on
+# every pull request; this workflow packages it.
+
+on:
+  # Release packaging: a version tag builds the binaries the release workflow
+  # collects (scripts/release-artifacts.json); dispatch builds them on demand.
+  push:
+    tags: ['v*']
+  # A change to the recipe runs it before it merges. A pull-request run only
+  # uploads workflow artifacts with a read-only token; the release collects
+  # push and dispatch runs of the tag commit only (scripts/release-artifacts.py).
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - '.github/workflows/build-tos-macos-15-arm64-release.yml'
+      - 'assembly/native/build-macos-release.sh'
+      - 'scripts/release-artifacts.json'
+      - 'rust-toolchain.toml'
+      - 'scripts/install-rust-toolchain.sh'
+      - 'tosctl/src/Cargo.lock'
+      - 'tosctl/src/common/build/build.rs'
+      - 'tosctl/src/node-control/nodectl/src/app_cli_args.rs'
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: macOS release binaries (arm64)
+    runs-on: macos-15
+    timeout-minutes: 360
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+
+    - name: Install build tools
+      run: brew install ninja pkg-config autoconf automake libtool
+
+    # tosctl is built by the same script, with the toolchain rust-toolchain.toml pins.
+    - name: Install repository-pinned Rust toolchain
+      run: scripts/install-rust-toolchain.sh
+
+    - name: Build the macOS release binaries
+      run: assembly/native/build-macos-release.sh macos-binaries
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: tos-arm64-macos
+        path: macos-binaries
+        if-no-files-found: error
+        retention-days: 14

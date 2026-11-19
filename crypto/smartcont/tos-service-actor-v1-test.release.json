@@ -1,0 +1,27 @@
+{
+  "schema": "tos.contract.release.v1",
+  "protocol": "tos_service_v1",
+  "contract": "tos-service-actor-v1",
+  "profile": "test",
+  "test_only": true,
+  "notice": "TEST NETWORKS ONLY. This build lowers the minimum response SLA and refund claim window to 600 seconds so test networks can exercise the timeout-refund path in minutes. It is not a release of the Service Actor, has its own code hash, and must never be deployed or pinned on a production network.",
+  "constant_overrides": {
+    "MIN_RESPONSE_SLA": 600,
+    "MIN_REFUND_CLAIM_WINDOW": 600
+  },
+  "release_manifest": "crypto/smartcont/tos-service-actor-v1.release.json",
+  "source": "crypto/smartcont/service-actor-code.fc",
+  "stdlib": "crypto/smartcont/stdlib.fc",
+  "build_script": "scripts/build-tos-service-actor-v1.sh",
+  "tos_commit": "fc5e7723e5dfb04890902abdd456aa41b4655a10",
+  "compiler": {
+    "name": "FunC",
+    "semantic_version": "v0.4.6",
+    "source_commit": "392bc162e095cc34292eb9ea0709273407e06ca7",
+    "arguments": ["-W", "<output.boc>", "-A", "-P", "-o", "<temporary.fif>"]
+  },
+  "code_hash": "tvm-cell-sha256:79a566f5f4281f7abe59cd1c16a7bc3b2d990e840f42b00d55cb0ae4b0545960",
+  "boc_sha256": "sha256:c77cfda33feca51c26c991f48575fa54c30b988731a37a5b5148c50148c2435c",
+  "boc_bytes": 4590,
+  "artifact_base64": "crypto/smartcont/tos-service-actor-v1-test.boc.base64"
+}

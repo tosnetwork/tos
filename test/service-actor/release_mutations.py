@@ -10,7 +10,10 @@ status and the diagnostic it must print: (a) a flipped artifact byte fails
 both the release test and the bytecode checker; (b) a changed source constant
 fails on the code hash; (c) a wrong manifest size fails the build script,
 which reads its pins from the manifest; (d) the same root cell in another BOC container fails the release
-test's byte comparison while the root-hash checker alone still passes. The
+test's byte comparison while the root-hash checker alone still passes; for
+the test-only build, (e) a flipped test artifact byte fails both checks, (f) a
+test manifest that does not say test_only fails, and (g) a test manifest that
+lists an override the build does not apply fails. The
 runner exits nonzero when any run differs from its expectation, so a check
 that stops refusing is reported as a failure, not recorded as data.
 """
@@ -154,6 +157,31 @@ control(
         # The root-hash checker alone accepts the same root in another container.
         (CHECKER, PASS_CHECKER),
     ],
+)
+control(
+    "e-test-artifact-byte",
+    "crypto/smartcont/tos-service-actor-v1-test.boc.base64",
+    flip_artifact_character,
+    [
+        (TEST, (1, "frozen artifact differs from the rebuild")),
+        (CHECKER, (1, "Service Actor test-profile artifact is stale")),
+    ],
+)
+control(
+    "f-test-manifest-not-test-only",
+    "crypto/smartcont/tos-service-actor-v1-test.release.json",
+    lambda raw: raw.replace(b'"test_only": true', b'"test_only": false', 1),
+    [(TEST, (1, "the test manifest must set test_only to true"))],
+)
+control(
+    "g-test-manifest-extra-override",
+    "crypto/smartcont/tos-service-actor-v1-test.release.json",
+    lambda raw: raw.replace(
+        b'"MIN_REFUND_CLAIM_WINDOW": 600',
+        b'"MIN_REFUND_CLAIM_WINDOW": 600,\n    "MINIMUM_STORAGE_FEE": 1',
+        1,
+    ),
+    [(TEST, (1, "manifest constant_overrides differ from the overrides the build applies"))],
 )
 record("restored", TEST, PASS_TEST)
 OUTPUT.write_text(json.dumps(results, indent=1) + "\n")
