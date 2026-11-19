@@ -113,6 +113,27 @@ The sandbox suite is the authoritative CI source/artifact equality gate.
 checks it. Mutations compile alternate source and require the intended behavioral
 assertion to fail, rather than accepting a compile failure as evidence.
 
+## Test-only build
+
+`crypto/smartcont/tos-service-actor-v1-test.release.json` pins a second build of
+the same source, for test networks only. In that build `MIN_RESPONSE_SLA` and
+`MIN_REFUND_CLAIM_WINDOW` are 600 seconds instead of 3,600, so a test network
+can exercise the timeout-refund path in about ten minutes. Nothing else changes.
+`scripts/tos_service_actor_profile.py` derives the test source by replacing
+exactly those two declarations, and refuses if either is missing, repeated or
+not lowered. The build has its own code hash
+(`tvm-cell-sha256:79a566f5f4281f7abe59cd1c16a7bc3b2d990e840f42b00d55cb0ae4b0545960`),
+so anything that pins the release code hash refuses an actor running it.
+`tosctl agent service deploy --code-profile test` deploys it. tosctl has no way
+to tell a production network from a test network, so this flag is a labelled
+operator choice and not a network check.
+
+`scripts/test-tos-service-actor-v1.sh` rebuilds and checks both builds
+(`SERVICE_ACTOR_PROFILE=test` selects the test build in
+`scripts/build-tos-service-actor-v1.sh`). It fails if the release BOC changes by
+a single byte, if the test manifest stops saying `test_only`, or if the test
+code hash equals the release code hash.
+
 The gas stress fixture constructs 99,999 real pending/refund entries and 99,001
 caller keys, including a caller with 999 live entries. It measures existing and
 new caller admission, both sweep branches, refund, and withdrawal. Sparse
