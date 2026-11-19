@@ -1113,8 +1113,9 @@ bool n5_wait_finalizations_settled(td::actor::Scheduler &scheduler, sx::BusHandl
   std::optional<td::Result<td::Unit>> settled;
   scheduler.run_in_context([&] {
     waiter = td::actor::create_actor<N5FinalizationSettledWaiter>("n5-finalization-settled");
-    td::actor::send_closure(waiter, &N5FinalizationSettledWaiter::await_settled, bus,
-                            td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) { settled.emplace(std::move(outcome)); }));
+    td::actor::send_closure(
+        waiter, &N5FinalizationSettledWaiter::await_settled, bus,
+        td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) { settled.emplace(std::move(outcome)); }));
   });
   while (!settled.has_value()) {
     scheduler.run(0.01);
