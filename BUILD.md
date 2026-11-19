@@ -9,9 +9,9 @@ The current build focuses on the native TVM execution surface for actor-based ap
 
 ## Supported Platforms
 
-The node and its tools are built, tested in CI and released for Linux only, on
+The node and its tools are built, tested in CI and released for Linux on
 x86-64 and arm64. There are no Windows or Android builds, build scripts or
-release artifacts, and no macOS release artifacts.
+release artifacts.
 
 WebAssembly covers the contract tools only, not the node: the FunC compiler
 and Fift assembler library (`funcfiftlib`), `fift`, `func`, `tlbc` and the
@@ -26,8 +26,14 @@ macOS on Apple silicon is built from source: see
 [macOS Development Build](#macos-development-build). It can run a node and a
 validator ([macOS validators](doc/Validator.md#macos-validators)). CI builds
 and tests it on every pull request and push to `main`
-(`.github/workflows/build-tos-macos-15-arm64-shared.yml`), but it is not
-released.
+(`.github/workflows/build-tos-macos-15-arm64-shared.yml`).
+`.github/workflows/build-tos-macos-15-arm64-release.yml` packages the same
+build for release on every version tag, with
+`assembly/native/build-macos-release.sh`: Release, Apple clang, `apple-m1`,
+minimum macOS 15.0, the system allocator, and only libraries macOS itself
+provides. Its artifact `tos-arm64-macos` joins the release once that workflow
+has succeeded on a tag ([release policy](doc/tos-release-policy.md)); until
+then there are no macOS release assets.
 
 One exception is not a node platform: `.github/workflows/quantum-mobile-native.yml`
 also runs on macOS. It compiles and runs the post-quantum native C API in

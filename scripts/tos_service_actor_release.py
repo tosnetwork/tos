@@ -3,10 +3,12 @@
 
 scripts/test-tos-service-actor-v1.sh builds the contract twice and then runs
 
-    tos_service_actor_release.py <first.boc> <build-output.txt> <func-binary>
+    tos_service_actor_release.py <first.boc> <build-output.txt> <func-binary> [profile]
 
-which requires: the rebuilt BOC equals the committed base64 artifact and the
-SDK constant SERVICE_ACTOR_CODE_B64 byte for byte; every manifest field equals
+once per profile (release, the default, and the test-only build), which
+requires: the rebuilt BOC equals the profile's committed base64 artifact and
+its SDK constant (SERVICE_ACTOR_CODE_B64, or
+SERVICE_ACTOR_TEST_PROFILE_CODE_B64) byte for byte; every manifest field equals
 what the build reported (code hash, BOC SHA-256 and size, compiler arguments)
 or what the compiler reports about itself (semantic version); and, when the
 manifest's tos_commit is in local history, that the contract source and every
@@ -15,20 +17,30 @@ file it includes are unchanged since that commit.
 compiler.source_commit is recorded provenance: only its format is checked, as
 nothing in a built executable proves which commit produced it.
 
+The release manifest must carry no profile fields at all. The test manifest
+must declare itself test-only, list exactly the overrides
+tos_service_actor_profile.py applies, and pin a code hash and BOC that differ
+from the release pins; its check also requires the committed release artifact
+to still match the release manifest byte for byte.
+
 Standard library only.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import tos_service_actor_profile as profiles  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
-MANIFEST = REPO / "crypto/smartcont/tos-service-actor-v1.release.json"
+MANIFEST = REPO / profiles.PROFILES[profiles.RELEASE]["manifest"]
 SDK = REPO / "tosctl/src/node-control/contracts/src/service_actor.rs"
 
 EXPECTED_FIELDS = {
@@ -38,8 +50,9 @@ EXPECTED_FIELDS = {
     "source": "crypto/smartcont/service-actor-code.fc",
     "stdlib": "crypto/smartcont/stdlib.fc",
     "build_script": "scripts/build-tos-service-actor-v1.sh",
-    "artifact_base64": "crypto/smartcont/tos-service-actor-v1.boc.base64",
 }
+PROFILE_FIELDS = ("profile", "test_only", "notice", "constant_overrides", "release_manifest")
+TEST_NOTICE = "TEST NETWORKS ONLY"
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 INCLUDE = re.compile(r'^\s*#include\s+"([^"]+)"\s*;', re.MULTILINE)
 
@@ -57,12 +70,52 @@ def decode_base64_file(path: Path) -> bytes:
     return base64.b64decode(b"".join(path.read_bytes().split()), validate=True)
 
 
-def sdk_code(path: Path = SDK) -> bytes:
-    match = re.search(
-        r'pub const SERVICE_ACTOR_CODE_B64: &str = "([A-Za-z0-9+/=]+)";', path.read_text()
-    )
-    require(match is not None, "SERVICE_ACTOR_CODE_B64 was not found in the SDK source")
+def sdk_code(path: Path = SDK, constant: str = "SERVICE_ACTOR_CODE_B64") -> bytes:
+    match = re.search(rf'pub const {constant}: &str = "([A-Za-z0-9+/=]+)";', path.read_text())
+    require(match is not None, f"{constant} was not found in the SDK source")
     return base64.b64decode(match.group(1), validate=True)
+
+
+def check_profile_fields(manifest: dict, name: str, root: Path) -> None:
+    """The release manifest carries no profile fields; the test manifest
+    labels itself test-only, lists exactly the overrides the build applies
+    and pins code that differs from a release whose artifact is unchanged."""
+    if name == profiles.RELEASE:
+        present = [key for key in PROFILE_FIELDS if key in manifest]
+        require(not present, f"the release manifest must not carry profile fields: {present}")
+        return
+    require(manifest.get("profile") == name, f"manifest profile must be {name!r}")
+    require(manifest.get("test_only") is True, "the test manifest must set test_only to true")
+    require(
+        isinstance(manifest.get("notice"), str) and manifest["notice"].startswith(TEST_NOTICE),
+        f"the test manifest notice must start with {TEST_NOTICE!r}",
+    )
+    require(
+        manifest.get("constant_overrides") == profiles.PROFILES[name]["overrides"],
+        "manifest constant_overrides differ from the overrides the build applies",
+    )
+    release_path = profiles.PROFILES[profiles.RELEASE]["manifest"]
+    require(
+        manifest.get("release_manifest") == release_path,
+        f"manifest release_manifest must be {release_path!r}",
+    )
+    release = json.loads((root / release_path).read_text())
+    require(
+        manifest.get("code_hash") != release.get("code_hash"),
+        "the test code hash equals the release code hash",
+    )
+    require(
+        manifest.get("boc_sha256") != release.get("boc_sha256"),
+        "the test BOC equals the release BOC",
+    )
+    release_artifact = decode_base64_file(
+        root / profiles.PROFILES[profiles.RELEASE]["artifact_base64"]
+    )
+    require(
+        "sha256:" + hashlib.sha256(release_artifact).hexdigest() == release.get("boc_sha256")
+        and len(release_artifact) == release.get("boc_bytes"),
+        "the release artifact differs from the release manifest",
+    )
 
 
 def parse_build_output(text: str) -> dict[str, str]:
@@ -126,11 +179,24 @@ def check_provenance(commit: str, paths: list[str], root: Path) -> str:
     return "checked"
 
 
-def check_release(built: bytes, build_output: str, func: Path, root: Path = REPO) -> list[str]:
-    manifest = json.loads((root / MANIFEST.relative_to(REPO)).read_text())
-    for key, value in EXPECTED_FIELDS.items():
+def check_release(
+    built: bytes,
+    build_output: str,
+    func: Path,
+    root: Path = REPO,
+    name: str = profiles.RELEASE,
+) -> list[str]:
+    try:
+        selected = profiles.profile(name)
+    except profiles.ProfileError as error:
+        raise ReleaseError(str(error)) from error
+    manifest = json.loads((root / selected["manifest"]).read_text())
+    expected = {**EXPECTED_FIELDS, "artifact_base64": selected["artifact_base64"]}
+    for key, value in expected.items():
         require(manifest.get(key) == value, f"manifest {key} must be {value!r}")
+    check_profile_fields(manifest, name, root)
     reported = parse_build_output(build_output)
+    require(reported.get("profile") == name, f"the build output is not for profile {name!r}")
     require(
         manifest.get("code_hash") == reported["code_hash"],
         "manifest code_hash differs from the build",
@@ -164,9 +230,10 @@ def check_release(built: bytes, build_output: str, func: Path, root: Path = REPO
 
     frozen = decode_base64_file(root / manifest["artifact_base64"])
     require(frozen == built, "frozen artifact differs from the rebuild")
+    constant = selected["sdk_constant"]
     require(
-        sdk_code(root / SDK.relative_to(REPO)) == built,
-        "SDK SERVICE_ACTOR_CODE_B64 differs from the rebuild",
+        sdk_code(root / SDK.relative_to(REPO), constant) == built,
+        f"SDK {constant} differs from the rebuild",
     )
 
     paths = include_closure((root / manifest["source"]).resolve(), root.resolve())
@@ -182,13 +249,14 @@ def check_release(built: bytes, build_output: str, func: Path, root: Path = REPO
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (4, 5):
         print(__doc__, file=sys.stderr)
         return 2
     built = Path(sys.argv[1]).read_bytes()
     build_output = Path(sys.argv[2]).read_text()
+    name = sys.argv[4] if len(sys.argv) == 5 else profiles.RELEASE
     try:
-        for note in check_release(built, build_output, Path(sys.argv[3])):
+        for note in check_release(built, build_output, Path(sys.argv[3]), name=name):
             print(note)
     except ReleaseError as error:
         print(f"Service Actor release check failed: {error}", file=sys.stderr)
