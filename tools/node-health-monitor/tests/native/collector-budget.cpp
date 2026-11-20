@@ -368,7 +368,7 @@ void check_traffic_growth_before_render() {
   CollectionBudget budget{.bounded = true,
                           .deadline = td::Timestamp::now().at() + 5,
                           .max_resident_bytes = initial->resident_bytes,
-                          .max_families = 4};
+                          .max_families = initial->families};
   CHECK(tos::metrics::collect_traffic_with_budget(in, out, 0, budget).is_ok());
   for (const auto magic :
        {tos::tos_api::overlay_broadcast::ID, tos::tos_api::overlay_broadcastFec::ID, tos::tos_api::overlay_message::ID,
@@ -379,6 +379,24 @@ void check_traffic_growth_before_render() {
   auto refused = tos::metrics::collect_traffic_with_budget(in, out, 0, budget);
   CHECK(refused.is_error());
   CHECK(tos::metrics::shed_reason_of(refused.error()) == tos::metrics::kShedOverBudget);
+  // A delay histogram on every cell is the largest result a bucket can render;
+  // the declared reservation must still cover it.
+  for (const auto magic :
+       {tos::tos_api::overlay_broadcast::ID, tos::tos_api::overlay_broadcastFec::ID, tos::tos_api::overlay_message::ID,
+        tos::tos_api::overlay_query::ID, tos::tos_api::overlay_certificate::ID, tos::lite_api::liteServer_query::ID}) {
+    in.account_delay(magic, 3.0);
+  }
+  in.account_delay(0, 3.0);
+  // Without the delay cells the declaration is too small for what is rendered.
+  CHECK(tos::metrics::traffic_collection_reservation(in.cells() + out.cells(), 0)->resident_bytes <
+        std::move(in.collect("in")).join(out.collect("out")).resident_bytes());
+  CHECK(in.delay_cells() == 7);
+  const auto with_delays =
+      tos::metrics::traffic_collection_reservation(in.cells() + out.cells(), 0, 72, in.delay_cells());
+  CHECK(with_delays.has_value());
+  auto rendered = std::move(in.collect("in")).join(out.collect("out"));
+  CHECK(rendered.resident_bytes() <= with_delays->resident_bytes);
+  CHECK(rendered.families.size() <= with_delays->families);
   budget.max_resident_bytes = 1024 * 1024;
   auto result = tos::metrics::collect_traffic_with_budget(in, out, 0, budget);
   CHECK(result.is_ok());

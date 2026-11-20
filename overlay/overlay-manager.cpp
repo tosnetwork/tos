@@ -718,7 +718,7 @@ std::optional<metrics::CollectionReservation> OverlayManager::reservation() cons
   }
   return metrics::traffic_collection_reservation(
       broadcasts_in_.cells() + broadcasts_out_.cells(), drains,
-      std::max(broadcasts_in_.label_capacity(), broadcasts_out_.label_capacity()));
+      std::max(broadcasts_in_.label_capacity(), broadcasts_out_.label_capacity()), broadcasts_in_.delay_cells());
 }
 
 void OverlayManager::collect_with_budget(metrics::MetricsPromise promise, metrics::CollectionBudget budget) {
@@ -735,7 +735,7 @@ td::actor::Task<metrics::MetricSet> OverlayManager::collect_coro(metrics::Collec
     }
     const auto declared = metrics::traffic_collection_reservation(
         broadcasts_in_.cells() + broadcasts_out_.cells(), count,
-        std::max(broadcasts_in_.label_capacity(), broadcasts_out_.label_capacity()));
+        std::max(broadcasts_in_.label_capacity(), broadcasts_out_.label_capacity()), broadcasts_in_.delay_cells());
     if (!declared || !budget.admits(*declared) || budget.expired())
       co_return metrics::shed_status(metrics::kShedOverBudget);
   }

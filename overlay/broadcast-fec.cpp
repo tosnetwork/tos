@@ -190,7 +190,7 @@ void BroadcastFec::broadcast_checked(OverlayImpl *overlay, td::Result<td::Unit> 
     td::actor::send_closure(actor_id(overlay), &OverlayImpl::update_peer_err_ctr, src_peer_id_, true);
     return;
   }
-  overlay->deliver_broadcast(src_.compute_short_id(), data_.clone(), {});
+  overlay->deliver_received_broadcast(src_.compute_short_id(), data_.clone(), src_peer_id_.is_zero() ? 0 : date_);
   while (!parts_.empty()) {
     distribute_part(overlay, parts_.begin()->first);
   }
@@ -347,7 +347,8 @@ td::Status BroadcastFecPart::run(OverlayImpl *overlay, BroadcastFec &bcast) {
             });
         overlay->check_broadcast(bcast.src_.compute_short_id(), R.move_as_ok(), std::move(P));
       } else {
-        overlay->deliver_broadcast(bcast.src_.compute_short_id(), R.move_as_ok(), {});
+        overlay->deliver_received_broadcast(bcast.src_.compute_short_id(), R.move_as_ok(),
+                                            src_peer_id_.is_zero() ? 0 : date_);
       }
     }
   }

@@ -44,6 +44,61 @@ TEST(OverlayMetrics, ContentAndUnknownCardinality) {
   ASSERT_EQ(metric_value(aggregate.collect("in"), "overlay_broadcast_messages_total", "unknown"), 10000u);
 }
 
+// The value of one histogram series of a schema: `suffix` "bucket" with its `le`, or "sum" / "count".
+double delay_value(const metrics::MetricSet &set, const std::string &name, const std::string &suffix,
+                   const std::string &le = "") {
+  for (const auto &f : set.families) {
+    if (f.name != "overlay_broadcast_delivery_delay_seconds") {
+      continue;
+    }
+    for (const auto &m : f.metrics) {
+      bool is_schema = false, is_bound = le.empty();
+      for (const auto &l : m.label_set.labels) {
+        is_schema |= l.key == "tl" && l.val == name;
+        is_bound |= l.key == "le" && l.val == le;
+      }
+      if (m.suffix == suffix && is_schema && is_bound) {
+        return m.samples.at(0).value;
+      }
+    }
+  }
+  return -1;
+}
+
+TEST(OverlayMetrics, DeliveryDelayHistogram) {
+  metrics::TlTrafficBucket bucket;
+  auto data = create_serialize_tl_object<tos_api::dht_ping>(42);
+  // A schema with no observation has no series, and the sending direction has no family.
+  bucket.account(data.as_slice());
+  ASSERT_EQ(delay_value(bucket.collect("in"), "dht.ping", "count"), -1.0);
+  // A bound is inclusive; a sender whose clock runs ahead counts as no delay.
+  for (double seconds : {-5.0, 0.4, 1.0, 1.5, 8.0, 9.0, 61.0}) {
+    bucket.account_delay(data.as_slice(), seconds);
+  }
+  auto set = bucket.collect("in");
+  ASSERT_EQ(delay_value(set, "dht.ping", "bucket", "1"), 3.0);
+  ASSERT_EQ(delay_value(set, "dht.ping", "bucket", "2"), 4.0);
+  ASSERT_EQ(delay_value(set, "dht.ping", "bucket", "8"), 5.0);
+  ASSERT_EQ(delay_value(set, "dht.ping", "bucket", "15"), 6.0);
+  ASSERT_EQ(delay_value(set, "dht.ping", "bucket", "60"), 6.0);
+  ASSERT_EQ(delay_value(set, "dht.ping", "bucket", "+Inf"), 7.0);
+  ASSERT_EQ(delay_value(set, "dht.ping", "count"), 7.0);
+  ASSERT_EQ(delay_value(set, "dht.ping", "sum"), 0.4 + 1.0 + 1.5 + 8.0 + 9.0 + 61.0);
+  ASSERT_EQ(delay_value(bucket.collect("out"), "dht.ping", "count"), -1.0);
+  // Unknown schemas share one cell here as they do for the counters.
+  bucket.account_delay(12345, 2.0);
+  bucket.account_delay(54321, 3.0);
+  ASSERT_EQ(bucket.cells(), 2u);
+  ASSERT_EQ(delay_value(bucket.collect("in"), "unknown", "count"), 2.0);
+  // A drained delta keeps its observations when it is absorbed.
+  auto delta = std::exchange(bucket, {});
+  metrics::TlTrafficBucket aggregate;
+  aggregate += delta;
+  aggregate += delta;
+  ASSERT_EQ(delay_value(aggregate.collect("in"), "dht.ping", "count"), 14.0);
+  ASSERT_EQ(delay_value(aggregate.collect("in"), "dht.ping", "bucket", "1"), 6.0);
+}
+
 TEST(OverlayMetrics, EnvelopeBoundaries) {
   auto data = create_serialize_tl_object<tos_api::dht_ping>(42);
   auto wrapped = create_serialize_tl_object<tos_api::overlay_unicast>(data.clone());

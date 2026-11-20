@@ -13,6 +13,7 @@
 #include "td/actor/coro_task.h"
 
 #include "metrics-types.h"
+#include "tl-traffic-bucket.h"
 
 namespace tos::metrics {
 
@@ -53,14 +54,18 @@ inline CollectionReservation labelled_metrics_reservation(std::size_t families, 
 // with the traffic result. Rechecked after awaiting drains, before rendering.
 inline constexpr std::size_t kTrafficDrainLimit = 64;
 inline std::optional<CollectionReservation> traffic_collection_reservation(std::size_t cells, std::size_t drains,
-                                                                           std::size_t label_capacity = 72) {
-  if (drains > kTrafficDrainLimit || label_capacity > 1024 * 1024 ||
-      cells > (std::numeric_limits<std::size_t>::max() - 65536) / (16 * label_capacity + 2048)) {
+                                                                           std::size_t label_capacity = 72,
+                                                                           std::size_t delay_cells = 0) {
+  if (drains > kTrafficDrainLimit || label_capacity > 1024 * 1024 || delay_cells > cells ||
+      cells > (std::numeric_limits<std::size_t>::max() - 65536) / (64 * label_capacity + 8192)) {
     return std::nullopt;
   }
   // Both directions' sets coexist during join; reserve twice the logical
   // metric count for retained vector slots and temporary joined containers.
-  auto result = labelled_metrics_reservation(4, 4 * cells, 2, label_capacity, 160);
+  // Per cell: bytes and messages in each direction. A cell that has observed a
+  // delivery delay also renders one histogram (its buckets with +Inf, a sum and a count).
+  const std::size_t delay_metrics = kBroadcastDelayBuckets.size() + 3;
+  auto result = labelled_metrics_reservation(5, 4 * cells + 2 * delay_metrics * delay_cells, 2, label_capacity, 160);
   const auto scratch = drains * (sizeof(td::actor::StartedTask<td::Unit>) + 256) + 1024;
   if (result.resident_bytes > std::numeric_limits<std::size_t>::max() - scratch)
     return std::nullopt;

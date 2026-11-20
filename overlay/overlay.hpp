@@ -278,6 +278,9 @@ class OverlayImpl : public Overlay {
                                              adnl::AdnlNodeIdShort message_from = adnl::AdnlNodeIdShort::zero());
 
   void deliver_broadcast(PublicKeyHash source, td::BufferSlice data, td::BufferSlice extra);
+  // Delivers a broadcast received from another node and records how long it took to get
+  // here. `origin_date` is the origin's timestamp carried by the broadcast; zero records nothing.
+  void deliver_received_broadcast(PublicKeyHash source, td::BufferSlice data, td::uint32 origin_date);
   void register_delivered_broadcast(const BroadcastHash &hash);
   bool is_delivered(const BroadcastHash &hash);
   void receive_plumtree_repair_response(adnl::AdnlNodeIdShort from, td::Bits256 expected_broadcast_id,

@@ -133,7 +133,7 @@ void BroadcastSimple::run_continue(OverlayImpl *overlay) {
   }
   overlay->get_broadcasts_limiter(source_.compute_short_id(), cert_.get())
       .register_out_traffic(B.size() * nodes.size());
-  overlay->deliver_broadcast(source_.compute_short_id(), data_.clone(), {});
+  overlay->deliver_received_broadcast(source_.compute_short_id(), data_.clone(), is_ours_ ? 0 : date_);
 }
 
 td::BufferSlice BroadcastSimple::serialize() {

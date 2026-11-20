@@ -5,6 +5,7 @@
  */
 
 #include <algorithm>
+#include <cstdio>
 #include <limits>
 
 #include "auto/tl/lite_api.h"
@@ -232,7 +233,7 @@ void TlTrafficBucket::account(td::Slice payload) {
   account(resolve_tl_magic(payload), payload.size());
 }
 
-void TlTrafficBucket::account(td::int32 magic, td::uint64 size) {
+TlTrafficBucket::Cell &TlTrafficBucket::cell(td::int32 magic) {
   auto it = cells_.find(magic);
   if (it == cells_.end()) {
     auto name = tl_schema_name(magic);
@@ -242,8 +243,29 @@ void TlTrafficBucket::account(td::int32 magic, td::uint64 size) {
       it = cells_.emplace(magic, Cell{.name = std::move(*name)}).first;
     }
   }
-  add_saturated(it->second.bytes, size);
-  add_saturated(it->second.messages, 1);
+  return it->second;
+}
+
+void TlTrafficBucket::account(td::int32 magic, td::uint64 size) {
+  auto &c = cell(magic);
+  add_saturated(c.bytes, size);
+  add_saturated(c.messages, 1);
+}
+
+void TlTrafficBucket::account_delay(td::Slice payload, double seconds) {
+  account_delay(resolve_tl_magic(payload), seconds);
+}
+
+void TlTrafficBucket::account_delay(td::int32 magic, double seconds) {
+  // A sender whose clock runs ahead yields a negative difference; it counts as no delay.
+  seconds = std::max(seconds, 0.0);
+  auto &c = cell(magic);
+  auto bucket =
+      static_cast<std::size_t>(std::lower_bound(kBroadcastDelayBuckets.begin(), kBroadcastDelayBuckets.end(), seconds) -
+                               kBroadcastDelayBuckets.begin());
+  add_saturated(c.delay_buckets[bucket], 1);
+  add_saturated(c.delay_count, 1);
+  c.delay_sum += seconds;
 }
 
 void TlTrafficBucket::add_saturated(td::uint64 &value, td::uint64 delta) {
@@ -255,6 +277,11 @@ TlTrafficBucket &TlTrafficBucket::operator+=(const TlTrafficBucket &other) {
     auto [it, inserted] = cells_.try_emplace(magic, Cell{.name = cell.name});
     add_saturated(it->second.bytes, cell.bytes);
     add_saturated(it->second.messages, cell.messages);
+    for (std::size_t i = 0; i < cell.delay_buckets.size(); ++i) {
+      add_saturated(it->second.delay_buckets[i], cell.delay_buckets[i]);
+    }
+    add_saturated(it->second.delay_count, cell.delay_count);
+    it->second.delay_sum += cell.delay_sum;
   }
   return *this;
 }
@@ -276,7 +303,41 @@ MetricSet TlTrafficBucket::collect(const std::string &direction) const {
     messages.metrics.push_back(
         Metric{.suffix = "", .label_set = labels, .samples = {{{}, static_cast<double>(cell.messages)}}});
   }
-  return MetricSet{.families = {std::move(bytes), std::move(messages)}};
+  MetricSet result{.families = {std::move(bytes), std::move(messages)}};
+  // Delays are observed on delivery only, so the family exists for one direction.
+  if (direction != "in") {
+    return result;
+  }
+  MetricFamily delay{
+      .name = "overlay_broadcast_delivery_delay_seconds",
+      .type = "histogram",
+      .help = "Seconds from a received broadcast's origin timestamp (whole seconds, origin clock) to delivery.",
+      .metrics = {}};
+  for (const auto &[_, cell] : cells_) {
+    if (cell.delay_count == 0) {
+      continue;
+    }
+    td::uint64 cumulative = 0;
+    for (std::size_t i = 0; i < cell.delay_buckets.size(); ++i) {
+      cumulative += cell.delay_buckets[i];
+      char bound[32];
+      if (i < kBroadcastDelayBuckets.size()) {
+        std::snprintf(bound, sizeof(bound), "%.17g", kBroadcastDelayBuckets[i]);
+      } else {
+        std::snprintf(bound, sizeof(bound), "+Inf");
+      }
+      delay.metrics.push_back(Metric{.suffix = "bucket",
+                                     .label_set = {{{"tl", cell.name}, {"le", bound}}},
+                                     .samples = {{{}, static_cast<double>(cumulative)}}});
+    }
+    delay.metrics.push_back(
+        Metric{.suffix = "sum", .label_set = {{{"tl", cell.name}}}, .samples = {{{}, cell.delay_sum}}});
+    delay.metrics.push_back(Metric{.suffix = "count",
+                                   .label_set = {{{"tl", cell.name}}},
+                                   .samples = {{{}, static_cast<double>(cell.delay_count)}}});
+  }
+  result.families.push_back(std::move(delay));
+  return result;
 }
 
 }  // namespace tos::metrics

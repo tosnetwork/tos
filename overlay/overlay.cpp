@@ -960,6 +960,13 @@ void OverlayImpl::receive_plumtree_repair_response(adnl::AdnlNodeIdShort from, t
       .detach();
 }
 
+void OverlayImpl::deliver_received_broadcast(PublicKeyHash source, td::BufferSlice data, td::uint32 origin_date) {
+  if (origin_date != 0) {
+    delivered_.account_delay(data.as_slice(), td::Clocks::system() - static_cast<double>(origin_date));
+  }
+  deliver_broadcast(source, std::move(data), {});
+}
+
 void OverlayImpl::deliver_broadcast(PublicKeyHash source, td::BufferSlice data, td::BufferSlice extra) {
   delivered_.account(data.as_slice());
   callback_->receive_broadcast_with_extra(source, overlay_id_, std::move(data), std::move(extra));
