@@ -20,6 +20,9 @@ std::optional<std::string> tl_schema_name(td::int32 magic);
 
 // Upper bounds, in seconds, of the delivery delay histogram. A broadcast carries its
 // origin time in whole seconds, so nothing finer than one second can be told apart.
+// An overlay refuses a broadcast dated more than 20 seconds from its own clock before
+// delivering it, so later arrivals are dropped and never observed: the buckets above
+// 15 seconds fill only with the time a delivery waits on its content check.
 inline constexpr std::array<double, 7> kBroadcastDelayBuckets = {1, 2, 4, 8, 15, 30, 60};
 
 class TlTrafficBucket {
