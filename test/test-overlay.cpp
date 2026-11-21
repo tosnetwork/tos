@@ -183,6 +183,10 @@ int main(int argc, char *argv[]) {
     auto overlay_id_short = overlay_id.compute_short_id();
 
     tos::overlay::OverlayOptions opts;
+    // A node forwards a simple broadcast once, to this many randomly chosen neighbours. At the
+    // default of five a member is now and then chosen by nobody, and the delivery checks below
+    // expect every member. Forward to all neighbours so that they do not depend on the draw.
+    opts.propagate_broadcast_to_ = total_nodes * (1 + node_slaves_cnt);
     opts.max_slaves_in_semiprivate_overlay_ = node_slaves_cnt;
     opts.default_permanent_members_flags_ = tos::overlay::OverlayMemberFlags::DoNotReceiveBroadcasts;
 
@@ -377,6 +381,10 @@ int main(int argc, char *argv[]) {
     auto overlay_id_short = overlay_id.compute_short_id();
 
     tos::overlay::OverlayOptions opts;
+    // A node forwards a simple broadcast once, to this many randomly chosen neighbours. At the
+    // default of five a member is now and then chosen by nobody, and the delivery checks below
+    // expect every member. Forward to all neighbours so that they do not depend on the draw.
+    opts.propagate_broadcast_to_ = total_nodes * (1 + node_slaves_cnt);
 
     tos::overlay::OverlayPrivacyRules rules(
         20 << 20, tos::overlay::CertificateFlags::AllowFec | tos::overlay::CertificateFlags::Trusted, {});
