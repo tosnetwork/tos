@@ -1822,6 +1822,10 @@ tos_test(test-rldp2)
 tos_test(test-rldp2-connection-cap)
 tos_test(test-rldp2-query-eviction)
 tos_test(test-rldp-http-proxy-routing)
+tos_test(test-overlay)
+# Runs the overlay over the real ADNL message path, including a simple broadcast of the
+# largest size, which ADNL carries as several datagrams.
+set_tests_properties(test-overlay PROPERTIES TIMEOUT 900)
 tos_test(test-overlay-plumtree-stats)
 tos_test(test-overlay-content-metrics)
 tos_test(test-overlay-peer-cleanup)

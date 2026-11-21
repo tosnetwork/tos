@@ -1187,7 +1187,7 @@ impl OverlayNode {
     const MAX_PEERS: u32 = 65536;
     const MAX_OVERLAY_NEIGHBOURS: u32 = 200;
     //    const MAX_OVERLAY_PEERS: u32 = 20;
-    const MAX_SIZE_ORDINARY_BROADCAST: usize = 768;
+    const MAX_SIZE_ORDINARY_BROADCAST: usize = 4096;
     const MIN_BYTES_FEC_TWO_STEPS_BROADCAST: usize = 513;
     const MIN_NODES_FEC_TWO_STEPS_BROADCAST: u32 = 4;
     const PEER_BLOCK_LATENCY_SEC: u32 = 10;

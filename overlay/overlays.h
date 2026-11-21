@@ -387,7 +387,7 @@ class Overlays : public td::actor::Actor, public metrics::AsyncCollector {
   };
 
   static constexpr td::uint32 max_simple_broadcast_size() {
-    return 768;
+    return 4096;  // holds an external message signed with a post-quantum key (about 2.8 KB) in one broadcast
   }
   static constexpr td::uint32 max_message_size() {
     return adnl::Adnl::get_mtu() - 36;

@@ -89,7 +89,7 @@ follow the path the node takes, not the declared mode: a simple send is always t
 FEC send is two-step only in the two-step mode without `BroadcastFlagNoTwostep` (256), the old FEC path
 otherwise. The old FEC sender emits four symbols at once and the rest on a 10 ms timer, so a broadcast on
 that path is at most 1535 bytes
-(four symbols are all it sends); `send_broadcast_ex` aborts on a simple broadcast above 768 bytes (its
+(four symbols are all it sends); `send_broadcast_ex` aborts on a simple broadcast above 4096 bytes (its
 callers pick the FEC path above that), so a larger one is a harness error. Plumtree with one neighbour
 pushes lazily (`overlay.broadcastPlumtreeIHave`); the receiver's repair request waits for a timer, so
 only the announcement is pinned.
@@ -203,7 +203,7 @@ so a context is valid or invalid exactly where it is written to be. Randomness i
 | `overlay-id` | authored | 5 | names of 0..254 bytes and a shard public overlay id |
 | `overlay-node` | authored | 16 | flags 0..3 signed, invalid flags, unsigned or wrongly signed nodes, a non-Ed25519 id, member certificates good and bad |
 | `overlay-node-rtos` | `migrated:rtos/overlay-node` | 15 | the RTOS `tos-overlay-node-vectors.txt` node and its toSign framing; its flag tests (0..3 valid and signed, 4 and -1 refused, flipped flags and signatures) |
-| `overlay-certificate` | authored | 28 | V1 at 768/769/1 MiB, size and expiry boundaries, FEC, V2 flags 0..3, V2 with default flags signed as V1 or V2, bad signatures, unenc/overlay/AES issuers, empty |
+| `overlay-certificate` | authored | 28 | V1 at 4096/4097/1 MiB, size and expiry boundaries, FEC, V2 flags 0..3, V2 with default flags signed as V1 or V2, bad signatures, unenc/overlay/AES issuers, empty |
 | `overlay-member-certificate` | authored | 15 | flags and slots, other node, the 3-second expiry grace, empty, unenc issuer |
 | `overlay-policy` | authored | 43 | member flags 0..7 and high bits under both plumtree settings; privacy rules for authorized keys and strangers |
 | `fec-type` | authored | 20 | RaptorQ at 1, 768, 769, 2048-byte symbols, an RLDP part, K = 56403/56404, the largest data size, empty, symbol size 767/0/2049, wrong counts, negative values, other codes, truncation |
@@ -211,8 +211,8 @@ so a context is valid or invalid exactly where it is written to be. Randomness i
 | `fec-raptorq-sweep` | authored | 120 | 60 seeded sizes, symbol sizes and symbol subsets, encoded and decoded |
 | `fec-online` | authored | 58 | as `fec-raptorq`, with more symbols, since the online code needs more than K |
 | `fec-round-robin` | authored | 42 | as `fec-raptorq` |
-| `overlay-broadcast` | authored | 18 | member 0's simple broadcasts (768 bytes, empty, over the unauthenticated size, an authorized key, AnySender with and without authorization, a source the application checks), FEC broadcasts of 50 and 1500 bytes and without the FEC flag, two-step broadcasts to 2, 6 and 8 members (simple and FEC, 512 bytes just below the FEC threshold), an old broadcast in a two-step overlay, Plumtree simple and FEC announcements |
-| `overlay-broadcast-inbound` | authored | 27 | messages a member receives, built from what the node sent: simple broadcasts replayed (once and twice), with a flipped signature, data or source key, from a non-member, re-dated 19/20/21 seconds off and re-signed, re-signed as AnySender, with 768- and 769-byte data, truncated, into a two-step overlay; FEC parts replayed, with a flipped signature or data hash, to an overlay without the FEC flag; two-step broadcasts replayed, tampered, into a simple overlay, from a non-member; Plumtree announcements replayed, tampered, into a simple overlay |
+| `overlay-broadcast` | authored | 18 | member 0's simple broadcasts (4096 bytes, empty, over the unauthenticated size, an authorized key, AnySender with and without authorization, a source the application checks), FEC broadcasts of 50 and 1500 bytes and without the FEC flag, two-step broadcasts to 2, 6 and 8 members (simple and FEC, 512 bytes just below the FEC threshold), an old broadcast in a two-step overlay, Plumtree simple and FEC announcements |
+| `overlay-broadcast-inbound` | authored | 27 | messages a member receives, built from what the node sent: simple broadcasts replayed (once and twice), with a flipped signature, data or source key, from a non-member, re-dated 19/20/21 seconds off and re-signed, re-signed as AnySender, with 4096- and 4097-byte data, truncated, into a two-step overlay; FEC parts replayed, with a flipped signature or data hash, to an overlay without the FEC flag; two-step broadcasts replayed, tampered, into a simple overlay, from a non-member; Plumtree announcements replayed, tampered, into a simple overlay |
 | `rldp2` | authored | 45 | FEC helper and budget arithmetic; the sender's first run for 1..7680 bytes; the receiver on in-order, reversed and repair-only symbols, duplicates after completion, two transfers, the default MTU and a raised one, request limits, other codes, symbol sizes, part indices, negative fields, short symbols, out-of-range ids, stray complete/confirm datagrams, garbage, an exhausted budget |
 
 Cross-checks (`migrate/net_contexts.py check`, ctest `conformance-net-crosscheck`): every expectation in
@@ -242,8 +242,8 @@ are built together).
 
 ## Behaviour the fixtures pin that a peer may not expect
 
-- The 768-byte bound of simple broadcasts holds for the sender only: a received simple broadcast of 769
-  bytes is accepted and relayed (`overlay-broadcast-inbound/simple/data-769-resigned`).
+- The 4096-byte bound of simple broadcasts holds for the sender only: a received simple broadcast of 4097
+  bytes is accepted and relayed (`overlay-broadcast-inbound/simple/data-4097-resigned`).
 - An overlay message that does not parse as a broadcast object is handed to the application as a plain
   message (`overlay-broadcast-inbound/simple/truncated`).
 - Ed25519 and AES encryption authenticate nothing but the SHA-256 of the plaintext: an empty plaintext
