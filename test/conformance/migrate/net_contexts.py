@@ -1796,7 +1796,7 @@ def add_overlay_certificates(fam: Family, ref: Reference) -> None:
     node = Peer(ref, "alice").short
     overlay = seed_bytes("overlay")
     expire = 1800000000
-    # Overlays::max_simple_broadcast_size() is 768: a V1 certificate above it allows FEC, at or below it does
+    # Overlays::max_simple_broadcast_size() is 4096: a V1 certificate above it allows FEC, at or below it does
     # not (cert_default_flags), and either way it is trusted.
     signed_v1 = {
         size: certificate_v1(
@@ -1805,7 +1805,7 @@ def add_overlay_certificates(fam: Family, ref: Reference) -> None:
             size,
             ref.sign(root.private, cert_id_v1(overlay, node, expire, size)),
         )
-        for size in (768, 769, 1 << 20)
+        for size in (4096, 4097, 1 << 20)
     }
 
     def ctx(
@@ -1825,16 +1825,16 @@ def add_overlay_certificates(fam: Family, ref: Reference) -> None:
             "is_fec": is_fec,
         }
 
-    fam.add("v1-768", ctx(signed_v1[768]), {"check": "allowed"})
-    fam.add("v1-768-fec", ctx(signed_v1[768], is_fec=True), {"check": "forbidden"})
-    fam.add("v1-769-fec", ctx(signed_v1[769], is_fec=True, size=769), {"check": "allowed"})
-    fam.add("v1-size-at-max", ctx(signed_v1[768], size=768), {"check": "allowed"})
-    fam.add("v1-size-above-max", ctx(signed_v1[768], size=769), {"check": "forbidden"})
-    fam.add("v1-at-expiry", ctx(signed_v1[768], unix_time=expire), {"check": "allowed"})
-    fam.add("v1-after-expiry", ctx(signed_v1[768], unix_time=expire + 1), {"check": "forbidden"})
-    fam.add("v1-other-node", ctx(signed_v1[768], issued_to=root.short), {"check": "forbidden"})
+    fam.add("v1-4096", ctx(signed_v1[4096]), {"check": "allowed"})
+    fam.add("v1-4096-fec", ctx(signed_v1[4096], is_fec=True), {"check": "forbidden"})
+    fam.add("v1-4097-fec", ctx(signed_v1[4097], is_fec=True, size=4097), {"check": "allowed"})
+    fam.add("v1-size-at-max", ctx(signed_v1[4096], size=4096), {"check": "allowed"})
+    fam.add("v1-size-above-max", ctx(signed_v1[4096], size=4097), {"check": "forbidden"})
+    fam.add("v1-at-expiry", ctx(signed_v1[4096], unix_time=expire), {"check": "allowed"})
+    fam.add("v1-after-expiry", ctx(signed_v1[4096], unix_time=expire + 1), {"check": "forbidden"})
+    fam.add("v1-other-node", ctx(signed_v1[4096], issued_to=root.short), {"check": "forbidden"})
     fam.add("v1-1mib", ctx(signed_v1[1 << 20], size=1 << 20, is_fec=True), {"check": "allowed"})
-    # Flags 3 are the V1 default of a certificate above 768 bytes (AllowFec | Trusted): such a V2 certificate
+    # Flags 3 are the V1 default of a certificate above 4096 bytes (AllowFec | Trusted): such a V2 certificate
     # is checked against the V1 id, so a signature over the V2 id fails.
     for flags, expect in ((0, "need_check"), (1, "need_check"), (2, "allowed"), (3, "forbidden")):
         signature = ref.sign(root.private, cert_id_v2(overlay, node, expire, 100000, flags))
@@ -1863,27 +1863,27 @@ def add_overlay_certificates(fam: Family, ref: Reference) -> None:
     )
     fam.add(
         "bad-signature",
-        ctx(certificate_v1(root.public, expire, 768, flip(bytes(64))), size=1),
+        ctx(certificate_v1(root.public, expire, 4096, flip(bytes(64))), size=1),
         {"check": "forbidden"},
     )
     fam.add("negative-max-size", ctx(certificate_v1(root.public, expire, -1, b""), size=1))
     fam.add(
         "issuer-unenc",
-        ctx(certificate_v1(pub_unenc(b"anyone"), expire, 768, b"")),
+        ctx(certificate_v1(pub_unenc(b"anyone"), expire, 4096, b"")),
         {"check": "allowed"},
     )
     fam.add(
         "issuer-overlay",
-        ctx(certificate_v1(pub_overlay(b"o"), expire, 768, b"")),
+        ctx(certificate_v1(pub_overlay(b"o"), expire, 4096, b"")),
         {"check": "forbidden"},
     )
     fam.add(
         "issuer-aes",
-        ctx(certificate_v1(pub_aes(bytes(32)), expire, 768, b"")),
+        ctx(certificate_v1(pub_aes(bytes(32)), expire, 4096, b"")),
         {"check": "forbidden"},
     )
     fam.add("empty", ctx(ctor("overlay_emptyCertificate")), {"empty": True})
-    fam.add("truncated", ctx(signed_v1[768][:-4]), refused("tl_truncated"))
+    fam.add("truncated", ctx(signed_v1[4096][:-4]), refused("tl_truncated"))
     fam.add("not-a-certificate", ctx(msg_nop()), refused("tl_unknown_constructor"))
 
 
@@ -2500,7 +2500,7 @@ def add_overlay_broadcasts(fam: Family, inbound: Family, ref: Reference) -> None
     need_check = send_ctx("simple", hello)
     need_check["flags"] = 0
     sender("simple/need-check", need_check, hello, [0, 1])
-    sender("simple/768", send_ctx("simple", b"s" * 768), b"s" * 768, [0, 1])
+    sender("simple/4096", send_ctx("simple", b"s" * 4096), b"s" * 4096, [0, 1])
     sender("simple/empty", send_ctx("simple", b""), b"", [])
     sender(
         "simple/over-unauthorized-size",
@@ -2593,8 +2593,8 @@ def add_overlay_broadcasts(fam: Family, inbound: Family, ref: Reference) -> None
     any_sender.flags = 1
     any_sender.signature = ref.sign(members[0], any_sender.to_sign())
     receive("simple/any-sender-resigned", "simple", any_sender.build(), [], [])
-    # The 768-byte bound applies to the sender only: a received one-byte-longer broadcast is accepted.
-    for size in (768, 769):
+    # The 4096-byte bound applies to the sender only: a received one-byte-longer broadcast is accepted.
+    for size in (4096, 4097):
         sized = SimpleBroadcast(simple)
         sized.data = b"s" * size
         sized.signature = ref.sign(members[0], sized.to_sign())
