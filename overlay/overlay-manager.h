@@ -128,7 +128,7 @@ class OverlayManager : public Overlays {
   void collect_with_budget(metrics::MetricsPromise promise, metrics::CollectionBudget budget) override;
   // Declared before collection: two traffic buckets, each two families with
   // one metric per cell, and on the incoming side a delay histogram for each
-  // cell that has observed one; a bucket's cells are bounded by the TL schema
+  // cell that has observed one and two date refusal counters; a bucket's cells are bounded by the TL schema
   // table plus the shared unknown cell (TlTrafficBucket), so the live cell
   // counts are the bound.
   std::optional<metrics::CollectionReservation> reservation() const override;

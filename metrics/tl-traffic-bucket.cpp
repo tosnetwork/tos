@@ -268,6 +268,10 @@ void TlTrafficBucket::account_delay(td::int32 magic, double seconds) {
   c.delay_sum += seconds;
 }
 
+void TlTrafficBucket::account_date_refused(bool too_new) {
+  add_saturated(date_refused_[too_new ? 1 : 0], 1);
+}
+
 void TlTrafficBucket::add_saturated(td::uint64 &value, td::uint64 delta) {
   value += std::min(delta, std::numeric_limits<td::uint64>::max() - value);
 }
@@ -282,6 +286,9 @@ TlTrafficBucket &TlTrafficBucket::operator+=(const TlTrafficBucket &other) {
     }
     add_saturated(it->second.delay_count, cell.delay_count);
     it->second.delay_sum += cell.delay_sum;
+  }
+  for (std::size_t i = 0; i < date_refused_.size(); ++i) {
+    add_saturated(date_refused_[i], other.date_refused_[i]);
   }
   return *this;
 }
@@ -337,6 +344,17 @@ MetricSet TlTrafficBucket::collect(const std::string &direction) const {
                                    .samples = {{{}, static_cast<double>(cell.delay_count)}}});
   }
   result.families.push_back(std::move(delay));
+  MetricFamily refused{
+      .name = "overlay_broadcast_date_refused_total",
+      .type = "counter",
+      .help = "Broadcast messages refused because their origin timestamp was too far from this node's clock.",
+      .metrics = {}};
+  for (const auto &[reason, index] : {std::pair{"too_old", 0}, std::pair{"too_new", 1}}) {
+    refused.metrics.push_back(Metric{.suffix = "",
+                                     .label_set = {{{"reason", reason}}},
+                                     .samples = {{{}, static_cast<double>(date_refused_[index])}}});
+  }
+  result.families.push_back(std::move(refused));
   return result;
 }
 

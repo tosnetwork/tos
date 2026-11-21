@@ -99,6 +99,45 @@ TEST(OverlayMetrics, DeliveryDelayHistogram) {
   ASSERT_EQ(delay_value(aggregate.collect("in"), "dht.ping", "bucket", "1"), 6.0);
 }
 
+double refused_value(const metrics::MetricSet &set, const std::string &reason) {
+  for (const auto &f : set.families) {
+    if (f.name != "overlay_broadcast_date_refused_total") {
+      continue;
+    }
+    for (const auto &m : f.metrics) {
+      for (const auto &l : m.label_set.labels) {
+        if (l.key == "reason" && l.val == reason) {
+          return m.samples.at(0).value;
+        }
+      }
+    }
+  }
+  return -1;
+}
+
+TEST(OverlayMetrics, DateRefusals) {
+  metrics::TlTrafficBucket bucket;
+  // Both reasons are present from the start, so a scrape can take a difference from zero.
+  ASSERT_EQ(refused_value(bucket.collect("in"), "too_old"), 0.0);
+  ASSERT_EQ(refused_value(bucket.collect("in"), "too_new"), 0.0);
+  ASSERT_EQ(refused_value(bucket.collect("out"), "too_old"), -1.0);
+  for (int i = 0; i < 3; ++i) {
+    bucket.account_date_refused(false);
+  }
+  bucket.account_date_refused(true);
+  ASSERT_EQ(refused_value(bucket.collect("in"), "too_old"), 3.0);
+  ASSERT_EQ(refused_value(bucket.collect("in"), "too_new"), 1.0);
+  // A refusal creates no cell: the content was never decoded.
+  ASSERT_EQ(bucket.cells(), 1u);
+  auto delta = std::exchange(bucket, {});
+  ASSERT_EQ(refused_value(bucket.collect("in"), "too_old"), 0.0);
+  metrics::TlTrafficBucket aggregate;
+  aggregate += delta;
+  aggregate += delta;
+  ASSERT_EQ(refused_value(aggregate.collect("in"), "too_old"), 6.0);
+  ASSERT_EQ(refused_value(aggregate.collect("in"), "too_new"), 2.0);
+}
+
 TEST(OverlayMetrics, EnvelopeBoundaries) {
   auto data = create_serialize_tl_object<tos_api::dht_ping>(42);
   auto wrapped = create_serialize_tl_object<tos_api::overlay_unicast>(data.clone());

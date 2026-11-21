@@ -22,7 +22,8 @@ std::optional<std::string> tl_schema_name(td::int32 magic);
 // origin time in whole seconds, so nothing finer than one second can be told apart.
 // An overlay refuses a broadcast dated more than 20 seconds from its own clock before
 // delivering it, so later arrivals are dropped and never observed: the buckets above
-// 15 seconds fill only with the time a delivery waits on its content check.
+// 15 seconds fill only with the time a delivery waits on its content check. Those
+// refusals are counted separately (account_date_refused).
 inline constexpr std::array<double, 7> kBroadcastDelayBuckets = {1, 2, 4, 8, 15, 30, 60};
 
 class TlTrafficBucket {
@@ -33,6 +34,12 @@ class TlTrafficBucket {
   // broadcasts received from other nodes are observed.
   void account_delay(td::Slice payload, double seconds);
   void account_delay(td::int32 magic, double seconds);
+  // One broadcast message (a simple broadcast, an FEC part or a two-step piece) refused
+  // before delivery because its origin timestamp was too far from this node's clock.
+  // These are the arrivals the delay histogram cannot show. The content is not decoded
+  // at that point, so there is no schema to count by; a late part of a broadcast that
+  // was already delivered counts too.
+  void account_date_refused(bool too_new);
   TlTrafficBucket &operator+=(const TlTrafficBucket &other);
   MetricSet collect(const std::string &direction) const;
   std::size_t label_capacity() const {
@@ -60,6 +67,8 @@ class TlTrafficBucket {
     td::uint64 delay_count = 0;
   };
   std::map<td::int32, Cell> cells_{{0, Cell{.name = "unknown"}}};
+  // Indexed by reason: too old, too new.
+  std::array<td::uint64, 2> date_refused_{};
   Cell &cell(td::int32 magic);
   static void add_saturated(td::uint64 &value, td::uint64 delta);
 };

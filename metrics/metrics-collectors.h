@@ -65,7 +65,9 @@ inline std::optional<CollectionReservation> traffic_collection_reservation(std::
   // Per cell: bytes and messages in each direction. A cell that has observed a
   // delivery delay also renders one histogram (its buckets with +Inf, a sum and a count).
   const std::size_t delay_metrics = kBroadcastDelayBuckets.size() + 3;
-  auto result = labelled_metrics_reservation(5, 4 * cells + 2 * delay_metrics * delay_cells, 2, label_capacity, 160);
+  // The two date refusal counters are a fixed family of their own.
+  auto result =
+      labelled_metrics_reservation(6, 4 * cells + 2 * delay_metrics * delay_cells + 4, 2, label_capacity, 160);
   const auto scratch = drains * (sizeof(td::actor::StartedTask<td::Unit>) + 256) + 1024;
   if (result.resident_bytes > std::numeric_limits<std::size_t>::max() - scratch)
     return std::nullopt;

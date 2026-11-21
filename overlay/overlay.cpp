@@ -811,9 +811,11 @@ void OverlayImpl::print(td::StringBuilder &sb) {
 td::Status OverlayImpl::check_date(td::uint32 date) {
   auto n = td::Clocks::system();
   if (date < n - 20) {
+    delivered_.account_date_refused(false);
     return td::Status::Error(ErrorCode::notready, "too old broadcast");
   }
   if (date > n + 20) {
+    delivered_.account_date_refused(true);
     return td::Status::Error(ErrorCode::notready, "too new broadcast");
   }
   return td::Status::OK();
