@@ -336,26 +336,29 @@ int main(int argc, char *argv[]) {
 
     LOG_CHECK(remaining.load() == 0) << "remaining=" << remaining.load() << " all=" << real_members;
 
-    broadcast = td::BufferSlice(700);
-    td::Random::secure_bytes(broadcast.as_slice());
-    remaining = real_members;
-    bcast_hash = td::sha256_bits256(broadcast.as_slice());
-    scheduler.run_in_context([&] {
-      td::actor::send_closure(overlay_manager, &tos::overlay::Overlays::send_broadcast_ex, root_nodes[0].adnl_id,
-                              overlay_id_short, root_nodes[0].id, 0, std::move(broadcast));
-    });
+    // A small simple broadcast, then one of the largest size: both reach every member.
+    for (size_t simple_size : {size_t{700}, size_t{tos::overlay::Overlays::max_simple_broadcast_size()}}) {
+      broadcast = td::BufferSlice(simple_size);
+      td::Random::secure_bytes(broadcast.as_slice());
+      remaining = real_members;
+      bcast_hash = td::sha256_bits256(broadcast.as_slice());
+      scheduler.run_in_context([&] {
+        td::actor::send_closure(overlay_manager, &tos::overlay::Overlays::send_broadcast_ex, root_nodes[0].adnl_id,
+                                overlay_id_short, root_nodes[0].id, 0, std::move(broadcast));
+      });
 
-    t = td::Timestamp::in(10.0);
-    while (scheduler.run(1)) {
-      if (t.is_in_past()) {
-        break;
+      t = td::Timestamp::in(10.0);
+      while (scheduler.run(1)) {
+        if (t.is_in_past()) {
+          break;
+        }
+        if (remaining.load() == 0) {
+          break;
+        }
       }
-      if (remaining.load() == 0) {
-        break;
-      }
+
+      LOG_CHECK(remaining.load() == 0) << "size=" << simple_size << " remaining=" << remaining.load();
     }
-
-    LOG_CHECK(remaining.load() == 0) << "remaining=" << remaining.load();
 
     scheduler.run_in_context([&] {
       root_nodes.clear();
@@ -454,26 +457,29 @@ int main(int argc, char *argv[]) {
 
     LOG_CHECK(remaining.load() == 0) << "remaining=" << remaining.load();
 
-    broadcast = td::BufferSlice(700);
-    td::Random::secure_bytes(broadcast.as_slice());
-    remaining = real_members;
-    bcast_hash = td::sha256_bits256(broadcast.as_slice());
-    scheduler.run_in_context([&] {
-      td::actor::send_closure(overlay_manager, &tos::overlay::Overlays::send_broadcast_ex, root_nodes[0].adnl_id,
-                              overlay_id_short, root_nodes[0].id, 0, std::move(broadcast));
-    });
+    // A small simple broadcast, then one of the largest size: both reach every member.
+    for (size_t simple_size : {size_t{700}, size_t{tos::overlay::Overlays::max_simple_broadcast_size()}}) {
+      broadcast = td::BufferSlice(simple_size);
+      td::Random::secure_bytes(broadcast.as_slice());
+      remaining = real_members;
+      bcast_hash = td::sha256_bits256(broadcast.as_slice());
+      scheduler.run_in_context([&] {
+        td::actor::send_closure(overlay_manager, &tos::overlay::Overlays::send_broadcast_ex, root_nodes[0].adnl_id,
+                                overlay_id_short, root_nodes[0].id, 0, std::move(broadcast));
+      });
 
-    t = td::Timestamp::in(10.0);
-    while (scheduler.run(1)) {
-      if (t.is_in_past()) {
-        break;
+      t = td::Timestamp::in(10.0);
+      while (scheduler.run(1)) {
+        if (t.is_in_past()) {
+          break;
+        }
+        if (remaining.load() == 0) {
+          break;
+        }
       }
-      if (remaining.load() == 0) {
-        break;
-      }
+
+      LOG_CHECK(remaining.load() == 0) << "size=" << simple_size << " remaining=" << remaining.load();
     }
-
-    LOG_CHECK(remaining.load() == 0) << "remaining=" << remaining.load();
 
     scheduler.run_in_context([&] {
       root_nodes.clear();
