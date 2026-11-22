@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src")]
 
 import run_local_bench as bench  # noqa: E402
-from pqbench import chain  # noqa: E402
+from pqbench import buildinfo, chain  # noqa: E402
 from pqbench.chain import BlockRow, SendRecord  # noqa: E402
 
 RATE_LIMIT = "LITE_SERVER_NOTREADY: external message source rate limit exceeded"
@@ -550,31 +550,75 @@ class ChainNowTests(unittest.TestCase):
 class NodeBuildTest(unittest.TestCase):
     """The report says whether the node under test is the product build."""
 
-    def cache(self, text: str) -> dict[str, object]:
+    def info(self, cache: str | bytes | None, needed: list[str] | None) -> dict[str, object]:
         with tempfile.TemporaryDirectory() as directory:
-            _ = Path(directory, "CMakeCache.txt").write_text(text)
-            return bench.node_build(Path(directory))
+            if isinstance(cache, bytes):
+                _ = Path(directory, "CMakeCache.txt").write_bytes(cache)
+            elif cache is not None:
+                _ = Path(directory, "CMakeCache.txt").write_text(cache)
+            with patch.object(buildinfo, "needed_libraries", return_value=needed) as readelf:
+                result = buildinfo.node_build(Path(directory))
+            readelf.assert_called_once_with(Path(directory) / "validator-engine/validator-engine")
+            return result
 
-    def test_jemalloc_on_is_the_product_allocator(self) -> None:
-        info = self.cache("# comment\nCMAKE_BUILD_TYPE:STRING=Release\nTOS_USE_JEMALLOC:BOOL=ON\n")
+    def test_a_node_that_links_jemalloc_is_the_product(self) -> None:
+        info = self.info(
+            "# comment\nCMAKE_BUILD_TYPE:STRING=Release\nTOS_USE_JEMALLOC:BOOL=ON\n",
+            ["libjemalloc.so.2", "libc.so.6"],
+        )
         self.assertEqual(
-            info, {"build_type": "Release", "jemalloc": True, "product_allocator": True}
+            info,
+            {
+                "build_type": "Release",
+                "configured_jemalloc": True,
+                "links_jemalloc": True,
+                "product_allocator": True,
+            },
         )
 
-    def test_jemalloc_off_is_not(self) -> None:
-        info = self.cache("CMAKE_BUILD_TYPE:STRING=Release\nTOS_USE_JEMALLOC:BOOL=OFF\n")
-        self.assertEqual(
-            info, {"build_type": "Release", "jemalloc": False, "product_allocator": False}
+    def test_the_binary_decides_not_the_cache(self) -> None:
+        # Reconfigured with the option on, not rebuilt: the binary still lacks jemalloc.
+        info = self.info("TOS_USE_JEMALLOC:BOOL=ON\n", ["libc.so.6"])
+        self.assertEqual(info["configured_jemalloc"], True)
+        self.assertEqual(info["links_jemalloc"], False)
+        self.assertEqual(info["product_allocator"], False)
+
+    def test_an_unreadable_binary_is_unknown_and_not_the_product(self) -> None:
+        info = self.info("TOS_USE_JEMALLOC:BOOL=Y\n", None)
+        self.assertEqual(info["configured_jemalloc"], True)
+        self.assertIsNone(info["links_jemalloc"])
+        self.assertEqual(info["product_allocator"], False)
+
+    def test_a_missing_or_undecodable_cache_is_unknown(self) -> None:
+        for cache in (
+            None,
+            b"\xff\xfe\x00TOS_USE_JEMALLOC",
+            "//TOS_USE_JEMALLOC:BOOL=ON\nCMAKE_BUILD_TYPE:STRING=\n",
+        ):
+            info = self.info(cache, ["libjemalloc.so.2"])
+            self.assertIsNone(info["configured_jemalloc"])
+            self.assertIsNone(info["build_type"])
+            self.assertEqual(info["product_allocator"], True)
+
+    def test_the_warning_separates_unknown_from_absent(self) -> None:
+        build = Path("/nonexistent/build")
+        for links, expected in ((False, "does not link jemalloc"), (None, "could not tell")):
+            log = Mock()
+            buildinfo.warn_unless_product(
+                log, build, {"links_jemalloc": links, "product_allocator": False}
+            )
+            self.assertIn(expected, log.warning.call_args.args[0])
+        log = Mock()
+        buildinfo.warn_unless_product(
+            log, build, {"links_jemalloc": True, "product_allocator": True}
         )
+        log.warning.assert_not_called()
 
-    def test_an_unset_option_is_unknown_and_not_the_product(self) -> None:
-        info = self.cache("//TOS_USE_JEMALLOC:BOOL=ON\nCMAKE_BUILD_TYPE:STRING=\n")
-        self.assertEqual(info, {"build_type": None, "jemalloc": None, "product_allocator": False})
-
-    def test_a_missing_cache_is_unknown_and_not_the_product(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            info = bench.node_build(Path(directory))
-        self.assertEqual(info, {"build_type": None, "jemalloc": None, "product_allocator": False})
+    def test_needed_libraries_of_a_real_binary_and_of_a_missing_one(self) -> None:
+        self.assertIsNone(buildinfo.needed_libraries(Path("/nonexistent/binary")))
+        needed = buildinfo.needed_libraries(Path(sys.executable).resolve())
+        if needed is not None:  # readelf is installed and the interpreter is an ELF file
+            self.assertTrue(any(name.startswith("libc.so") for name in needed), needed)
 
 
 if __name__ == "__main__":
