@@ -224,8 +224,6 @@ struct NodeRef {
   td::uint16 port{0};
   td::actor::ActorId<tos::adnl::Adnl> adnl;
   td::actor::ActorId<tos::adnl::AdnlSenderInterface> sender;
-  // Empty for the ADNL protocol; the batching histograms hang off this actor.
-  td::actor::ActorId<tos::quic::QuicSender> quic;
 };
 
 // Creates and owns one node. Actors inherit the scheduler of the actor that
@@ -271,12 +269,15 @@ class NodeBuilder final : public td::actor::Actor {
       quic_sender_ = td::actor::create_actor<tos::quic::QuicSender>(
           "quic-" + name_, td::actor::actor_dynamic_cast<tos::adnl::AdnlPeerTable>(adnl_.get()), keyring_.get(),
           options);
+      // QuicSender defaults to the ADNL MTU, which rejects a payload larger than one datagram.
+      td::actor::send_closure(quic_sender_, &tos::adnl::AdnlSenderEx::set_default_mtu,
+                              static_cast<td::uint64>(g_payload_size) + 1024);
       td::actor::send_closure(quic_sender_, &tos::quic::QuicSender::add_id, id);
       sender = quic_sender_.get();
     }
 
     co_await td::actor::Yield{};
-    co_return NodeRef{id, key_.compute_public_key(), port_, adnl_.get(), sender, quic_sender_.get()};
+    co_return NodeRef{id, key_.compute_public_key(), port_, adnl_.get(), sender};
   }
 
  private:

@@ -17,6 +17,7 @@
 #include <arpa/inet.h>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -97,6 +98,8 @@ void serve_counters(int port, std::string protocol) {
     while (true) {
       int fd = ::accept(listener, nullptr, nullptr);
       if (fd < 0) {
+        // Out of descriptors, for instance: do not spin inside the process being measured.
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
         continue;
       }
       timeval timeout{2, 0};
@@ -309,8 +312,9 @@ class Server : public tos::adnl::Adnl::Callback {
   }
 
   void receive_message(tos::adnl::AdnlNodeIdShort src, tos::adnl::AdnlNodeIdShort dst, td::BufferSlice data) override {
+    // No peer bookkeeping here: every peer answers a readiness probe, a query, before it sends
+    // a message, so the receive path of a message stays free of the lock.
     g_counters.messages_in.fetch_add(1, std::memory_order_relaxed);
-    note_peer(src);
   }
 
   void receive_query(tos::adnl::AdnlNodeIdShort src, tos::adnl::AdnlNodeIdShort dst, td::BufferSlice data,
@@ -766,7 +770,7 @@ int main(int argc, char* argv[]) {
                          return td::Status::OK();
                        });
   p.add_checked_option('\0', "transport-ceiling",
-                       "raise QUIC bidi/uni stream credit to 65536 (bench only; not cross-library parity)", [&]() {
+                       "raise QUIC stream credit to 65536 (bench only; not cross-library parity)", [&]() {
                          config.transport_ceiling = true;
                          return td::Status::OK();
                        });
@@ -822,8 +826,8 @@ int main(int argc, char* argv[]) {
     config.stay_alive = true;
     return td::Status::OK();
   });
-  p.add_checked_option('\0', "prometheus-port", "exporter port (default 19777 server, 29777 client)",
-                       [&](td::Slice arg) {
+  p.add_checked_option('\0', "prometheus-port",
+                       "port serving the benchmark counters (default 19777 server, 29777 client)", [&](td::Slice arg) {
                          TRY_RESULT(v, td::to_integer_safe<int>(arg));
                          config.prometheus_port = v;
                          return td::Status::OK();
@@ -844,11 +848,6 @@ int main(int argc, char* argv[]) {
   }
   if (config.prometheus_port < 0 || config.prometheus_port > 65535) {
     LOG(FATAL) << "--prometheus-port must be between 0 and 65535";
-  }
-  // Actor and worker accounting adds hot-path work, so it rides --prometheus rather than being on
-  // by default. A plain benchmark run keeps that accounting disabled.
-  if (config.prometheus_port) {
-    td::actor::set_debug(true);
   }
   if (config.threads == 0) {
     LOG(FATAL) << "--threads must be at least 1";

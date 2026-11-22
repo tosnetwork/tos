@@ -730,7 +730,7 @@ add_executable(test-rldp-http-proxy-routing test/test-td-main.cpp test/test-rldp
 target_link_libraries(test-rldp-http-proxy-routing PRIVATE tdutils)
 target_include_directories(test-rldp-http-proxy-routing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(bench-rldp test/net/bench-rldp.cpp)
-target_link_libraries(bench-rldp adnl adnltest dht rldp2 tl_api quic metrics ${JEMALLOC_LIBRARIES})
+target_link_libraries(bench-rldp adnl dht rldp2 tl_api quic ${JEMALLOC_LIBRARIES})
 add_executable(bench-adnl-quic-message test/net/bench-adnl-quic-message.cpp)
 target_link_libraries(bench-adnl-quic-message adnl dht tl_api quic ${JEMALLOC_LIBRARIES})
 add_executable(test-quic-sender test/net/test-quic-sender.cpp)

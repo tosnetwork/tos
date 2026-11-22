@@ -24,7 +24,7 @@ One workload: `test/net/bench/bench.sh -P adnl -T message -c 1 -n 20 -s 240 -m 4
 `bench.sh -h` lists the options. `BENCH` names the binary (default `build/bench-rldp`).
 
 Two-node ceiling in one process, one command: `build/bench-adnl-quic-message --adnl` (also
-`--quic`). `--payload-size N` sets the message size; above the ADNL MTU of 1024 bytes a message is
+`--quic`; `--payload-size` works with both). `--payload-size N` sets the message size; above the ADNL MTU of 1024 bytes a message is
 carried as several datagrams, so 2800 or 4300 measures the split path. With a large payload keep
 `--lag` small (16), or raise the kernel limit below: the closed loop waits for every message, and
 one dropped datagram loses a whole message.
@@ -69,8 +69,17 @@ Harness tests: `python3 test/net/bench/test_bench.py`, and with the binary
 - **Drops are the kernel's.** The change of `RcvbufErrors` on the `Udp:` line of
   `/proc/net/snmp` over the window is the drop evidence; any non-zero value invalidates a run.
   It is a host-wide counter, so other UDP traffic on the host is counted too.
-- **A run is also invalid** when a query fails, a peer count is not the expected one at either
-  end of the window, or a counter the report needs is missing.
+- **A run is also invalid** when a query fails, or the peers that completed the readiness probe
+  are not the expected number. That count does not fall when a peer is lost later: a session
+  that dies during the window is seen only through its missing messages or failed queries, and
+  in the idle scenario not at all.
+- **Fewer failure signals than upstream.** There are no per-layer drop or message-failure
+  counters, so a paced message run rests on the 99% rule and the kernel's drop count, and a
+  ceiling probe on something being delivered with no kernel drops. In a probe the sender queues
+  what is not delivered, so the rate is measured under a growing backlog.
+- **QUIC caps connections from one address** at 1,024 by default, and every benchmark client is
+  on 127.0.0.1: a QUIC run with more than 1,024 sessions to one server never becomes ready.
+  `--no-admission-limits` does not lift that cap. The suite uses at most 32.
 - **QUIC here has bidirectional streams only**; the options for unidirectional streams,
   datagram frames and acknowledgement tuning do not exist. The two external QUIC libraries the
   upstream suite compares against are not part of this tree; the scripts still accept

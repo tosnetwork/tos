@@ -161,6 +161,85 @@ exit 1
         self.assertIn("sender", output)
         self.assertIn("receiver", output)
 
+    def node_report(self, workload, client_end, server_end, drops="0", peers=1, extra=()):
+        """Run report.py for the node implementation over synthetic counter readings."""
+        app = "tos_adnl_app_messages_total"
+        zero = {
+            f'{app}{{direction="out",kind="message"}}': 0,
+            f'{app}{{direction="in",kind="message"}}': 0,
+            f'{app}{{direction="out",kind="query"}}': 0,
+            f'{app}{{direction="in",kind="query"}}': 0,
+            "tos_adnl_query_roundtrip_seconds_count": 0,
+            "tos_adnl_query_roundtrip_failed_total": 0,
+            "tos_adnl_transport_peer_pairs": peers,
+        }
+        # --side sender: the test files are the client's, the peer files the server's.
+        for prefix, end in (("metrics", client_end), ("peer-metrics", server_end)):
+            for phase, sample in (("start", zero), ("end", dict(zero, **end))):
+                (self.root / f"{prefix}-{phase}.txt").write_text(
+                    "".join(f"{key} {value}\n" for key, value in sample.items())
+                )
+        summary = self.root / "summary.tsv"
+        if summary.exists():
+            summary.unlink()
+        args = f"""
+            --implementation tos --protocol adnl --workload {workload} --topology fanin-1
+            --side sender --peers 1 --clients 1 --connections 1 --size 240 --response-size 1
+            --rate 10 --burst 1 --inflight 1 --threads 1 --tuned NA
+            --stream-credit-profile NA --congestion-control NA --warmup 1
+            --git-revision test --binary-sha256 test --elapsed 10 --metrics-elapsed 10
+            --peer-metrics-elapsed 10 --cpu-start 0 --cpu-end 1 --peer-cpu-start 0 --peer-cpu-end 1
+            --rss-baseline 0 --rss-start 1 --rss-end 1 --peer-rss-start 1 --peer-rss-end 1
+            --driver-errors 0 --host-udp-receive-drops {drops} --label test
+        """.split()
+        _, output = self.run_command(
+            [sys.executable, str(HERE / "report.py"), "--dir", str(self.root), *args, *extra]
+        )
+        with summary.open() as source:
+            return next(csv.DictReader(source, delimiter="\t")), output
+
+    def test_node_report_reads_the_benchmark_counters(self):
+        app = "tos_adnl_app_messages_total"
+        sent = {f'{app}{{direction="out",kind="message"}}': 100}
+        received = {f'{app}{{direction="in",kind="message"}}': 100}
+        row, output = self.node_report("message", sent, received)
+        self.assertEqual(row["status"], "ok", output)
+        self.assertEqual(float(row["messages_per_s"]), 10.0)
+        self.assertEqual(row["egress_datagrams_per_message"], "NA")
+
+        # A paced run that loses more than 1% is invalid.
+        lossy = {f'{app}{{direction="in",kind="message"}}': 90}
+        row, output = self.node_report("message", sent, lossy)
+        self.assertEqual(row["status"], "INVALID", output)
+
+        # A ceiling probe offers more than is delivered; the delivered rate is the result.
+        row, output = self.node_report("saturate", sent, lossy)
+        self.assertEqual(row["status"], "ok", output)
+        self.assertEqual(float(row["messages_per_s"]), 9.0)
+        self.assertIn("offered", output)
+
+    def test_node_report_rejects_drops_failures_and_lost_peers(self):
+        app = "tos_adnl_app_messages_total"
+        sent = {f'{app}{{direction="out",kind="message"}}': 100}
+        received = {f'{app}{{direction="in",kind="message"}}': 100}
+        for drops in ("7", "NA"):  # dropped datagrams, and a host that cannot count them
+            row, output = self.node_report("message", sent, received, drops=drops)
+            self.assertEqual(row["status"], "INVALID", output)
+        row, output = self.node_report("message", sent, received, peers=0)
+        self.assertEqual(row["status"], "INVALID", output)
+
+        queries = {
+            f'{app}{{direction="out",kind="query"}}': 50,
+            "tos_adnl_query_roundtrip_seconds_count": 50,
+        }
+        answered = {f'{app}{{direction="in",kind="query"}}': 50}
+        row, output = self.node_report("query", queries, answered)
+        self.assertEqual(row["status"], "ok", output)
+        self.assertEqual(float(row["messages_per_s"]), 5.0)
+        failed = dict(queries, tos_adnl_query_roundtrip_failed_total=1)
+        row, output = self.node_report("query", failed, answered)
+        self.assertEqual(row["status"], "INVALID", output)
+
     @unittest.skipUnless(
         os.environ.get("TOS_BENCH"), "set TOS_BENCH for the localhost C++ regression"
     )

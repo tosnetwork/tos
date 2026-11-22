@@ -5,7 +5,6 @@ import argparse
 import re
 from pathlib import Path
 
-WIRE = {"quic": "quic", "rldp2": "adnl", "adnl": "adnl"}
 NATIVE_FAMILIES = (
     "bench_connections_current",
     "bench_messages_sent_total",
