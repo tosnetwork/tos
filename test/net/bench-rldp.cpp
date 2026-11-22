@@ -14,15 +14,24 @@
     You should have received a copy of the GNU General Public License
     along with TOS Blockchain.  If not, see <http://www.gnu.org/licenses/>.
 */
+#include <arpa/inet.h>
+#include <atomic>
+#include <cerrno>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <memory>
+#include <mutex>
+#include <netinet/in.h>
+#include <set>
+#include <sys/socket.h>
+#include <thread>
+#include <unistd.h>
 
 #include "adnl/adnl-network-manager.h"
 #include "adnl/adnl-peer-table.h"
 #include "adnl/adnl.h"
 #include "keys/keys.hpp"
-#include "metrics/prometheus-exporter.h"
 #include "quic/quic-sender.h"
 #include "rldp2/rldp.h"
 #include "td/utils/OptionParser.h"
@@ -32,8 +41,84 @@
 #include "td/utils/port/signals.h"
 
 namespace {
-// Deterministic keys, so a client can derive any server's identity without exchanging anything. The
-// tag separates the two id spaces: a client and a server with the same index must not share a key.
+
+// What this process sent and received, counted by the benchmark itself. The transports under
+// test export no metrics of their own here, so the driver scripts read these instead; the
+// family names are the ones those scripts expect of a transport.
+struct BenchCounters {
+  std::atomic<td::uint64> messages_out{0};
+  std::atomic<td::uint64> messages_in{0};
+  std::atomic<td::uint64> queries_out{0};
+  std::atomic<td::uint64> queries_in{0};
+  std::atomic<td::uint64> roundtrips{0};
+  std::atomic<td::uint64> roundtrips_failed{0};
+  // Client: sessions whose readiness probe was answered. Server: distinct peers heard from.
+  std::atomic<td::uint64> peers{0};
+};
+BenchCounters g_counters;
+
+// The counters as Prometheus text. `protocol` is adnl, rldp2 or quic.
+std::string render_counters(const std::string& protocol) {
+  auto value = [](const std::atomic<td::uint64>& counter) { return counter.load(std::memory_order_relaxed); };
+  const char* peers = protocol == "quic"    ? "tos_quic_transport_connections_current"
+                      : protocol == "rldp2" ? "tos_rldp2_transport_connections"
+                                            : "tos_adnl_transport_peer_pairs";
+  std::string app = "tos_" + protocol + "_app_messages_total";
+  std::string out;
+  auto line = [&](const std::string& name, td::uint64 v) { out += name + " " + std::to_string(v) + "\n"; };
+  out += "# TYPE " + app + " counter\n";
+  line(app + "{direction=\"out\",kind=\"message\"}", value(g_counters.messages_out));
+  line(app + "{direction=\"in\",kind=\"message\"}", value(g_counters.messages_in));
+  line(app + "{direction=\"out\",kind=\"query\"}", value(g_counters.queries_out));
+  line(app + "{direction=\"in\",kind=\"query\"}", value(g_counters.queries_in));
+  line("tos_" + protocol + "_query_roundtrip_seconds_count", value(g_counters.roundtrips));
+  line("tos_" + protocol + "_query_roundtrip_failed_total", value(g_counters.roundtrips_failed));
+  out += std::string("# TYPE ") + peers + " gauge\n";
+  line(peers, value(g_counters.peers));
+  return out;
+}
+
+// Serves the counters on 127.0.0.1:<port> to any HTTP request, one at a time, from its own
+// thread. The node's exporter is not used: it refreshes at most once in 15 seconds, and the
+// driver scripts take a reading at the start and at the end of a window a few seconds long.
+void serve_counters(int port, std::string protocol) {
+  int listener = ::socket(AF_INET, SOCK_STREAM, 0);
+  LOG_CHECK(listener >= 0) << "metrics socket: " << std::strerror(errno);
+  int one = 1;
+  ::setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(static_cast<uint16_t>(port));
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  LOG_CHECK(::bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0)
+      << "metrics port " << port << ": " << std::strerror(errno);
+  LOG_CHECK(::listen(listener, 64) == 0) << "metrics listen: " << std::strerror(errno);
+  std::thread([listener, protocol = std::move(protocol)] {
+    while (true) {
+      int fd = ::accept(listener, nullptr, nullptr);
+      if (fd < 0) {
+        continue;
+      }
+      timeval timeout{2, 0};
+      ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+      char request[2048];
+      (void)::recv(fd, request, sizeof(request), 0);
+      auto body = render_counters(protocol);
+      auto response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\nContent-Length: " +
+                      std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
+      size_t sent = 0;
+      while (sent < response.size()) {
+        auto n = ::send(fd, response.data() + sent, response.size() - sent, MSG_NOSIGNAL);
+        if (n <= 0) {
+          break;
+        }
+        sent += static_cast<size_t>(n);
+      }
+      ::close(fd);
+    }
+  }).detach();
+}
+
 tos::PrivateKey make_private_key(char tag, td::uint32 index) {
   td::uint8 data[32];
   std::memset(data, tag, 32);
@@ -138,7 +223,6 @@ struct Node {
   td::actor::ActorOwn<tos::adnl::Adnl> adnl;
   td::actor::ActorOwn<tos::rldp2::Rldp> rldp2;
   td::actor::ActorOwn<tos::quic::QuicSender> quic_sender;
-  td::actor::ActorOwn<tos::PrometheusExporter> exporter;
   std::vector<tos::adnl::AdnlNodeIdShort> local_ids;
 
   tos::adnl::AdnlNodeIdShort local_id() const {
@@ -166,10 +250,7 @@ Node make_node(const Config& config, const std::string& db_root, tos::PrivateKey
                td::uint32 identity_index = 0) {
   Node node;
   if (config.prometheus_port) {
-    td::IPAddress addr;
-    addr.init_host_port(PSTRING() << "127.0.0.1:" << config.prometheus_port).ensure();
-    node.exporter = tos::PrometheusExporter::create();
-    td::actor::send_closure(node.exporter, &tos::PrometheusExporter::listen, addr);
+    serve_counters(config.prometheus_port, protocol_name(config.protocol));
   }
 
   node.keyring = tos::keyring::Keyring::create(db_root);
@@ -217,15 +298,6 @@ Node make_node(const Config& config, const std::string& db_root, tos::PrivateKey
     }
   }
 
-  if (config.prometheus_port) {
-    // Only the QUIC sender exports metrics here; ADNL and RLDP2 have no collectors.
-    td::actor::send_closure(node.exporter, &tos::PrometheusExporter::register_collector<tos::PrometheusExporter>,
-                            "exporter", node.exporter.get());
-    if (!node.quic_sender.empty()) {
-      td::actor::send_closure(node.exporter, &tos::PrometheusExporter::register_collector<tos::quic::QuicSender>,
-                              "quic", node.quic_sender.get());
-    }
-  }
   return node;
 }
 
@@ -237,6 +309,8 @@ class Server : public tos::adnl::Adnl::Callback {
   }
 
   void receive_message(tos::adnl::AdnlNodeIdShort src, tos::adnl::AdnlNodeIdShort dst, td::BufferSlice data) override {
+    g_counters.messages_in.fetch_add(1, std::memory_order_relaxed);
+    note_peer(src);
   }
 
   void receive_query(tos::adnl::AdnlNodeIdShort src, tos::adnl::AdnlNodeIdShort dst, td::BufferSlice data,
@@ -245,14 +319,25 @@ class Server : public tos::adnl::Adnl::Callback {
     if (q.empty() || q[0] != 'B') {
       return promise.set_error(td::Status::Error("bad query"));
     }
+    note_peer(src);
     if (q == td::Slice("BP")) {
       return promise.set_value(td::BufferSlice("P", 1));
     }
+    g_counters.queries_in.fetch_add(1, std::memory_order_relaxed);
     promise.set_value(response_.clone());
   }
 
  private:
+  void note_peer(tos::adnl::AdnlNodeIdShort src) {
+    std::lock_guard<std::mutex> guard(peers_mutex_);
+    if (peers_.insert(src).second) {
+      g_counters.peers.store(peers_.size(), std::memory_order_relaxed);
+    }
+  }
+
   td::BufferSlice response_;
+  std::mutex peers_mutex_;
+  std::set<tos::adnl::AdnlNodeIdShort> peers_;
 };
 
 class BenchmarkRunner : public td::actor::Actor {
@@ -378,6 +463,7 @@ class BenchmarkRunner : public td::actor::Actor {
       CHECK(!probe_ready_[peer]);
       probe_ready_[peer] = true;
       probes_ready_++;
+      g_counters.peers.store(probes_ready_, std::memory_order_relaxed);
       if (probes_ready_ % 10000 == 0) {
         LOG(INFO) << "sessions ready: " << probes_ready_ << "/" << sessions_.size();
       }
@@ -416,6 +502,7 @@ class BenchmarkRunner : public td::actor::Actor {
       td::actor::send_closure(sender_, &tos::adnl::AdnlSenderInterface::send_message, session.src, session.dst,
                               payload_.clone());
       sent_++;
+      g_counters.messages_out.fetch_add(1, std::memory_order_relaxed);
     }
   }
 
@@ -435,13 +522,16 @@ class BenchmarkRunner : public td::actor::Actor {
                               std::move(query), (td::uint64)config_.response_size + 1024);
       sent_++;
       inflight_++;
+      g_counters.queries_out.fetch_add(1, std::memory_order_relaxed);
     }
   }
 
   void on_response(td::uint32 idx, td::Result<td::BufferSlice> R) {
     inflight_--;
+    g_counters.roundtrips.fetch_add(1, std::memory_order_relaxed);
 
     if (R.is_error()) {
+      g_counters.roundtrips_failed.fetch_add(1, std::memory_order_relaxed);
       if (errors_ < 5) {
         LOG(WARNING) << "Query " << idx << " failed: " << R.error();
       }
