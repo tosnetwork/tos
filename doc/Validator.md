@@ -219,6 +219,21 @@ explicitly a lab or testnet. The production baseline is:
 - sustained 1 Gbps symmetric connectivity and a fixed public IP
 - redundant power, UPS, remote console, and hardware monitoring
 
+Raise the kernel's UDP receive buffer limit on every host that runs a node:
+
+```bash
+# /etc/sysctl.d/90-udp-receive-buffer.conf
+net.core.rmem_max = 33554432
+```
+
+A node asks for a 16 MiB receive buffer on its UDP sockets, and the kernel
+grants at most `net.core.rmem_max`. The Linux default is 212,992 bytes, about
+two hundred datagrams: at that size a burst of block broadcasts overflows the
+buffer and the kernel drops datagrams, which no node-level counter reports.
+Watch `RcvbufErrors` on the `Udp:` line of `/proc/net/snmp`; it should not grow.
+Apply the file with `sysctl --system` and restart the node, since a socket
+keeps the buffer it was created with.
+
 The storage devices should provide predictable low-latency random I/O, not
 just a high sequential benchmark. Keep separate capacity for the database,
 temporary synchronization files, snapshots, and logs. Maintain at least 25%
@@ -543,10 +558,14 @@ At minimum, collect the following per validator:
 - CPU utilization, validator thread count, disk latency, and free space
 - peer/session counts, overlay traffic, and reconnect/error rates
 
-The engine has built-in CellDB statistics and optional jemalloc statistics.
-Enable the jemalloc build only for diagnostics, and use the runtime statistics
-signal during an incident rather than enabling expensive profiling on every
-production node.
+The engine has built-in CellDB statistics and jemalloc statistics. Release node
+binaries are built with jemalloc (`-DTOS_USE_JEMALLOC=ON`, see
+`assembly/native/build-node-binaries.sh`); a node built without it is not the
+tested product: its message handling costs about twice the CPU, and in a
+21-validator test at 300 transfers per second the median inclusion latency was
+about 10.5 s without jemalloc against 1.4 s with it. Use the runtime
+statistics signal during an incident rather than enabling expensive profiling
+on every production node.
 
 ### Resource limits and upgrades
 

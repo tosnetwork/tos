@@ -547,5 +547,35 @@ class ChainNowTests(unittest.TestCase):
             self.now(self.Pool(self.Node(5, ["LITE_SERVER_NOTREADY: x"] * 3)), attempts=3)
 
 
+class NodeBuildTest(unittest.TestCase):
+    """The report says whether the node under test is the product build."""
+
+    def cache(self, text: str) -> dict[str, object]:
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "CMakeCache.txt").write_text(text)
+            return bench.node_build(Path(directory))
+
+    def test_jemalloc_on_is_the_product_allocator(self) -> None:
+        info = self.cache("# comment\nCMAKE_BUILD_TYPE:STRING=Release\nTOS_USE_JEMALLOC:BOOL=ON\n")
+        self.assertEqual(
+            info, {"build_type": "Release", "jemalloc": True, "product_allocator": True}
+        )
+
+    def test_jemalloc_off_is_not(self) -> None:
+        info = self.cache("CMAKE_BUILD_TYPE:STRING=Release\nTOS_USE_JEMALLOC:BOOL=OFF\n")
+        self.assertEqual(
+            info, {"build_type": "Release", "jemalloc": False, "product_allocator": False}
+        )
+
+    def test_an_unset_option_is_unknown_and_not_the_product(self) -> None:
+        info = self.cache("//TOS_USE_JEMALLOC:BOOL=ON\nCMAKE_BUILD_TYPE:STRING=\n")
+        self.assertEqual(info, {"build_type": None, "jemalloc": None, "product_allocator": False})
+
+    def test_a_missing_cache_is_unknown_and_not_the_product(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            info = bench.node_build(Path(directory))
+        self.assertEqual(info, {"build_type": None, "jemalloc": None, "product_allocator": False})
+
+
 if __name__ == "__main__":
     unittest.main()

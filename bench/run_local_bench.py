@@ -67,6 +67,30 @@ SENDER_STARTUP_SECONDS = 30
 log = logging.getLogger("bench")
 
 
+def node_build(build: Path) -> dict[str, object]:
+    """How the node under test was configured, read from its CMake cache.
+
+    Release node binaries are built with jemalloc, and a validator's speed and memory
+    behaviour depend on it, so a node built without it is not the product. `jemalloc` is
+    None when the cache cannot be read.
+    """
+    cache: dict[str, str] = {}
+    try:
+        for line in (build / "CMakeCache.txt").read_text().splitlines():
+            name, sep, value = line.partition("=")
+            if sep and ":" in name and not name.startswith(("#", "//")):
+                cache[name.split(":", 1)[0]] = value
+    except OSError:
+        return {"build_type": None, "jemalloc": None, "product_allocator": False}
+    setting = cache.get("TOS_USE_JEMALLOC")
+    jemalloc = None if setting is None else setting.upper() in ("ON", "1", "TRUE", "YES")
+    return {
+        "build_type": cache.get("CMAKE_BUILD_TYPE") or None,
+        "jemalloc": jemalloc,
+        "product_allocator": jemalloc is True,
+    }
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -1048,6 +1072,14 @@ async def main(a: argparse.Namespace) -> int:
     signer = BatchSigner(a.signer, a.signer_threads)
     code = contracts.build(a.build, a.out / "contracts")
     install = Install(a.build, ROOT)
+    build_info = node_build(a.build)
+    if not build_info["product_allocator"]:
+        log.warning(
+            "the node in %s is not built with jemalloc (TOS_USE_JEMALLOC=%s): release binaries "
+            "are, so these results understate the product; configure with -DTOS_USE_JEMALLOC=ON",
+            a.build,
+            build_info["jemalloc"],
+        )
     install.toslibjson.client_set_verbosity_level(1)
     working_dir = a.out / "network"
     working_dir.mkdir()
@@ -1181,6 +1213,7 @@ async def main(a: argparse.Namespace) -> int:
                 "scope": "LOCAL_ENGINEERING_EVIDENCE_ONLY: one host, co-located validators; not public capacity",
                 "workload": "self-pay Quantum wallet, ML-DSA-44 PRIMARY, one external per transfer",
                 "source_commit": commit,
+                "node_build": build_info,
                 "host": {
                     "platform": platform.platform(),
                     "cpus": os.cpu_count(),
