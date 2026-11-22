@@ -6,6 +6,8 @@ Local engineering evidence only. Four validators share one host, so there is no 
 
 Evidence index: [evidence/20261108-production-sweep/INDEX.json](evidence/20261108-production-sweep/INDEX.json). It holds the command, the source commit `015ea5669`, the live ConfigParam 20–25 hashes and the full per-stage records in `results.json`. Later commits add ingress full nodes and chunked wallet derivation and change the stage classifier; they do not change what this run measured. The backlog attribution below is recomputed from the recorded refusal counts. It also lists SHA-256 and size for each retained raw file: block and timeline CSVs, the bench log, and the validators' collation records.
 
+The allocator of the node build in this sweep is not recorded. The build instructions of the time did not set `TOS_USE_JEMALLOC`, so it was most likely built without jemalloc, which release binaries use; read the table as a lower bound for the product, not as a measurement of it.
+
 Setup:
 - **Block limits:** `--block-limits production`, i.e. ConfigParams 22/23 exactly as `gen-zerostate.fif` and the public testnet set them. Basechain: bytes 256 KiB / 1 MiB / 2 MiB, gas 2M / 10M / 20M, lt 1,000 / 5,000 / 10,000.
 - **Chain:** Simplex at the 400 ms target, one basechain shard.

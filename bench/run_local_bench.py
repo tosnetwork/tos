@@ -42,7 +42,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src")]
 
 from contract import tos  # noqa: E402
-from pqbench import chain, contracts, preparation, sender  # noqa: E402
+from pqbench import buildinfo, chain, contracts, preparation, sender  # noqa: E402
 from pqbench.signer import BatchSigner  # noqa: E402
 from pqbench.workload import (  # noqa: E402
     MAX_ACTIONS,
@@ -1048,6 +1048,8 @@ async def main(a: argparse.Namespace) -> int:
     signer = BatchSigner(a.signer, a.signer_threads)
     code = contracts.build(a.build, a.out / "contracts")
     install = Install(a.build, ROOT)
+    build_info = buildinfo.node_build(a.build)
+    buildinfo.warn_unless_product(log, a.build, build_info)
     install.toslibjson.client_set_verbosity_level(1)
     working_dir = a.out / "network"
     working_dir.mkdir()
@@ -1181,6 +1183,7 @@ async def main(a: argparse.Namespace) -> int:
                 "scope": "LOCAL_ENGINEERING_EVIDENCE_ONLY: one host, co-located validators; not public capacity",
                 "workload": "self-pay Quantum wallet, ML-DSA-44 PRIMARY, one external per transfer",
                 "source_commit": commit,
+                "node_build": build_info,
                 "host": {
                     "platform": platform.platform(),
                     "cpus": os.cpu_count(),

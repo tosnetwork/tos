@@ -35,7 +35,8 @@ transaction on a load wallet is always one executed transfer.
 ```bash
 # node, liteserver client library and contract compilers
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21
+  -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
+  -DTOS_USE_JEMALLOC=ON
 cmake --build build --target validator-engine create-state generate-random-id \
   tos-pq-consensus-key dht-server validator-engine-console lite-client toslibjson fift func
 
@@ -46,6 +47,30 @@ cmake --build build/bench-pq-signer
 
 uv sync && uv run test/tostester/generate_tl.py
 ```
+
+`-DTOS_USE_JEMALLOC=ON` is part of the build, not a tuning choice. Release node
+binaries are built with jemalloc (`assembly/native/build-node-binaries.sh`), and
+the allocator changes the result: with 21 validators at 300 transfers per second
+the median inclusion latency was about 10.5 s without it and about 1.4 s with it
+(local measurements of 2026-11-21, two runs each; not kept under
+`bench/evidence`). The option is off by default in CMake, so a build that leaves
+it out measures something other than the product. This bench and the shard bench
+read the node binary's NEEDED libraries, record the answer in `results.json` as
+`node_build`, and warn when the node does not link jemalloc or it cannot be told.
+
+Host setting: a node asks for a 16 MiB receive buffer on its UDP sockets, and the
+kernel grants at most `net.core.rmem_max`, 212,992 bytes by default on Linux.
+At that default a 21-validator run at 300 transfers per second dropped several
+million datagrams in the kernel (same local measurements). Raise the limit before
+a run:
+
+```bash
+sudo sysctl -w net.core.rmem_max=33554432
+```
+
+16777216 is the smallest value that grants the node's request; 33554432 is the
+value the measurements used.
+
 
 ## Run
 

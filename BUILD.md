@@ -106,6 +106,11 @@ cmake -S . -B build-clang21 \
   -DCMAKE_CXX_COMPILER=clang++-21
 ```
 
+This is a development configuration. Node binaries for a running network are
+built with `assembly/native/build-node-binaries.sh`, which adds
+`-DTOS_USE_JEMALLOC=ON` and a fixed CPU level; add `-DTOS_USE_JEMALLOC=ON` here
+too when the build is used to measure performance.
+
 ## C++ Build
 
 ```bash

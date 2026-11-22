@@ -54,7 +54,7 @@ if __name__ == "__main__" and "--remote" in sys.argv[1:]:
     sys.exit(remote.main(sys.argv[1:]))
 
 from contract.pq_auth import transfer_message  # noqa: E402
-from pqbench import chain  # noqa: E402
+from pqbench import buildinfo, chain  # noqa: E402
 from pytosiq_core import Address, WalletMessage  # noqa: E402
 from tostester.install import Install  # noqa: E402
 from tostester.network import FullNode, Network, StartOptions  # noqa: E402
@@ -528,6 +528,8 @@ async def main(a: argparse.Namespace) -> int:
     log.info("hop accounts per shard at depth %d: %s", a.split, placement)
 
     install = Install(a.build, ROOT)
+    build_info = buildinfo.node_build(a.build)
+    buildinfo.warn_unless_product(log, a.build, build_info)
     install.toslibjson.client_set_verbosity_level(1)
     working_dir = a.out / "network"
     working_dir.mkdir()
@@ -754,6 +756,7 @@ async def main(a: argparse.Namespace) -> int:
                     f"payload: {a.payload} bytes"
                 ),
                 "source_commit": commit,
+                "node_build": build_info,
                 "contract_code_hash": code.hash.hex(),
                 "host": {
                     "platform": platform.platform(),
