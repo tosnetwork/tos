@@ -552,7 +552,7 @@ class NodeBuildTest(unittest.TestCase):
 
     def cache(self, text: str) -> dict[str, object]:
         with tempfile.TemporaryDirectory() as directory:
-            Path(directory, "CMakeCache.txt").write_text(text)
+            _ = Path(directory, "CMakeCache.txt").write_text(text)
             return bench.node_build(Path(directory))
 
     def test_jemalloc_on_is_the_product_allocator(self) -> None:
