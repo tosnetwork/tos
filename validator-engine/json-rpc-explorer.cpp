@@ -8,6 +8,7 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/mc-config.h"
+#include "block/settlement-assets.h"
 #include "td/utils/base64.h"
 #include "td/utils/crypto.h"
 #include "td/utils/misc.h"
@@ -261,6 +262,37 @@ td::Result<std::string> decode_config(int param, td::Ref<vm::Cell> cell, td::uin
       out << ",\"policy_spec_hash\":\"" << td::base64_encode(profile.as_slice()) << "\",\"primary_status\":\""
           << (((policy.retired & 2) || (policy.deadline && now >= policy.deadline)) ? "retired" : "not_retired")
           << "\"}";
+    } else if (param == block::settlement_assets_config_param) {
+      // Absence is valid: a network recognizes no settlement asset until a
+      // critical vote installs this parameter.
+      if (cell.is_null())
+        return std::string("null");
+      // Every entry is decoded exactly; one malformed entry refuses the view.
+      auto decoded = block::unpack_settlement_assets(cell);
+      if (decoded.is_error())
+        return error(Failure::StateInvalid);
+      out << "{\"kind\":\"settlement_assets_v1\",\"assets\":[";
+      bool first = true;
+      for (const auto& asset : decoded.ok()) {
+        if (!first)
+          out << ",";
+        first = false;
+        const char* status = asset.status == block::SettlementAssetStatus::Active               ? "active"
+                             : asset.status == block::SettlementAssetStatus::AdmissionSuspended ? "admission_suspended"
+                                                                                                : "retired";
+        const char* kind =
+            asset.origin.kind == block::SettlementAssetOriginKind::TokenBridge ? "token_bridge" : "native_issuance";
+        out << "{\"master\":\"" << raw_address(0, asset.master) << "\",\"status\":\"" << status
+            << "\",\"decimals\":" << static_cast<unsigned>(asset.decimals) << ",\"minter_code_hash\":\""
+            << td::base64_encode(asset.minter_code_hash.as_slice()) << "\",\"wallet_code_hash\":\""
+            << td::base64_encode(asset.wallet_code_hash.as_slice()) << "\",\"max_liability_per_actor\":\""
+            << td::dec_string(asset.max_liability_per_actor)
+            << "\",\"uncapped\":" << (asset.uncapped() ? "true" : "false") << ",\"origin\":{\"kind\":\"" << kind
+            << "\",\"bridge_address\":\"" << raw_address(-1, asset.origin.bridge_address)
+            << "\",\"source_chain_id\":" << asset.origin.source_chain_id << ",\"source_token\":\""
+            << td::to_lower(asset.origin.source_token.to_hex()) << "\"}}";
+      }
+      out << "]}";
     } else if (param == 43) {
       td::Ref<vm::CellSlice> slice;
       unsigned wire = 0;

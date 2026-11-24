@@ -37,6 +37,8 @@ mod limits;
 mod mint;
 #[path = "token_bridge/model.rs"]
 mod model;
+#[path = "token_bridge/recognition.rs"]
+mod recognition;
 #[path = "token_bridge/recovery.rs"]
 mod recovery;
 #[path = "token_bridge/source.rs"]

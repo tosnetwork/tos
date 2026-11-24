@@ -8,6 +8,7 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+use crate::settlement_assets::settlement_assets_from_json;
 use chain_block::*;
 use serde_json::{Map, Value};
 use std::str::FromStr;
@@ -1019,6 +1020,11 @@ impl StateParser {
         self.parse_parameter(config, 82, |p| {
             let p = Self::parse_token_bridge_params(p)?;
             Ok(ConfigParamEnum::ConfigParam82(p))
+        })?;
+        self.parse_parameter(config, 84, |p| {
+            Ok(ConfigParamEnum::ConfigParam84(settlement_assets_from_json(&Value::Object(
+                p.map.clone(),
+            ))?))
         })?;
         Ok(())
     }

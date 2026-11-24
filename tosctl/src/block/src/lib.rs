@@ -95,6 +95,9 @@ pub use signature::*;
 pub mod config_params;
 pub use config_params::*;
 
+pub mod settlement_assets;
+pub use settlement_assets::*;
+
 pub mod storage_stat;
 pub use self::storage_stat::*;
 

@@ -8,6 +8,7 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+use crate::settlement_assets::settlement_assets_to_json;
 use chain_block::*;
 use num::BigInt;
 use num_traits::sign::Signed;
@@ -1416,6 +1417,9 @@ pub fn serialize_known_config_param(
         ConfigParamEnum::ConfigParam82(ref c) => {
             return Ok(Some(serialize_token_bridge_params(c, mode)?));
         }
+        ConfigParamEnum::ConfigParam84(ref c) => {
+            return Ok(Some(settlement_assets_to_json(c)));
+        }
         _ => return Ok(None),
     }
 
@@ -1506,7 +1510,14 @@ pub fn serialize_config(
         //println!("key {}", num);
         let num = num.get_next_u32()?;
         let cp = cp_ref.checked_drain_reference()?;
-        if let Some(cp) = serialize_known_config_param(num, cp.clone(), mode)? {
+        // The schema of ConfigParam 84 admits records its decoder refuses (an
+        // undefined status, a zero cap). Such a value is shown raw rather than
+        // failing the whole configuration.
+        let known = match serialize_known_config_param(num, cp.clone(), mode) {
+            Err(_) if num == SETTLEMENT_ASSETS_CONFIG_PARAM => None,
+            other => other?,
+        };
+        if let Some(cp) = known {
             known_cp_map.insert(format!("p{}", num), cp);
         } else {
             unknown_cp_vec.push(serialize_unknown_config_param(num, &cp)?);

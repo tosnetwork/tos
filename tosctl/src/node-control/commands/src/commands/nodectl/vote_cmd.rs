@@ -54,6 +54,9 @@ pub enum VoteOfferAction {
     Cast(VoteOfferCastCmd),
     /// Create a configuration proposal
     Create(VoteOfferCreateCmd),
+    /// Build or verify ConfigParam 84, the recognized settlement assets
+    #[command(name = "settlement-assets")]
+    SettlementAssets(super::settlement_assets_cmd::SettlementAssetsCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -997,6 +1000,7 @@ impl VoteOfferCmd {
             VoteOfferAction::Diff(cmd) => cmd.run(config_path).await,
             VoteOfferAction::Cast(cmd) => cmd.run(config_path).await,
             VoteOfferAction::Create(cmd) => cmd.run(config_path).await,
+            VoteOfferAction::SettlementAssets(cmd) => cmd.run(config_path).await,
         }
     }
 }

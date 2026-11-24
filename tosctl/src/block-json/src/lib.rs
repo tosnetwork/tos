@@ -11,6 +11,8 @@
 mod serialize;
 pub use self::serialize::*;
 mod deserialize;
+mod settlement_assets;
+pub use self::settlement_assets::*;
 
 pub use self::deserialize::*;
 #[cfg(test)]

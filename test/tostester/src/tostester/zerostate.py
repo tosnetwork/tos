@@ -460,7 +460,9 @@ blackhole_addr 0 1 config.burning!
 // ConfigParam 19 (global_id) is mandatory and critical, as in gen-zerostate.fif:
 // every wallet contract fails closed without it.
 ( 0 1 9 10 12 14 15 16 17 18 19 20 21 22 23 24 25 28 34 {auth_policy_membership} ) config.mandatory_params!
-( -999 -1000 -1001 0 1 3 4 5 9 10 12 14 15 16 17 19 32 34 36 {auth_policy_membership} ) config.critical_params!
+// ConfigParam 84 (recognized settlement assets) is critical and absent at
+// genesis, as in gen-zerostate.fif.
+( -999 -1000 -1001 0 1 3 4 5 9 10 12 14 15 16 17 19 32 34 36 {auth_policy_membership} 84 ) config.critical_params!
 {auth_policy_param}
 
 // [ min_tot_rounds max_tot_rounds min_wins max_losses min_store_sec max_store_sec bit_pps cell_pps ]

@@ -12,6 +12,7 @@ use crate::{
     define_HashmapE,
     dictionary::hashmapaug::HashmapAugType,
     error, fail,
+    settlement_assets::SettlementAssets,
     shard::ShardIdent,
     shard_accounts::ShardAccounts,
     signature::{CryptoSignature, SigPubKey},
@@ -643,6 +644,7 @@ pub enum ConfigParamEnum {
     ConfigParam79(TokenBridgeParams),  // ETH->TOS token bridge
     ConfigParam81(TokenBridgeParams),  // BNB->TOS token bridge
     ConfigParam82(TokenBridgeParams),  // Polygon->TOS token bridge
+    ConfigParam84(SettlementAssets),   // recognized settlement assets
     ConfigParamAny(u32, Cell),
 }
 
@@ -709,6 +711,7 @@ impl ConfigParamEnum {
             79 => read_config!(ConfigParam79, TokenBridgeParams,           cell),
             81 => read_config!(ConfigParam81, TokenBridgeParams,           cell),
             82 => read_config!(ConfigParam82, TokenBridgeParams,           cell),
+            84 => read_config!(ConfigParam84, SettlementAssets,            cell),
             index => Ok(ConfigParamEnum::ConfigParamAny(index, cell)),
         }
     }
@@ -770,6 +773,7 @@ impl ConfigParamEnum {
             ConfigParamEnum::ConfigParam79(ref c) => serialize(builder, c, 79),
             ConfigParamEnum::ConfigParam81(ref c) => serialize(builder, c, 81),
             ConfigParamEnum::ConfigParam82(ref c) => serialize(builder, c, 82),
+            ConfigParamEnum::ConfigParam84(ref c) => serialize(builder, c, 84),
             ConfigParamEnum::ConfigParamAny(index, cell) => {
                 builder.checked_append_reference(cell.clone())?;
                 Ok(*index)

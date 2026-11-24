@@ -543,7 +543,7 @@ on JSON-RPC and REST identically, before forwarding to a liteserver.
 ```
 
 `include_decoded` defaults false. `param` uses the existing parameter selector;
-new v1 typed views are defined only for 8, 43 and 48. A new `block_id`
+new v1 typed views are defined only for 8, 43, 48 and 84. A new `block_id`
 selector requires `include_decoded:true`; the pre-existing `with_proof` flag
 remains valid without typed decoding. Existing validator-set
 fields for 32/34/36 remain unchanged. For other parameters retain the raw result;
@@ -554,7 +554,7 @@ When a v1 typed view is requested, preserve the existing `config` object and add
 ```typescript
 interface DecodedConfigV1 {
   schema_version: 1;
-  param: 8 | 43 | 48;
+  param: 8 | 43 | 48 | 84;
   presence: "present" | "absent";
   observation: {
     block_id: BlockId;
@@ -562,7 +562,7 @@ interface DecodedConfigV1 {
     chain_time: U32;
     vm_version: U32;
   };
-  value: GlobalVersion | SizeLimits | AuthPolicy | null;
+  value: GlobalVersion | SizeLimits | AuthPolicy | SettlementAssets | null;
 }
 ```
 
@@ -574,7 +574,7 @@ for permitted absence in the opt-in result; an absence proof must authenticate t
 missing dictionary key, not just omit bytes. For `include_decoded:false`, preserve
 existing raw missing-parameter errors and result shapes.
 
-Only 43 and legacy 48 can have `presence:"absent"`. Config 8 absence or Config
+Only 43, legacy 48 and 84 can have `presence:"absent"`; an absent 84 has `value:null` and means no settlement asset is recognized. Config 8 absence or Config
 48 absence at VM 17+ is `STATE_INVALID`. Unknown tag/layout/profile is also an error,
 not absence or a successful partial typed value.
 
@@ -584,6 +584,13 @@ not absence or a successful partial typed value.
 | --- | --- |
 | 8 / `global_version` | `version:U32`, `capabilities:U64` from exact tag 0xc4 / 104-bit layout |
 | 48 / `auth_policy_v1` | `network_tag:Bits256`, `policy_sequence:U64`, `retired_flags:U16`, `primary_deadline:U32|null`, `policy_spec_hash:Bits256`, `primary_status:"not_retired"|"retired"` |
+| 84 / `settlement_assets_v1` | `assets:[SettlementAsset]` in ascending master order; each `master:"0:<hex>"`, `status:"active"|"admission_suspended"|"retired"`, `decimals:U8`, `minter_code_hash:Bits256`, `wallet_code_hash:Bits256`, `max_liability_per_actor` (non-zero decimal string, `2^120 - 1` = no cap), `uncapped:bool`, `origin:{kind:"token_bridge"|"native_issuance", bridge_address:"-1:<hex>", source_chain_id:U32, source_token:<40 hex>}` |
+
+Config 84 is decoded by `block::unpack_settlement_assets`: tags 0x01, status 1-3,
+origin kind 1-2, a non-zero cap in its shortest Coins encoding, an origin cell of exactly
+456 bits and no reference, and no trailing bit or reference anywhere. One malformed entry
+makes the view `STATE_INVALID`. The view does not re-derive minter addresses; clients do
+that for the masters they pin.
 
 Config 48 uses tag 0xa1, exact 601 root bits, frozen profile hash and reference
 layout from `block::unpack_auth_policy`. Only retirement bit 1 (`mask 2`) is known.
@@ -649,7 +656,7 @@ this response introduces no "all PQ algorithms enabled" boolean.
 | Selector helper in RPC shared code | Parse canonical selectors, resolve immutable full ID, compare upstream identities |
 | Native proof/signature adapters | Reuse existing effective-set, trust-chain, candidate and cryptographic validation |
 | Public account decoder/registry | Code identity, bounded exact storage union, immutable public DTO |
-| Native config adapters | Native Config 8/43/48 decode, dependency observation and authenticated absence |
+| Native config adapters | Native Config 8/43/48/84 decode, dependency observation and authenticated absence |
 | JSON renderers | Bounded serialization only; no network I/O, registry mutation or verification |
 | Shared proof transport | Named route parity using the existing allowlisted handler |
 

@@ -205,6 +205,7 @@ set(BLOCK_SOURCE
   block/Binlog.cpp
   block/block.cpp
   block/auth-policy.cpp
+  block/settlement-assets.cpp
   block/block-db.cpp
   block/block-parse.cpp
   block/check-proof.cpp
