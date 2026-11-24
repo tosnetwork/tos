@@ -764,7 +764,7 @@ fn default_workchain() -> i32 {
 /// Smallest max factor a stake order may carry.
 pub const MAX_FACTOR_MIN: f64 = 1.0;
 /// Largest max factor a stake order may carry. This is the 1..100 range of the
-/// reference `validator-elect-req.fif`; the elector still caps the factor at
+/// reference Fift stake-request tool; the elector still caps the factor at
 /// ConfigParam 17's `max_stake_factor`, which stays the binding limit.
 pub const MAX_FACTOR_MAX: f64 = 100.0;
 /// Max factor used when the configuration does not set one.
