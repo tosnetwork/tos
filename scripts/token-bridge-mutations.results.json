@@ -1,17 +1,17 @@
 {
-  "source_commit": "8c2f1125d",
+  "source_commit": "c93948b6e",
   "command": "python3 scripts/token-bridge-mutations.py --results <file>",
   "exit_status": 0,
   "summary": {
-    "controls": 72,
-    "red": 70,
+    "controls": 76,
+    "red": 74,
     "recorded_survivors": 2,
     "unexpected": 0
   },
   "positive_controls": "every named test passed unmutated before the mutations ran",
   "raw_log": {
-    "sha256": "9e02bcd293c6aece50aea177d4e409a679dbd24b43811951b513e1f320a6c4a4",
-    "bytes": 16714,
+    "sha256": "45450a87011dac91c7e10428598d6b420949629aed7b4860abd527e77380d9d9",
+    "bytes": 17830,
     "retained": "not retained durably; regenerate with the command above at source_commit"
   },
   "controls": [
@@ -21,7 +21,7 @@
       "test": "t_m4_",
       "verdict": "red",
       "required_failure": "credit",
-      "observed": "thread 'mint::t_m4_duplicate_and_old_mint_messages_repeat_no_effect' (24219) panicked at node-control/contracts/tests/token_bridge/model.rs:594:21:"
+      "observed": "thread 'mint::t_m4_duplicate_and_old_mint_messages_repeat_no_effect' (604938) panicked at node-control/contracts/tests/token_bridge/model.rs:603:21:"
     },
     {
       "id": "M02",
@@ -29,7 +29,7 @@
       "test": "t_m4_",
       "verdict": "red",
       "required_failure": "I",
-      "observed": "thread 'mint::t_m4_duplicate_and_old_mint_messages_repeat_no_effect' (38801) panicked at node-control/contracts/tests/token_bridge/mint.rs:178:5:"
+      "observed": "thread 'mint::t_m4_duplicate_and_old_mint_messages_repeat_no_effect' (619466) panicked at node-control/contracts/tests/token_bridge/mint.rs:178:5:"
     },
     {
       "id": "M03",
@@ -37,7 +37,7 @@
       "test": "t_b6_",
       "verdict": "red",
       "required_failure": "LOG_BURN emitted twice",
-      "observed": "thread 'burn::t_b6_old_burn_messages_repeat_no_effect' (49447) panicked at node-control/contracts/tests/token_bridge/model.rs:839:13:"
+      "observed": "thread 'burn::t_b6_old_burn_messages_repeat_no_effect' (630648) panicked at node-control/contracts/tests/token_bridge/model.rs:848:13:"
     },
     {
       "id": "M04",
@@ -45,7 +45,7 @@
       "test": "t_b5_",
       "verdict": "red",
       "required_failure": "I",
-      "observed": "thread 'burn::t_b5_recorded_or_cancelled_once_never_both' (53641) panicked at node-control/contracts/tests/token_bridge/model.rs:824:21:"
+      "observed": "thread 'burn::t_b5_recorded_or_cancelled_once_never_both' (635199) panicked at node-control/contracts/tests/token_bridge/model.rs:833:21:"
     },
     {
       "id": "M05",
@@ -53,7 +53,7 @@
       "test": "t_b7_",
       "verdict": "red",
       "required_failure": "I1:",
-      "observed": "thread 'burn::t_b7_bounces_cannot_refund' (68588) panicked at node-control/contracts/tests/token_bridge/model.rs:1002:9:"
+      "observed": "thread 'burn::t_b7_bounces_cannot_refund' (649352) panicked at node-control/contracts/tests/token_bridge/model.rs:1011:9:"
     },
     {
       "id": "M06",
@@ -61,7 +61,7 @@
       "test": "t_m7_",
       "verdict": "red",
       "required_failure": "failed",
-      "observed": "thread 'mint::t_m7_mints_complete_without_and_despite_configparam_79' (73107) panicked at node-control/contracts/tests/token_bridge/harness.rs:996:13:"
+      "observed": "thread 'mint::t_m7_mints_complete_without_and_despite_configparam_79' (654201) panicked at node-control/contracts/tests/token_bridge/harness.rs:1000:13:"
     },
     {
       "id": "M07",
@@ -69,7 +69,7 @@
       "test": "t_m6_",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'mint::t_m6_a_reused_identity_with_other_fields_is_refused' (76595) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
+      "observed": "thread 'mint::t_m6_a_reused_identity_with_other_fields_is_refused' (658333) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
     },
     {
       "id": "M08",
@@ -77,7 +77,7 @@
       "test": "t_b8_",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'burn::t_b8_a_reused_admission_with_other_fields_is_refused_by_the_minter' (82185) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
+      "observed": "thread 'burn::t_b8_a_reused_admission_with_other_fields_is_refused_by_the_minter' (663489) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
     },
     {
       "id": "M09",
@@ -85,7 +85,7 @@
       "test": "t_x1_",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'extended::t_x1_the_refund_of_an_undecided_burn_always_fits' (87287) panicked at node-control/contracts/tests/token_bridge/extended.rs:67:9:"
+      "observed": "thread 'extended::t_x1_the_refund_of_an_undecided_burn_always_fits' (668692) panicked at node-control/contracts/tests/token_bridge/extended.rs:67:9:"
     },
     {
       "id": "M10",
@@ -93,7 +93,7 @@
       "test": "t_x3_a_refusal",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'windows::t_x3_a_refusal_outlives_the_watermark_until_the_bridge_acknowledges_it' (90983) panicked at node-control/contracts/tests/token_bridge/windows.rs:396:5:"
+      "observed": "thread 'windows::t_x3_a_refusal_outlives_the_watermark_until_the_bridge_acknowledges_it' (672631) panicked at node-control/contracts/tests/token_bridge/windows.rs:396:5:"
     },
     {
       "id": "M11",
@@ -101,7 +101,7 @@
       "test": "t_y1_",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'burn::t_b2_t_y1_a_refused_admission_stays_refused_after_capacity_returns' (95496) panicked at node-control/contracts/tests/token_bridge/burn.rs:145:5:"
+      "observed": "thread 'burn::t_b2_t_y1_a_refused_admission_stays_refused_after_capacity_returns' (677085) panicked at node-control/contracts/tests/token_bridge/burn.rs:145:5:"
     },
     {
       "id": "M12",
@@ -109,7 +109,7 @@
       "test": "t_y4_",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'windows::t_y4_sync_alone_reopens_every_window' (107901) panicked at node-control/contracts/tests/token_bridge/windows.rs:112:21:"
+      "observed": "thread 'windows::t_y4_sync_alone_reopens_every_window' (691300) panicked at node-control/contracts/tests/token_bridge/windows.rs:112:21:"
     },
     {
       "id": "M13",
@@ -117,7 +117,7 @@
       "test": "t_x4_an_old_life",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'lifecycle::t_x4_an_old_life_credit_never_lands_in_the_new_life' (114783) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
+      "observed": "thread 'lifecycle::t_x4_an_old_life_credit_never_lands_in_the_new_life' (696819) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
     },
     {
       "id": "M14",
@@ -125,7 +125,7 @@
       "test": "t_y6_a_newer",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'lifecycle::t_y6_a_newer_minter_life_is_terminal_at_the_wallet' (121270) panicked at node-control/contracts/tests/token_bridge/lifecycle.rs:478:5:"
+      "observed": "thread 'lifecycle::t_y6_a_newer_minter_life_is_terminal_at_the_wallet' (703098) panicked at node-control/contracts/tests/token_bridge/lifecycle.rs:478:5:"
     },
     {
       "id": "M15",
@@ -133,7 +133,7 @@
       "test": "t_y5_",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'source::t_y5_an_unpaid_early_lock_blocks_the_window_until_it_is_cancelled' (126591) panicked at node-control/contracts/tests/token_bridge/model.rs:407:9:"
+      "observed": "thread 'source::t_y5_an_unpaid_early_lock_blocks_the_window_until_it_is_cancelled' (707966) panicked at node-control/contracts/tests/token_bridge/harness.rs:454:5:"
     },
     {
       "id": "M16",
@@ -141,7 +141,7 @@
       "test": "t_m9_",
       "verdict": "red",
       "required_failure": "extra fields",
-      "observed": "thread 'mint::t_m9_advances_take_nothing_from_the_caller_but_the_identifier' (131207) panicked at node-control/contracts/tests/token_bridge/mint.rs:390:5:"
+      "observed": "thread 'mint::t_m9_advances_take_nothing_from_the_caller_but_the_identifier' (711963) panicked at node-control/contracts/tests/token_bridge/mint.rs:390:5:"
     },
     {
       "id": "M17",
@@ -158,7 +158,7 @@
       "test": "t_z2_",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'windows::t_z2_compaction_ahead_of_folding_never_admits_an_old_number' (166522) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
+      "observed": "thread 'windows::t_z2_compaction_ahead_of_folding_never_admits_an_old_number' (745615) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
     },
     {
       "id": "M19",
@@ -166,7 +166,7 @@
       "test": "t_z3_",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'windows::t_z3_a_full_holder_credit_window_refuses_the_next_prepare' (206032) panicked at node-control/contracts/tests/token_bridge/windows.rs:462:5:"
+      "observed": "thread 'windows::t_z3_a_full_holder_credit_window_refuses_the_next_prepare' (772621) panicked at node-control/contracts/tests/token_bridge/windows.rs:462:5:"
     },
     {
       "id": "M20",
@@ -174,7 +174,7 @@
       "test": "t_z4_a_wallet_deleted",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'lifecycle::t_z4_a_wallet_deleted_at_each_point_of_a_mint_strands_it_exactly_once' (234175) panicked at node-control/contracts/tests/token_bridge/lifecycle.rs:218:13:"
+      "observed": "thread 'lifecycle::t_z4_a_wallet_deleted_at_each_point_of_a_mint_strands_it_exactly_once' (798059) panicked at node-control/contracts/tests/token_bridge/lifecycle.rs:218:13:"
     },
     {
       "id": "M21",
@@ -182,7 +182,7 @@
       "test": "t_z1_",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'lifecycle::t_z1_old_locks_stay_ineligible_after_all_three_are_recreated' (252573) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
+      "observed": "thread 'lifecycle::t_z1_old_locks_stay_ineligible_after_all_three_are_recreated' (814970) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
     },
     {
       "id": "M22",
@@ -199,7 +199,7 @@
       "test": "t_z7_",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'windows::t_z7_waiting_mints_beyond_the_credit_window_are_refused_not_prepared' (294568) panicked at node-control/contracts/tests/token_bridge/windows.rs:365:5:"
+      "observed": "thread 'windows::t_z7_waiting_mints_beyond_the_credit_window_are_refused_not_prepared' (852647) panicked at node-control/contracts/tests/token_bridge/windows.rs:365:5:"
     },
     {
       "id": "M24",
@@ -207,7 +207,7 @@
       "test": "t_z4_stranding",
       "verdict": "red",
       "required_failure": "the action phase failed",
-      "observed": "thread 'lifecycle::t_z4_stranding_is_bounded_and_rolls_back_whole_without_its_log' (306977) panicked at node-control/contracts/tests/token_bridge/lifecycle.rs:326:5:"
+      "observed": "thread 'lifecycle::t_z4_stranding_is_bounded_and_rolls_back_whole_without_its_log' (865338) panicked at node-control/contracts/tests/token_bridge/lifecycle.rs:326:5:"
     },
     {
       "id": "M25",
@@ -215,7 +215,7 @@
       "test": "t_z6_a_mint",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'recovery::t_z6_a_mint_is_rebuilt_from_records_alone_at_every_point' (327158) panicked at sandbox/src/result.rs:122:9:"
+      "observed": "thread 'recovery::t_z6_a_mint_is_rebuilt_from_records_alone_at_every_point' (879358) panicked at sandbox/src/result.rs:122:9:"
     },
     {
       "id": "M26",
@@ -223,7 +223,7 @@
       "test": "t_z1_",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'lifecycle::t_z1_old_locks_stay_ineligible_after_all_three_are_recreated' (329814) panicked at node-control/contracts/tests/token_bridge/model.rs:935:9:"
+      "observed": "thread 'lifecycle::t_z1_old_locks_stay_ineligible_after_all_three_are_recreated' (881722) panicked at node-control/contracts/tests/token_bridge/model.rs:944:9:"
     },
     {
       "id": "M27",
@@ -231,7 +231,7 @@
       "test": "t_x7_",
       "verdict": "red",
       "required_failure": "I8 atomic send",
-      "observed": "thread 'storage::t_x7_a_send_above_the_balance_rolls_the_leg_back_whole' (336652) panicked at node-control/contracts/tests/token_bridge/model.rs:481:17:"
+      "observed": "thread 'storage::t_x7_a_send_above_the_balance_rolls_the_leg_back_whole' (889852) panicked at node-control/contracts/tests/token_bridge/model.rs:483:17:"
     },
     {
       "id": "M28",
@@ -239,7 +239,7 @@
       "test": "t_x8_votes",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'extended::t_x8_votes_outside_the_namespace_and_burns_to_nowhere_are_refused' (340723) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
+      "observed": "thread 'extended::t_x8_votes_outside_the_namespace_and_burns_to_nowhere_are_refused' (893679) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
     },
     {
       "id": "M29",
@@ -247,7 +247,7 @@
       "test": "t_x8_votes",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'extended::t_x8_votes_outside_the_namespace_and_burns_to_nowhere_are_refused' (344155) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
+      "observed": "thread 'extended::t_x8_votes_outside_the_namespace_and_burns_to_nowhere_are_refused' (897503) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
     },
     {
       "id": "M30",
@@ -255,7 +255,7 @@
       "test": "t_y8_a_lowered",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'limits::t_y8_a_lowered_cell_limit_stops_admission_before_any_effect' (349506) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
+      "observed": "thread 'limits::t_y8_a_lowered_cell_limit_stops_admission_before_any_effect' (902758) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
     },
     {
       "id": "M31",
@@ -263,7 +263,7 @@
       "test": "t_y5_",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'source::t_y5_an_unpaid_early_lock_blocks_the_window_until_it_is_cancelled' (354828) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
+      "observed": "thread 'source::t_y5_an_unpaid_early_lock_blocks_the_window_until_it_is_cancelled' (908796) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
     },
     {
       "id": "M32",
@@ -271,7 +271,7 @@
       "test": "t_y5_",
       "verdict": "red",
       "required_failure": "I7",
-      "observed": "thread 'source::t_y5_an_unpaid_early_lock_blocks_the_window_until_it_is_cancelled' (359032) panicked at node-control/contracts/tests/token_bridge/model.rs:407:9:"
+      "observed": "thread 'source::t_y5_an_unpaid_early_lock_blocks_the_window_until_it_is_cancelled' (913185) panicked at node-control/contracts/tests/token_bridge/model.rs:409:9:"
     },
     {
       "id": "M33",
@@ -279,7 +279,7 @@
       "test": "t_z4_a_wallet_deleted",
       "verdict": "red",
       "required_failure": "panicked",
-      "observed": "thread 'lifecycle::t_z4_a_wallet_deleted_at_each_point_of_a_mint_strands_it_exactly_once' (364120) panicked at node-control/contracts/tests/token_bridge/model.rs:888:17:"
+      "observed": "thread 'lifecycle::t_z4_a_wallet_deleted_at_each_point_of_a_mint_strands_it_exactly_once' (918265) panicked at node-control/contracts/tests/token_bridge/model.rs:897:17:"
     },
     {
       "id": "M34",
@@ -287,7 +287,7 @@
       "test": "t_m1_",
       "verdict": "red",
       "required_failure": "over its declared",
-      "observed": "thread 'mint::t_m1_a_mint_to_a_new_holder_completes_in_one_pass' (369475) panicked at node-control/contracts/tests/token_bridge/harness.rs:944:9:"
+      "observed": "thread 'mint::t_m1_a_mint_to_a_new_holder_completes_in_one_pass' (922966) panicked at node-control/contracts/tests/token_bridge/harness.rs:948:9:"
     },
     {
       "id": "M35",
@@ -295,7 +295,7 @@
       "test": "t_z4_stranding",
       "verdict": "red",
       "required_failure": "strand",
-      "observed": "thread 'lifecycle::t_z4_stranding_is_bounded_and_rolls_back_whole_without_its_log' (372570) panicked at node-control/contracts/tests/token_bridge/harness.rs:850:9:"
+      "observed": "thread 'lifecycle::t_z4_stranding_is_bounded_and_rolls_back_whole_without_its_log' (925600) panicked at node-control/contracts/tests/token_bridge/harness.rs:850:9:"
     },
     {
       "id": "M36",
@@ -303,7 +303,7 @@
       "test": "deep::every_minter_step",
       "verdict": "red",
       "required_failure": "over its declared",
-      "observed": "thread 'deep::every_minter_step_on_a_holder_at_the_deepest_path_stays_within_its_gas' (383009) panicked at node-control/contracts/tests/token_bridge/harness.rs:944:9:"
+      "observed": "thread 'deep::every_minter_step_on_a_holder_at_the_deepest_path_stays_within_its_gas' (933656) panicked at node-control/contracts/tests/token_bridge/harness.rs:948:9:"
     },
     {
       "id": "M37",
@@ -311,7 +311,7 @@
       "test": "deep::every_minter_step",
       "verdict": "red",
       "required_failure": "over its declared",
-      "observed": "thread 'deep::every_minter_step_on_a_holder_at_the_deepest_path_stays_within_its_gas' (388192) panicked at node-control/contracts/tests/token_bridge/harness.rs:944:9:"
+      "observed": "thread 'deep::every_minter_step_on_a_holder_at_the_deepest_path_stays_within_its_gas' (937806) panicked at node-control/contracts/tests/token_bridge/harness.rs:948:9:"
     },
     {
       "id": "M38",
@@ -319,7 +319,7 @@
       "test": "t_r4_",
       "verdict": "red",
       "required_failure": "not the owner: S refuses with",
-      "observed": "thread 'reported::t_r4_every_refusal_at_the_paying_wallet_bounces_and_changes_nothing' (402971) panicked at node-control/contracts/tests/token_bridge/reported.rs:535:9:"
+      "observed": "thread 'reported::t_r4_every_refusal_at_the_paying_wallet_bounces_and_changes_nothing' (948595) panicked at node-control/contracts/tests/token_bridge/reported.rs:621:9:"
     },
     {
       "id": "M39",
@@ -327,7 +327,7 @@
       "test": "t_r4_",
       "verdict": "red",
       "required_failure": "zero amount: S refuses with",
-      "observed": "thread 'reported::t_r4_every_refusal_at_the_paying_wallet_bounces_and_changes_nothing' (407490) panicked at node-control/contracts/tests/token_bridge/reported.rs:535:9:"
+      "observed": "thread 'reported::t_r4_every_refusal_at_the_paying_wallet_bounces_and_changes_nothing' (952891) panicked at node-control/contracts/tests/token_bridge/reported.rs:621:9:"
     },
     {
       "id": "M40",
@@ -335,7 +335,7 @@
       "test": "t_r4_",
       "verdict": "red",
       "required_failure": "above the balance: S refuses with",
-      "observed": "thread 'reported::t_r4_every_refusal_at_the_paying_wallet_bounces_and_changes_nothing' (412140) panicked at node-control/contracts/tests/token_bridge/reported.rs:535:9:"
+      "observed": "thread 'reported::t_r4_every_refusal_at_the_paying_wallet_bounces_and_changes_nothing' (957291) panicked at node-control/contracts/tests/token_bridge/reported.rs:621:9:"
     },
     {
       "id": "M41",
@@ -343,7 +343,7 @@
       "test": "t_r4_",
       "verdict": "red",
       "required_failure": "the masterchain: S refuses with",
-      "observed": "thread 'reported::t_r4_every_refusal_at_the_paying_wallet_bounces_and_changes_nothing' (416661) panicked at node-control/contracts/tests/token_bridge/reported.rs:535:9:"
+      "observed": "thread 'reported::t_r4_every_refusal_at_the_paying_wallet_bounces_and_changes_nothing' (961085) panicked at node-control/contracts/tests/token_bridge/reported.rs:621:9:"
     },
     {
       "id": "M42",
@@ -351,7 +351,7 @@
       "test": "t_r4_",
       "verdict": "red",
       "required_failure": "no forward payload: S refuses with",
-      "observed": "thread 'reported::t_r4_every_refusal_at_the_paying_wallet_bounces_and_changes_nothing' (421636) panicked at node-control/contracts/tests/token_bridge/reported.rs:535:9:"
+      "observed": "thread 'reported::t_r4_every_refusal_at_the_paying_wallet_bounces_and_changes_nothing' (966274) panicked at node-control/contracts/tests/token_bridge/reported.rs:621:9:"
     },
     {
       "id": "M43",
@@ -359,7 +359,7 @@
       "test": "t_r7_",
       "verdict": "red",
       "required_failure": "expected a refusal with 712",
-      "observed": "thread 'reported::t_r7_rereport_clear_and_a_duplicate_query_id' (426655) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
+      "observed": "thread 'reported::t_r7_rereport_clear_and_a_duplicate_query_id' (971545) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
     },
     {
       "id": "M44",
@@ -367,7 +367,7 @@
       "test": "t_r4_",
       "verdict": "red",
       "required_failure": "exactly the need: S refuses with",
-      "observed": "thread 'reported::t_r4_every_refusal_at_the_paying_wallet_bounces_and_changes_nothing' (431599) panicked at node-control/contracts/tests/token_bridge/reported.rs:535:9:"
+      "observed": "thread 'reported::t_r4_every_refusal_at_the_paying_wallet_bounces_and_changes_nothing' (976288) panicked at node-control/contracts/tests/token_bridge/reported.rs:621:9:"
     },
     {
       "id": "M45",
@@ -375,7 +375,7 @@
       "test": "t_r5_",
       "verdict": "red",
       "required_failure": "network-priced compute term",
-      "observed": "thread 'reported::t_r5_a_low_bridge_gas_price_cannot_underfund_the_recipient' (437470) panicked at node-control/contracts/tests/token_bridge/reported.rs:628:5:"
+      "observed": "thread 'reported::t_r5_a_low_bridge_gas_price_cannot_underfund_the_recipient' (981700) panicked at node-control/contracts/tests/token_bridge/reported.rs:715:5:"
     },
     {
       "id": "M46",
@@ -383,7 +383,7 @@
       "test": "t_r5_",
       "verdict": "red",
       "required_failure": "the need is the sum of its terms",
-      "observed": "thread 'reported::t_r5_a_low_bridge_gas_price_cannot_underfund_the_recipient' (441551) panicked at node-control/contracts/tests/token_bridge/reported.rs:636:5:"
+      "observed": "thread 'reported::t_r5_a_low_bridge_gas_price_cannot_underfund_the_recipient' (985435) panicked at node-control/contracts/tests/token_bridge/reported.rs:723:5:"
     },
     {
       "id": "M47",
@@ -391,7 +391,7 @@
       "test": "t_r5_",
       "verdict": "red",
       "required_failure": "the need is the sum of its terms",
-      "observed": "thread 'reported::t_r5_a_low_bridge_gas_price_cannot_underfund_the_recipient' (445320) panicked at node-control/contracts/tests/token_bridge/reported.rs:636:5:"
+      "observed": "thread 'reported::t_r5_a_low_bridge_gas_price_cannot_underfund_the_recipient' (989650) panicked at node-control/contracts/tests/token_bridge/reported.rs:723:5:"
     },
     {
       "id": "M48",
@@ -399,7 +399,7 @@
       "test": "t_r5_",
       "verdict": "red",
       "required_failure": "the need is the sum of its terms",
-      "observed": "thread 'reported::t_r5_a_low_bridge_gas_price_cannot_underfund_the_recipient' (449850) panicked at node-control/contracts/tests/token_bridge/reported.rs:636:5:"
+      "observed": "thread 'reported::t_r5_a_low_bridge_gas_price_cannot_underfund_the_recipient' (993791) panicked at node-control/contracts/tests/token_bridge/reported.rs:723:5:"
     },
     {
       "id": "M49",
@@ -407,7 +407,7 @@
       "test": "t_r3_",
       "verdict": "red",
       "required_failure": "S's action failure bounces P's message",
-      "observed": "thread 'reported::t_r3_an_action_failure_at_s_bounces_to_the_payer' (454309) panicked at node-control/contracts/tests/token_bridge/reported.rs:437:5:"
+      "observed": "thread 'reported::t_r3_an_action_failure_at_s_bounces_to_the_payer' (998501) panicked at node-control/contracts/tests/token_bridge/reported.rs:516:5:"
     },
     {
       "id": "M50",
@@ -415,7 +415,7 @@
       "test": "t_r2_refused_at_r_out_of_its_capped_gas",
       "verdict": "red",
       "required_failure": "R runs out of its capped gas",
-      "observed": "thread 'reported::t_r2_refused_at_r_out_of_its_capped_gas' (459053) panicked at node-control/contracts/tests/token_bridge/reported.rs:302:5:"
+      "observed": "thread 'reported::t_r2_refused_at_r_out_of_its_capped_gas' (1003139) panicked at node-control/contracts/tests/token_bridge/reported.rs:308:5:"
     },
     {
       "id": "M51",
@@ -423,7 +423,7 @@
       "test": "t_r8_",
       "verdict": "red",
       "required_failure": "ended more often than it was sent",
-      "observed": "thread 'reported::t_r8_spoofed_reports_are_told_apart_or_refused' (464149) panicked at node-control/contracts/tests/token_bridge/model.rs:575:17:"
+      "observed": "thread 'reported::t_r8_spoofed_reports_are_told_apart_or_refused' (1006569) panicked at node-control/contracts/tests/token_bridge/model.rs:584:17:"
     },
     {
       "id": "M52",
@@ -431,7 +431,7 @@
       "test": "t_r2_refused_at_r_by_its_supply_bound",
       "verdict": "red",
       "required_failure": "refused for another reason",
-      "observed": "thread 'reported::t_r2_refused_at_r_by_its_supply_bound' (472273) panicked at node-control/contracts/tests/token_bridge/harness.rs:454:5:"
+      "observed": "thread 'reported::t_r2_refused_at_r_by_its_supply_bound' (1012797) panicked at node-control/contracts/tests/token_bridge/harness.rs:454:5:"
     },
     {
       "id": "M53",
@@ -439,7 +439,7 @@
       "test": "t_r2_refused_at_r_by_an_action_failure",
       "verdict": "red",
       "required_failure": "I1:",
-      "observed": "thread 'reported::t_r2_refused_at_r_by_an_action_failure' (476470) panicked at node-control/contracts/tests/token_bridge/model.rs:1002:9:"
+      "observed": "thread 'reported::t_r2_refused_at_r_by_an_action_failure' (1017224) panicked at node-control/contracts/tests/token_bridge/model.rs:1011:9:"
     },
     {
       "id": "M54",
@@ -447,7 +447,7 @@
       "test": "t_r2_refused_at_r_by_an_action_failure",
       "verdict": "red",
       "required_failure": "I1:",
-      "observed": "thread 'reported::t_r2_refused_at_r_by_an_action_failure' (480312) panicked at node-control/contracts/tests/token_bridge/model.rs:1002:9:"
+      "observed": "thread 'reported::t_r2_refused_at_r_by_an_action_failure' (1020967) panicked at node-control/contracts/tests/token_bridge/model.rs:1011:9:"
     },
     {
       "id": "M55",
@@ -455,7 +455,7 @@
       "test": "t_r1_",
       "verdict": "red",
       "required_failure": "without its report",
-      "observed": "thread 'reported::t_r1_delivered_reports_once_to_the_payer' (484614) panicked at node-control/contracts/tests/token_bridge/model.rs:481:17:"
+      "observed": "thread 'reported::t_r1_delivered_reports_once_to_the_payer' (1025750) panicked at node-control/contracts/tests/token_bridge/model.rs:483:17:"
     },
     {
       "id": "M56",
@@ -463,7 +463,7 @@
       "test": "t_r2_refused_at_r_by_a_compute_failure",
       "verdict": "red",
       "required_failure": "restores its amount",
-      "observed": "thread 'reported::t_r2_refused_at_r_by_a_compute_failure' (488878) panicked at node-control/contracts/tests/token_bridge/model.rs:506:13:"
+      "observed": "thread 'reported::t_r2_refused_at_r_by_a_compute_failure' (1029436) panicked at node-control/contracts/tests/token_bridge/model.rs:508:13:"
     },
     {
       "id": "M57",
@@ -471,7 +471,7 @@
       "test": "t_r2_refused_at_r_by_a_compute_failure",
       "verdict": "red",
       "required_failure": "is recorded",
-      "observed": "thread 'reported::t_r2_refused_at_r_by_a_compute_failure' (492923) panicked at node-control/contracts/tests/token_bridge/model.rs:517:13:"
+      "observed": "thread 'reported::t_r2_refused_at_r_by_a_compute_failure' (1033536) panicked at node-control/contracts/tests/token_bridge/model.rs:521:13:"
     },
     {
       "id": "M58",
@@ -479,7 +479,7 @@
       "test": "t_r2_a_short_bounce",
       "verdict": "red",
       "required_failure": "I1:",
-      "observed": "thread 'reported::t_r2_a_short_bounce_is_paid_from_the_paying_wallet' (497022) panicked at node-control/contracts/tests/token_bridge/model.rs:1002:9:"
+      "observed": "thread 'reported::t_r2_a_short_bounce_is_paid_from_the_paying_wallet' (1036865) panicked at node-control/contracts/tests/token_bridge/model.rs:1011:9:"
     },
     {
       "id": "M59",
@@ -487,7 +487,7 @@
       "test": "t_r2_a_short_bounce",
       "verdict": "red",
       "required_failure": "I1:",
-      "observed": "thread 'reported::t_r2_a_short_bounce_is_paid_from_the_paying_wallet' (501675) panicked at node-control/contracts/tests/token_bridge/model.rs:1002:9:"
+      "observed": "thread 'reported::t_r2_a_short_bounce_is_paid_from_the_paying_wallet' (1041349) panicked at node-control/contracts/tests/token_bridge/model.rs:1011:9:"
     },
     {
       "id": "M60",
@@ -495,7 +495,7 @@
       "test": "t_r7_",
       "verdict": "red",
       "required_failure": "the transaction failed",
-      "observed": "thread 'reported::t_r7_rereport_clear_and_a_duplicate_query_id' (506386) panicked at node-control/contracts/tests/token_bridge/harness.rs:459:5:"
+      "observed": "thread 'reported::t_r7_rereport_clear_and_a_duplicate_query_id' (1046523) panicked at node-control/contracts/tests/token_bridge/harness.rs:459:5:"
     },
     {
       "id": "M61",
@@ -503,7 +503,7 @@
       "test": "t_r7_",
       "verdict": "red",
       "required_failure": "an unfunded re-report fails",
-      "observed": "thread 'reported::t_r7_rereport_clear_and_a_duplicate_query_id' (511768) panicked at node-control/contracts/tests/token_bridge/reported.rs:773:5:"
+      "observed": "thread 'reported::t_r7_rereport_clear_and_a_duplicate_query_id' (1051360) panicked at node-control/contracts/tests/token_bridge/reported.rs:860:5:"
     },
     {
       "id": "M62",
@@ -511,7 +511,7 @@
       "test": "t_r7_",
       "verdict": "red",
       "required_failure": "expected a refusal with 705",
-      "observed": "thread 'reported::t_r7_rereport_clear_and_a_duplicate_query_id' (516947) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
+      "observed": "thread 'reported::t_r7_rereport_clear_and_a_duplicate_query_id' (1057639) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
     },
     {
       "id": "M63",
@@ -519,7 +519,7 @@
       "test": "t_r9_",
       "verdict": "red",
       "required_failure": "expected a refusal with 705",
-      "observed": "thread 'reported::t_r9_provide_balance_answers_the_owner_only' (522029) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
+      "observed": "thread 'reported::t_r9_provide_balance_answers_the_owner_only' (1063139) panicked at node-control/contracts/tests/token_bridge/harness.rs:453:5:"
     },
     {
       "id": "M64",
@@ -527,7 +527,7 @@
       "test": "t_r11_",
       "verdict": "red",
       "required_failure": "more than half of its R_GAS_LIMIT",
-      "observed": "thread 'reported::t_r11_gas_per_leg_is_within_its_constants' (526147) panicked at node-control/contracts/tests/token_bridge/harness.rs:894:17:"
+      "observed": "thread 'reported::t_r11_gas_per_leg_is_within_its_constants' (1067311) panicked at node-control/contracts/tests/token_bridge/harness.rs:898:17:"
     },
     {
       "id": "M65",
@@ -535,7 +535,7 @@
       "test": "t_r11_",
       "verdict": "red",
       "required_failure": "more than half of its S_BOUNCE_GAS",
-      "observed": "thread 'reported::t_r11_gas_per_leg_is_within_its_constants' (543663) panicked at node-control/contracts/tests/token_bridge/harness.rs:894:17:"
+      "observed": "thread 'reported::t_r11_gas_per_leg_is_within_its_constants' (1087028) panicked at node-control/contracts/tests/token_bridge/harness.rs:898:17:"
     },
     {
       "id": "M66",
@@ -543,7 +543,39 @@
       "test": "t_r13_",
       "verdict": "red",
       "required_failure": "I1:",
-      "observed": "thread 'reported::t_r13_a_failed_ordinary_notification_returns_the_tokens' (548184) panicked at node-control/contracts/tests/token_bridge/model.rs:1002:9:"
+      "observed": "thread 'reported::t_r13_a_failed_ordinary_notification_returns_the_tokens' (1091325) panicked at node-control/contracts/tests/token_bridge/model.rs:1011:9:"
+    },
+    {
+      "id": "M67",
+      "guard": "the value check omits S's own compute",
+      "test": "t_r2_out_of_gas_at_r_is_funded_without_a_storage_reserve",
+      "verdict": "red",
+      "required_failure": "I1:",
+      "observed": "thread 'reported::t_r2_out_of_gas_at_r_is_funded_without_a_storage_reserve' (1095496) panicked at node-control/contracts/tests/token_bridge/model.rs:1011:9:"
+    },
+    {
+      "id": "M68",
+      "guard": "S admits a body over its cell cap",
+      "test": "t_r14_",
+      "verdict": "red",
+      "required_failure": "more than half of its S_TRANSFER_GAS",
+      "observed": "thread 'reported::t_r14_the_largest_payload_is_delivered_and_one_cell_more_is_refused' (1098962) panicked at node-control/contracts/tests/token_bridge/harness.rs:898:17:"
+    },
+    {
+      "id": "M69",
+      "guard": "S_TRANSFER_GAS is below twice S's measured most",
+      "test": "t_r11_",
+      "verdict": "red",
+      "required_failure": "more than half of its S_TRANSFER_GAS",
+      "observed": "thread 'reported::t_r11_gas_per_leg_is_within_its_constants' (1103084) panicked at node-control/contracts/tests/token_bridge/harness.rs:898:17:"
+    },
+    {
+      "id": "M70",
+      "guard": "a second refusal under one query id replaces the first",
+      "test": "t_r2_a_second_refusal",
+      "verdict": "red",
+      "required_failure": "is recorded",
+      "observed": "thread 'reported::t_r2_a_second_refusal_under_one_query_id_adds_to_the_record' (1119958) panicked at node-control/contracts/tests/token_bridge/model.rs:521:13:"
     },
     {
       "id": "E01",
