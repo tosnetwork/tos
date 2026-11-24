@@ -1,5 +1,10 @@
 # Validator Operator Guide
 
+For the coordinated public testnet, start with the
+[tos-ops onboarding and monitoring guide](https://github.com/tosnetwork/tos-ops/blob/main/testnet/OPERATOR.md#start-here).
+It covers host preparation, the coordinator handoffs, and how to check sync
+and election duties.
+
 This guide takes an operator from a synchronized node to a post-quantum (PQ)
 validator that stands in elections, and covers what has to be done to keep it
 there: key rotation, consensus-database cleanup, upgrades, configuration votes

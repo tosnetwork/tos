@@ -8,6 +8,11 @@ config refresh) is in
 
 Validators are the verification backbone for AI actor workflows. Agent runners, service operators, and verifier processes may query validators, but validator nodes remain responsible only for protocol validation, consensus, and serving verified chain state.
 
+For the coordinated public testnet, start with the
+[tos-ops onboarding and monitoring guide](https://github.com/tosnetwork/tos-ops/blob/main/testnet/OPERATOR.md#start-here).
+It covers host preparation, the coordinator handoffs, and how to check sync
+and election duties.
+
 ## Main Components
 
 - [validator-engine](../validator-engine)

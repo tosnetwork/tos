@@ -79,7 +79,9 @@ The canonical generator rejects the legacy classical bootstrap key file.
 
 Operators supply public identities through `validator-pq.pub`; private keys
 remain with their operators. See the [PQ genesis ceremony and parameters](doc/validator-genesis-bootstrap.md)
-and [validator guide](doc/Validator.md). Wallets and administrative paths must
+and [validator guide](doc/Validator.md). To join the coordinated public testnet,
+follow the [tos-ops operator guide](https://github.com/tosnetwork/tos-ops/blob/main/testnet/OPERATOR.md#start-here).
+Wallets and administrative paths must
 be assessed separately: a PQ validator set does not automatically replace their
 authentication schemes. Accounts gain PQ protection by using the PQ wallets
 described above.
