@@ -761,8 +761,53 @@ fn default_workchain() -> i32 {
     -1
 }
 
-fn default_max_factor() -> f32 {
-    3.0
+/// Smallest max factor a stake order may carry.
+pub const MAX_FACTOR_MIN: f64 = 1.0;
+/// Largest max factor a stake order may carry. This is the 1..100 range of the
+/// reference `validator-elect-req.fif`; the elector still caps the factor at
+/// ConfigParam 17's `max_stake_factor`, which stays the binding limit.
+pub const MAX_FACTOR_MAX: f64 = 100.0;
+/// Max factor used when the configuration does not set one.
+pub const MAX_FACTOR_DEFAULT: f64 = 3.0;
+/// The stake order carries the max factor as a 16.16 fixed-point number.
+const MAX_FACTOR_SCALE: f64 = 65536.0;
+/// `MAX_FACTOR_MIN` in the stake order encoding.
+pub const MAX_FACTOR_RAW_MIN: u32 = 65_536;
+/// `MAX_FACTOR_MAX` in the stake order encoding.
+pub const MAX_FACTOR_RAW_MAX: u32 = 6_553_600;
+
+/// Refuses a max factor outside `[MAX_FACTOR_MIN, MAX_FACTOR_MAX]`, including
+/// NaN and infinities.
+pub fn validate_max_factor(value: f64) -> anyhow::Result<()> {
+    if !(MAX_FACTOR_MIN..=MAX_FACTOR_MAX).contains(&value) {
+        anyhow::bail!("max-factor must be in range [1.0..100.0], got {value}");
+    }
+    Ok(())
+}
+
+/// Encodes a max factor for the stake order as `value * 65536`, rounded to the
+/// nearest integer like the reference Fift tool (`16 <</r`).
+pub fn max_factor_to_raw(value: f64) -> anyhow::Result<u32> {
+    validate_max_factor(value)?;
+    let scaled = (value * MAX_FACTOR_SCALE).round();
+    // The range check above already bounds `scaled`; checking the encoded
+    // range again keeps the cast below exact even if the bounds change.
+    if !(f64::from(MAX_FACTOR_RAW_MIN)..=f64::from(MAX_FACTOR_RAW_MAX)).contains(&scaled) {
+        anyhow::bail!("max-factor {value} encodes outside the stake order range");
+    }
+    Ok(scaled as u32)
+}
+
+/// Refuses an encoded max factor outside `[MAX_FACTOR_RAW_MIN, MAX_FACTOR_RAW_MAX]`.
+pub fn validate_max_factor_raw(raw: u32) -> anyhow::Result<()> {
+    if !(MAX_FACTOR_RAW_MIN..=MAX_FACTOR_RAW_MAX).contains(&raw) {
+        anyhow::bail!("<max-factor> must be a real number 1..100, got {raw}/65536");
+    }
+    Ok(())
+}
+
+fn default_max_factor() -> f64 {
+    MAX_FACTOR_DEFAULT
 }
 
 fn default_tick_interval() -> u64 {
@@ -792,7 +837,7 @@ pub struct ElectionsConfig {
     #[serde(default)]
     pub policy_overrides: HashMap<String, StakePolicy>,
     #[serde(default = "default_max_factor")]
-    pub max_factor: f32,
+    pub max_factor: f64,
     /// Interval for elections runner in seconds
     #[serde(default = "default_tick_interval")]
     pub tick_interval: u64,
@@ -806,10 +851,7 @@ impl ElectionsConfig {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
-        if !(1.0..=3.0).contains(&self.max_factor) {
-            anyhow::bail!("max_factor must be in range [1.0..3.0]");
-        }
-        Ok(())
+        validate_max_factor(self.max_factor).context("elections.max_factor")
     }
 }
 
@@ -1251,6 +1293,58 @@ mod tests {
             timeout_seconds: 300,
             min_interval_ms: 200,
         }
+    }
+
+    #[test]
+    fn max_factor_range_is_one_to_one_hundred() {
+        for accepted in [1.0, 3.0, 9.5, 10.0, 100.0] {
+            assert!(validate_max_factor(accepted).is_ok(), "{accepted} is in range");
+        }
+        for refused in [0.0, 0.99, 100.01, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(validate_max_factor(refused).is_err(), "{refused} is out of range");
+            assert!(max_factor_to_raw(refused).is_err(), "{refused} is not encoded");
+        }
+    }
+
+    #[test]
+    fn max_factor_default_stays_three() {
+        assert_eq!(MAX_FACTOR_DEFAULT, 3.0);
+        assert_eq!(ElectionsConfig::default().max_factor, 3.0);
+        let parsed: ElectionsConfig = serde_json::from_str("{}").expect("empty elections config");
+        assert_eq!(parsed.max_factor, 3.0);
+        assert!(parsed.validate().is_ok());
+    }
+
+    #[test]
+    fn elections_config_validate_follows_the_max_factor_range() {
+        let with = |max_factor| ElectionsConfig { max_factor, ..ElectionsConfig::default() };
+        assert!(with(1.0).validate().is_ok());
+        assert!(with(100.0).validate().is_ok());
+        assert!(with(0.99).validate().is_err());
+        assert!(with(100.01).validate().is_err());
+        assert!(with(f64::NAN).validate().is_err());
+        assert!(with(f64::INFINITY).validate().is_err());
+    }
+
+    #[test]
+    fn max_factor_encodes_as_rounded_16_16_fixed_point() -> anyhow::Result<()> {
+        assert_eq!(max_factor_to_raw(1.0)?, 65_536);
+        assert_eq!(max_factor_to_raw(3.0)?, 196_608);
+        assert_eq!(max_factor_to_raw(10.0)?, 655_360);
+        assert_eq!(max_factor_to_raw(100.0)?, 6_553_600);
+        assert_eq!(max_factor_to_raw(100.0)?, MAX_FACTOR_RAW_MAX);
+        // 2.7 * 65536 = 176947.2 and 1.00001 * 65536 = 65536.65536: the encoding
+        // rounds to nearest, as `16 <</r` in the reference Fift tool does.
+        assert_eq!(max_factor_to_raw(2.7)?, 176_947);
+        assert_eq!(max_factor_to_raw(1.00001)?, 65_537);
+        // An exact half rounds up.
+        assert_eq!(max_factor_to_raw(1.0 + 0.5 / 65536.0)?, 65_537);
+        assert!(validate_max_factor_raw(65_536).is_ok());
+        assert!(validate_max_factor_raw(6_553_600).is_ok());
+        assert!(validate_max_factor_raw(65_535).is_err());
+        assert!(validate_max_factor_raw(6_553_601).is_err());
+        assert!(validate_max_factor_raw(0).is_err());
+        Ok(())
     }
 
     #[test]

@@ -547,7 +547,7 @@ tosctl config elections tick-interval 60
 
 ##### `config elections max-factor`
 
-Set the maximum factor for elections. Must be in the range [1.0..3.0].
+Set the maximum factor for elections. Must be in the range [1.0..100.0], the range the reference `validator-elect-req.fif` accepts. The elector caps the factor at ConfigParam 17's `max_stake_factor`, so the chain configuration remains the effective limit.
 
 | Argument | Description |
 |----------|-------------|
@@ -1447,7 +1447,7 @@ Automatic elections task configuration:
   - `"minimum"` — use minimum required stake
   - `{ "fixed": <amount> }` — fixed stake amount in nanoTOS
 - `policy_overrides` — per-node stake policy overrides (node name -> policy). When a node has an entry here, it takes precedence over the default `policy`. Example: `{ "node0": { "fixed": 500000000000 } }`
-- `max_factor` — max factor for elections (default: 3.0, must be in range [1.0..3.0])
+- `max_factor` — max factor for elections (default: 3.0, must be in range [1.0..100.0]; the elector caps it at ConfigParam 17's `max_stake_factor`)
 - `tick_interval` — interval between election checks in seconds (default: `40`)
 
 #### `voting` (optional)
@@ -1768,7 +1768,7 @@ tosctl config wallet stake -b <BINDING> -a <AMOUNT> [-m <MAX_FACTOR>]
 |------|------|----------|---------|-------------|
 | `-b` | `--binding` | Yes | — | Binding name (node-wallet-pool triple) |
 | `-a` | `--amount` | Yes | — | Stake amount in TOS |
-| `-m` | `--max-factor` | No | `3.0` | Max factor (`1.0`–`3.0`) |
+| `-m` | `--max-factor` | No | `3.0` | Max factor (`1.0`–`100.0`) |
 
 Example:
 

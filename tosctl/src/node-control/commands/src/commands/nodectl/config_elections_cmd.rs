@@ -9,7 +9,7 @@
 use crate::commands::nodectl::{output_format::OutputFormat, utils::save_config};
 use colored::Colorize;
 use common::{
-    app_config::{AppConfig, BindingStatus, ElectionsConfig, StakePolicy},
+    app_config::{AppConfig, BindingStatus, ElectionsConfig, StakePolicy, validate_max_factor},
     chain_utils::tos_to_nanotos,
 };
 use std::{collections::HashMap, path::Path};
@@ -69,8 +69,8 @@ pub struct TickIntervalCmd {
 
 #[derive(clap::Args, Clone)]
 pub struct MaxFactorCmd {
-    #[arg(help = "Max factor (1.0..3.0)")]
-    value: f32,
+    #[arg(help = "Max factor (1.0..100.0)")]
+    value: f64,
 }
 
 #[derive(clap::Args, Clone)]
@@ -103,7 +103,7 @@ struct ElectionsView {
     stake_policy: StakePolicy,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     policy_overrides: HashMap<String, StakePolicy>,
-    max_factor: f32,
+    max_factor: f64,
     tick_interval: u64,
     bindings: Vec<BindingElectionStatus>,
 }
@@ -214,9 +214,7 @@ impl TickIntervalCmd {
 
 impl MaxFactorCmd {
     pub async fn run(&self, path: &Path) -> anyhow::Result<()> {
-        if !(1.0..=3.0).contains(&self.value) {
-            anyhow::bail!("max-factor must be in range [1.0..3.0]");
-        }
+        validate_max_factor(self.value)?;
         let mut config = AppConfig::load(path)?;
         config
             .elections

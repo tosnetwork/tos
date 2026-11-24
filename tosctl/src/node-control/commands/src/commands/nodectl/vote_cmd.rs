@@ -951,9 +951,9 @@ pub struct VoteElectionCastCmd {
     /// Dry-run mode: query election status without actually casting a vote
     #[arg(long, default_value = "false")]
     dry_run: bool,
-    /// Max factor for election bid (1.0 to 3.0)
+    /// Max factor for election bid (1.0 to 100.0)
     #[arg(long, default_value = "3.0")]
-    max_factor: f32,
+    max_factor: f64,
     /// Stake amount in TOS (whole units). If omitted, uses the minimum stake from elector.
     #[arg(long)]
     stake: Option<u64>,
