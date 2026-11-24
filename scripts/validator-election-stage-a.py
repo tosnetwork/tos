@@ -398,7 +398,7 @@ class ValidatorElectionRehearsal:
         self.live_rejoin_only = live_rejoin_only
         self.live_rejoin_result: dict[str, Any] | None = None
         # transfer-soak mode: randomized A/B/C transfers under real block production, with
-        # cross-node balance (到账) consistency checks. Leak monitoring is external
+        # cross-node balance (credit) consistency checks. Leak monitoring is external
         # (scripts/soak-mem-monitor.py).
         self.soak_mode = soak_mode
         self.soak_duration = soak_duration
@@ -2280,7 +2280,7 @@ class ValidatorElectionRehearsal:
 
     async def transfer_soak(self, faucet: WalletV1) -> dict[str, Any]:
         """Randomized A/B/C transfer load under real block production, verifying cross-node
-        到账 consistency after every transfer: fund three wallets from the faucet, then
+        credit consistency after every transfer: fund three wallets from the faucet, then
         repeatedly move a random amount between two distinct accounts; after each confirmed
         transfer, require EVERY node's JSON-RPC to report identical balances for the three
         accounts AT A COMMON masterchain height (a divergence means a node is out of sync or
@@ -2333,7 +2333,7 @@ class ValidatorElectionRehearsal:
                 failures.append(f"transfer {src_name}->{dst_name} amount={amount} failed: {error}")
                 continue
             transfers += 1
-            # 到账 on the authoritative (node 0) view: the destination must be credited. The
+            # Credit on the authoritative (node 0) view: the destination must be credited. The
             # node-0 tip AFTER crediting is the confirmed height H -- the transfer is applied
             # by H.
             try:
@@ -4961,7 +4961,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "launch-gate runs the complete PQ Stage-A/Stage-B rehearsal; "
             "experiment runs stable Stage A for a requested observation window; "
-            "transfer-soak runs randomized A/B/C transfers with cross-node 到账 checks; "
+            "transfer-soak runs randomized A/B/C transfers with cross-node credit checks; "
             "fixture-check provisions four PQ staking pools without claiming an election; "
             "pq-election proves the first PQ election; pq-launch-gate continues through rollover and recovery"
         ),

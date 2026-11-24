@@ -3,7 +3,7 @@
 #
 # Launches a throwaway 4-node localnet and drives randomized transfers among three wallets
 # (A, B, C) under real block production, verifying after every transfer that all nodes agree
-# on the three balances at a common masterchain height (到账 consistency). In parallel it runs
+# on the three balances at a common masterchain height (credit consistency). In parallel it runs
 # scripts/soak-mem-monitor.py to sample each validator-engine's RSS/FD and flag a leak.
 #
 # The randomized transfer scheduling (random source/destination, random amount, random
