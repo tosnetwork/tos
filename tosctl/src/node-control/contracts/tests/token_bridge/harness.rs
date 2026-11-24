@@ -882,6 +882,10 @@ impl Net {
             && body_op(msg) == Some(OP_INTERNAL_TRANSFER_REPORTED)
         {
             Some(("R_GAS_LIMIT", "R"))
+        } else if !msg.int_header().is_some_and(|h| h.bounced)
+            && body_op(msg) == Some(OP_REPORTED_TRANSFER)
+        {
+            Some(("S_TRANSFER_GAS", "S"))
         } else {
             None
         };

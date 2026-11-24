@@ -142,6 +142,8 @@ def verify_tvm_sources() -> None:
             # Reported transfers (SETTLEMENT-PROTOCOL.md section 20).
             "throw_unless(error::not_canonical_destination, canonical_basechain?(to_owner_address));",
             "throw_if(error::refusal_pending, recorded);",
+            "throw_unless(error::payload_too_large, fits);",
+            "recorded = total <= MAX_SUPPLY ? total : earlier;",
             "return max(get_compute_fee(false, R_GAS_LIMIT), wallet_gas_consumption);",
             "+ wallet_min_tos_for_storage;",
         ],
@@ -332,6 +334,13 @@ def verify_reported_transfers(contracts: Path) -> None:
         raise AssertionError(
             "token-wallet.fc: R's delivery report must commit with the credit (+16)"
         )
+    send = bodies["send_reported_tokens"]
+    if not (
+        "compute_data_size?(msg_body, REPORTED_BODY_CELLS)" in send
+        and send.index("throw_unless(error::payload_too_large, fits);")
+        < send.index("reported_need(")
+    ):
+        raise AssertionError("token-wallet.fc: S must cap its body's cells before pricing it")
     if not any(BOUNCE_ON_FAIL in s for s in sends(bodies["send_reported_tokens"])):
         raise AssertionError(
             "token-wallet.fc: S's message to R must bounce on an action failure (+16)"
@@ -364,6 +373,7 @@ def verify_reported_transfers(contracts: Path) -> None:
         "fee_of(msg, false)",
         "get_forward_fee(false, 32 + 256, 1)",
         "reported_compute_fee(wallet_gas_consumption)",
+        "get_compute_fee(false, S_TRANSFER_GAS)",
         "get_forward_fee(false, 0, body_cells + 2)",
         "wallet_min_tos_for_storage",
     ):

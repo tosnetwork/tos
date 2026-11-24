@@ -27,6 +27,9 @@ const int error::burn_fee_not_matched = 710;
 const int error::not_canonical_destination = 711;
 ;; A reported transfer reuses a query id whose refusal is still recorded.
 const int error::refusal_pending = 712;
+;; A reported transfer's body to the recipient's wallet, forward payload
+;; included, has more than REPORTED_BODY_CELLS cells.
+const int error::payload_too_large = 713;
 
 ;; token minter errors
 const int error::discovery_fee_not_matched = 75;

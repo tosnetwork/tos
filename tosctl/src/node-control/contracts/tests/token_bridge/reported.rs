@@ -57,6 +57,12 @@ fn declared_u64(name: &str) -> u64 {
     declared(name) as u64
 }
 
+/// The longest payload chain S admits: its body to R is the root and the
+/// chain, REPORTED_BODY_CELLS cells in all.
+fn largest_chain() -> usize {
+    declared("REPORTED_BODY_CELLS") as usize - 1
+}
+
 /// Sends `r` from `p` through `p`'s wallet with `value` and lets every
 /// consequence run.
 fn send_reported(net: &mut Net, p: &MsgAddressInt, r: &Reported, value: u128) -> Transaction {
@@ -345,38 +351,44 @@ fn t_r2_refused_at_r_by_an_action_failure() {
 }
 
 /// T-R2: a bounce whose value cannot pay S's handler is paid from S's own
-/// reserve once S raises its gas limit: the restore and the record commit, and
+/// balance once S raises its gas limit: the restore and the record commit, and
 /// the report that the bounce cannot fund is skipped instead of rolling them
-/// back.
+/// back. The bounce falls short because the gas price rises between R's leg
+/// and S's, with no storage reserve or bridge gas in the value, and a deep
+/// refusals dictionary makes S's handler its dearest.
 #[test]
 fn t_r2_a_short_bounce_is_paid_from_the_paying_wallet() {
     let mut net = minted();
     let p = net.user(0);
     let q = net.user(1);
-    // A deep refusals dictionary makes S's bounce handler its dearest, and a
-    // configuration with no storage reserve and no bridge gas leaves only the
-    // network-priced terms in the value.
     fill_refusals_deep(&mut net, &p, 0x5555_0000_0000_0000);
+    // No storage reserve and no bridge gas: the bounce carries back only the
+    // network-priced margins of S's and R's compute.
     net.wallet_min_storage = 0;
     net.wallet_gas = 0;
     net.configure();
-    let mut r = Reported::to(&q, 0x5555_0000_0000_0000, 100);
-    r.report_tos_amount = 0;
+    let r = Reported { report_tos_amount: 0, ..Reported::to(&q, 0x5555_0000_0000_0000, 100) };
+    let need = net.reported_need(&p, &r);
+    let msg = net.reported_message(&p, &p, &r, need + 1);
     let start = net.delivered.len();
-    refuse_at_r(&mut net, &p, &r);
+    succeeded(&net.send_one(msg));
+    net.remove_config();
+    net.deliver_until(|m| crate::model::reported_bounce(m).is_some());
+    net.configure();
+    let bounced_value = value_of(net.queue.front().expect("the bounce"));
+    let gas = net.gas_price(false);
+    let factor = (bounced_value / gas_fee(&net, declared_u64("S_BOUNCE_GAS") / 4) + 2) as u64;
+    net.set_gas_price(false, gas * factor);
+    net.settle();
     let bounce = bounce_legs(&net, start);
     assert_eq!(bounce.len(), 1, "the bounce reaches S");
     let o = outcome(&bounce[0]);
+    let handler_fee = gas_fee(&net, o.gas_used);
+    net.set_gas_price(false, gas);
     assert!(!o.aborted, "S's handler commits");
-    let bounced_value = net.delivered[start..]
-        .iter()
-        .find(|d| crate::model::reported_bounce(&d.msg).is_some())
-        .map(|d| value_of(&d.msg))
-        .expect("the bounce");
     assert!(
-        bounced_value < gas_fee(&net, o.gas_used),
-        "the bounce ({bounced_value}) is short of S's handler ({})",
-        gas_fee(&net, o.gas_used)
+        bounced_value < handler_fee,
+        "the bounce ({bounced_value}) is short of S's handler ({handler_fee})"
     );
     assert_eq!(net.tokens(&p), 1_000, "the tokens are back at S");
     assert_eq!(net.refusal(&p, r.query_id), 100, "S records the refusal");
@@ -409,6 +421,73 @@ fn fill_refusals_deep(net: &mut Net, owner: &MsgAddressInt, key: u64) {
         }
         w.refusals = d.data().cloned();
     });
+}
+
+/// T-R2: with no storage reserve in ConfigParam 79 and no bridge gas, an R
+/// that runs out of its capped gas (a test-only build) still bounces funded:
+/// the value S required prices S's own compute from the network, so nothing of
+/// R's budget depends on the reserve. No token is lost.
+#[test]
+fn t_r2_out_of_gas_at_r_is_funded_without_a_storage_reserve() {
+    let _variant = use_codes(wallet_variant("r-gas-no-reserve", |s| {
+        let line = format!("const int R_GAS_LIMIT = {};", declared("R_GAS_LIMIT"));
+        assert!(s.contains(&line), "the wallet declares R_GAS_LIMIT");
+        s.replace(&line, "const int R_GAS_LIMIT = 8000;")
+    }));
+    let mut net = minted();
+    let p = net.user(0);
+    let q = net.user(1);
+    net.wallet_min_storage = 0;
+    net.wallet_gas = 0;
+    net.configure();
+    for (query_id, payload) in [(91u64, Payload::Inline(0)), (92, Payload::Chain(largest_chain()))]
+    {
+        let r = Reported { report_tos_amount: 0, payload, ..Reported::to(&q, query_id, 100) };
+        let start = net.delivered.len();
+        succeeded(&send_funded(&mut net, &p, &r));
+        let at_r = legs(&net, start, OP_INTERNAL_TRANSFER_REPORTED);
+        let o = outcome(&at_r[0]);
+        assert_eq!(o.exit_code, Some(-14), "R runs out of its capped gas");
+        assert!(o.bounced, "the bounce is funded without a storage reserve");
+        assert_eq!(net.tokens(&p), 1_000, "no token is lost");
+        assert_eq!(net.refusal(&p, query_id), 100, "S records the refusal");
+    }
+    assert_every_reported_transfer_ended(&net);
+}
+
+/// T-R2: two reported transfers under one query id, both in flight and both
+/// refused. The record keeps their total, so the second refusal does not lose
+/// the first; each report names its own amount, and a re-report names the
+/// total. Clearing removes the record whole.
+#[test]
+fn t_r2_a_second_refusal_under_one_query_id_adds_to_the_record() {
+    let mut net = minted();
+    let p = net.user(0);
+    let q = net.user(1);
+    let start = net.delivered.len();
+    for amount in [100u128, 30] {
+        let r = Reported::to(&q, 95, amount);
+        let need = net.reported_need(&p, &r);
+        let msg = net.reported_message(&p, &p, &r, need + 1);
+        succeeded(&net.send_one(msg));
+    }
+    net.remove_config();
+    net.settle();
+    net.configure();
+    assert_eq!(net.tokens(&p), 1_000, "both amounts are back at S");
+    assert_eq!(net.refusal(&p, 95), 130, "the record keeps both refusals");
+    let mut reports: Vec<(u64, u128)> =
+        sent_to(&net, start, &p, OP_TRANSFER_REFUSED).iter().map(refused_fields).collect();
+    reports.sort();
+    assert_eq!(reports, vec![(95, 30), (95, 100)], "each report names its own amount");
+    let start = net.delivered.len();
+    let msg = net.wallet_query(net.stranger.address(), &p, OP_REREPORT_REFUSAL, 95, TOS);
+    succeeded(&net.send(msg));
+    assert_eq!(refused_fields(&sent_to(&net, start, &p, OP_TRANSFER_REFUSED)[0]), (95, 130));
+    let msg = net.wallet_query(&p, &p, OP_CLEAR_REFUSAL, 95, TOS);
+    succeeded(&net.send(msg));
+    assert_eq!(net.refusal(&p, 95), -1, "clearing removes the whole record");
+    assert_every_reported_transfer_ended(&net);
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +603,13 @@ fn t_r4_every_refusal_at_the_paying_wallet_bounces_and_changes_nothing() {
         None,
         err("malformed_forward_payload"),
     ));
+    cases.push((
+        "a body over the cell cap",
+        p.clone(),
+        Reported { payload: Payload::Chain(largest_chain() + 1), ..base.clone() },
+        None,
+        err("payload_too_large"),
+    ));
     let need = net.reported_need(&p, &base);
     cases.push(("exactly the need", p.clone(), base.clone(), Some(need), err("not_enough_tos")));
     for (what, sender, r, value, code) in cases {
@@ -598,7 +684,8 @@ fn need_from_terms(net: &Net, sent: &Message, r: &Reported) -> u128 {
     }
     let (cells, bits) = n;
     let (body_cells, _) = size_of(&body);
-    let compute = gas_fee(net, declared_u64("R_GAS_LIMIT")).max(net.wallet_gas.into());
+    let compute = gas_fee(net, declared_u64("R_GAS_LIMIT")).max(net.wallet_gas.into())
+        + gas_fee(net, declared_u64("S_TRANSFER_GAS"));
     r.forward_tos_amount
         + r.report_tos_amount
         + fwd_fee(net, bits, cells)
@@ -1006,7 +1093,7 @@ fn t_r11_gas_per_leg_is_within_its_constants() {
     let shapes = [
         (Payload::Inline(0), 0u128, None),
         (Payload::Inline(180), TOS as u128, Some(z.clone())),
-        (Payload::Chain(200), TOS as u128, Some(z.clone())),
+        (Payload::Chain(largest_chain()), TOS as u128, Some(z.clone())),
     ];
     // Delivered transfers take query ids from one range, refusals from another
     // whose keys are 3 * 2^20 apart: no refusal key is ever one bit away from
@@ -1038,6 +1125,8 @@ fn t_r11_gas_per_leg_is_within_its_constants() {
             fill_refusals_deep(&mut net, &p, query_id);
             let start = net.delivered.len();
             refuse_at_r(&mut net, &p, &Reported { query_id, ..r.clone() });
+            // S's own leg, looking the query id up 64 forks deep
+            note("S reported_transfer", &legs(&net, start, OP_REPORTED_TRANSFER)[0]);
             note("S bounce (refusals 64 forks deep)", &bounce_legs(&net, start)[0]);
             let msg = net.wallet_query(&z, &p, OP_REREPORT_REFUSAL, query_id, TOS);
             let start = net.delivered.len();
@@ -1057,7 +1146,7 @@ fn t_r11_gas_per_leg_is_within_its_constants() {
     for (i, (payload, response)) in [
         (Payload::Inline(0), None),
         (Payload::Inline(180), Some(z.clone())),
-        (Payload::Chain(200), Some(z.clone())),
+        (Payload::Chain(largest_chain()), Some(z.clone())),
     ]
     .into_iter()
     .enumerate()
@@ -1083,6 +1172,12 @@ fn t_r11_gas_per_leg_is_within_its_constants() {
         eprintln!("T-R11 gas: {what:<36} {gas:>7}");
     }
     let r_max = seen["R internal_transfer_reported"];
+    let t_max = seen["S reported_transfer"];
+    eprintln!("T-R11 S_TRANSFER_GAS {} for S at most {t_max}", declared("S_TRANSFER_GAS"));
+    assert!(
+        2 * t_max <= declared_u64("S_TRANSFER_GAS"),
+        "S_TRANSFER_GAS is at least twice S's most"
+    );
     let s_max = seen["S bounce (refusals 64 forks deep)"].max(seen["S bounce (refusals empty)"]);
     eprintln!("T-R11 R_GAS_LIMIT {} for R at most {r_max}", declared("R_GAS_LIMIT"));
     eprintln!("T-R11 S_BOUNCE_GAS {} for the bounce at most {s_max}", declared("S_BOUNCE_GAS"));
@@ -1175,6 +1270,42 @@ fn t_r13_a_failed_ordinary_notification_returns_the_tokens() {
     assert!(!o.action_ok, "the notification fails in R's action phase");
     assert!(o.bounced, "the failed notification bounces the transfer");
     assert_eq!((net.tokens(&p), net.tokens(&q)), (1_000, 0), "the tokens are back at the sender");
+}
+
+/// T-R14: the largest body S admits, REPORTED_BODY_CELLS cells, is delivered
+/// with its whole payload forwarded, S's compute stays within S_TRANSFER_GAS
+/// (the harness holds every S leg to half of it), and one cell more is
+/// refused by S and by the quote alike.
+#[test]
+fn t_r14_the_largest_payload_is_delivered_and_one_cell_more_is_refused() {
+    let mut net = minted();
+    let p = net.user(0);
+    let q = net.user(1);
+    let r = Reported {
+        payload: Payload::Chain(largest_chain()),
+        forward_tos_amount: (TOS / 10).into(),
+        ..Reported::to(&q, 97, 300)
+    };
+    let start = net.delivered.len();
+    succeeded(&send_funded(&mut net, &p, &r));
+    let s = legs(&net, start, OP_REPORTED_TRANSFER);
+    let gas = outcome(&s[0]).gas_used;
+    assert!(2 * gas <= declared_u64("S_TRANSFER_GAS"), "S used {gas} gas at the largest body");
+    assert_eq!(net.tokens(&q), 300, "delivered at the largest body");
+    let notified = sent_to(&net, start, &q, OP_TRANSFER_NOTIFICATION);
+    assert_eq!(notified.len(), 1, "the whole payload is forwarded");
+    let over = Reported { payload: Payload::Chain(largest_chain() + 1), query_id: 98, ..r };
+    let wallet = net.wallet_of(&p);
+    assert!(
+        net.try_get(&wallet, "get_reported_transfer_need", vec![StackItem::cell(over.body())])
+            .is_none(),
+        "the quote refuses a body over the cap"
+    );
+    let start = net.delivered.len();
+    let tx = send_reported(&mut net, &p, &over, u128::from(10 * TOS));
+    refused_with(&tx, err("payload_too_large"));
+    assert_eq!(bounced_to(&net, start, &p), 1, "the refusal bounces to P");
+    assert_every_reported_transfer_ended(&net);
 }
 
 /// The opcodes the suite uses are the ones op-codes.fc declares.

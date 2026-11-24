@@ -126,6 +126,8 @@ pub struct Model {
     pub reported: BTreeMap<(Vec<u8>, u64), (u32, u32, u32)>,
     /// Tokens in transfers a test holds outside the queue.
     pub held: i128,
+    /// (paying wallet, query id) -> the refused total its record must hold
+    pub refusal_records: BTreeMap<(Vec<u8>, u64), i128>,
 }
 
 fn key(addr: &MsgAddressInt) -> Vec<u8> {
@@ -513,11 +515,18 @@ impl Model {
                 e.1 + e.2 <= e.0,
                 "I10: reported transfer {query_id} ended more often than it was sent"
             );
+            let total = self.refusal_records.entry((wallet.clone(), query_id)).or_insert(0);
+            *total += amount as i128;
             let recorded = net.get(&d.addr, "get_refusal", vec![int_arg(query_id)]).int_at(0);
-            assert_eq!(recorded, amount as i128, "I10: the refusal of {query_id} is recorded");
+            assert_eq!(recorded, *total, "I10: the refusal of {query_id} is recorded");
             return;
         }
         match op {
+            Some(OP_CLEAR_REFUSAL) => {
+                let mut s = d.msg.body().expect("a body").clone();
+                s.get_next_u32().unwrap();
+                self.refusal_records.remove(&(wallet.clone(), s.get_next_u64().unwrap()));
+            }
             Some(OP_REPORTED_TRANSFER) => {
                 let sent: Vec<&Message> = d
                     .outs

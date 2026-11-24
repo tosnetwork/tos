@@ -1660,6 +1660,10 @@ settlement records.
      anycast or `addr_var` address (exit 9), before this check;
    - the forward payload has at least one bit (708);
    - `query_id` has no recorded refusal (712);
+   - S's body to R, forward payload included, has at most
+     `REPORTED_BODY_CELLS` (256) cells (713). S's compute grows with the
+     cells it measures to price the body, so the cap is what bounds it by
+     `S_TRANSFER_GAS`;
    - ConfigParam 79 is present (666, as for every transfer).
 2. **Value check** (709). The attached value must exceed, priced from the
    network:
@@ -1670,6 +1674,9 @@ settlement records.
    - R's compute: the larger of the network's price of `R_GAS_LIMIT`
      (`GETGASFEE`) and ConfigParam 79's `wallet_gas_consumption`, so a
      mis-set bridge price cannot underfund R;
+   - S's own compute, the network's price of `S_TRANSFER_GAS`. S pays it out
+     of the value before mode 64 passes the rest to R, so without this term
+     R's budget would depend on the storage reserve below;
    - the largest action fine R can incur: a failed send is fined per cell of
      the messages R built, which are the notification (no more cells than
      S's body), `transfer_delivered` (one) and the excess (none). The term is
@@ -1709,7 +1716,10 @@ credit without `transfer_delivered`.
   data, and the gas limit is raised to `S_BOUNCE_GAS` at once, paid from S's
   own balance when the bounce is short. A bounce cannot be forged and returns
   only to its sender, so each one answers a debit S made, once. S restores
-  the amount, records `refusals[query_id] = amount`, and sends
+  the amount and records it under `refusals[query_id]`, adding it to a record
+  already there (two transfers in flight under one query id, both refused,
+  leave their total; the total cannot pass `MAX_SUPPLY`, and if it ever did
+  the first record would stay rather than the handler throw). S then sends
   `transfer_refused` to P with the bounce's value in mode 64 + 2. The
   handler has no throw, and the report ignoring errors means the restore and
   the record commit even when the report cannot be paid. It depends on the
@@ -1741,44 +1751,47 @@ nothing (T-R8).
 
 ### 20.6 Gas, measured on both engines
 
-`R_GAS_LIMIT` and `S_BOUNCE_GAS` are wallet code: changing either changes the
-wallet's code and every address that depends on it. Each is at least twice
-the most measured. Every transaction of the sandbox suite is held to that as
+`R_GAS_LIMIT`, `S_BOUNCE_GAS` and `S_TRANSFER_GAS` are wallet code: changing
+any changes the wallet's code and every address that depends on it. Each is
+at least twice the most measured. Every transaction of the sandbox suite is held to that as
 it runs, and the trace replay requires the native engine to use the same gas
 for each one.
 
 | Leg | Most gas measured | Constant |
 |---|---|---|
 | R: `internal_transfer_reported` (a fresh wallet, notification, report and excess) | 19815 | `R_GAS_LIMIT` 40000 |
-| S: bounce with `refusals` 64 forks deep at the query id | 47153 | `S_BOUNCE_GAS` 95000 |
-| S: bounce with `refusals` empty | 9953 | |
-| S: `reported_transfer` (a 200-cell forward payload) | 52620 | paid by P's message |
+| S: bounce with `refusals` 64 forks deep at the query id | 48986 | `S_BOUNCE_GAS` 98000 |
+| S: bounce with `refusals` empty | 10236 | |
+| S: `reported_transfer` (the 256-cell body, the query id looked up 64 forks deep) | 65838 | `S_TRANSFER_GAS` 132000, priced into the value |
 | S: `clear_refusal` (64 forks deep) | 45375 | paid by P's message |
 | S: `rereport_refusal` | 12696 | paid by the sender |
 | S: `provide_balance` | 6270 | paid by P's message |
 
 Measured by `reported::t_r11_gas_per_leg_is_within_its_constants`, which also
-requires `wallet_min_tos_for_storage` to cover the price of `S_BOUNCE_GAS`.
+requires `wallet_min_tos_for_storage` to cover the price of `S_BOUNCE_GAS`,
+the gas S's bounce handler may buy from S's own balance.
 
 ### 20.7 Limits of the guarantee
 
-- **S's own compute.** The value check has no term for S's own compute fee,
-  which comes out of the value before mode 64 passes the rest to R. The
-  storage reserve term covers it. With `wallet_min_tos_for_storage` below the
-  price of S's compute, an R that runs out of its capped gas leaves too
-  little for its bounce, and the transfer ends with neither outcome: in the
-  sandbox, a reserve of 0 lost the tokens and one of 200,000 nanotos did
-  not. ConfigParam 79 must keep `wallet_min_tos_for_storage` above the price
-  of S's compute at the largest forward payload; T-R11 checks it for the
-  configuration it runs.
+- **S's own compute is priced in.** S's compute fee comes out of the value
+  before mode 64 passes the rest to R. An earlier draft had no term for it
+  and so relied on `wallet_min_tos_for_storage`: with that set to 0, an R
+  that ran out of its capped gas left nothing for its bounce and the tokens
+  were lost. The value check now includes the network's price of
+  `S_TRANSFER_GAS`, and the body cap keeps S within it, so R's budget and its
+  bounce no longer depend on ConfigParam 79's reserve: T-R2 runs that case
+  with no reserve and no bridge gas, at the smallest and the largest body,
+  and no token is lost. The reserve still has one job: the gas S's bounce
+  handler buys from S's own balance when a bounce is short (a price rise
+  between the legs), which T-R11 checks against `S_BOUNCE_GAS`.
 - **Prices rising between the legs.** Within the payer's report margin the
   report still pays for the payer's work (T-R6). Beyond it R still delivered
   in the sandbox, but the report no longer covers the payer's pre-accept gas,
   which is where a delivery report can be lost.
-- **Two transfers in flight with one query id.** Both pass S's check, and if
-  both are refused the second record replaces the first amount; each restore
-  and each report is still correct. A payer that never reuses a query id is
-  not affected.
+- **Two transfers in flight with one query id.** Both pass S's check, since
+  neither is refused yet. If both are refused, the record holds their total
+  and each `transfer_refused` names its own amount; a re-report names the
+  total. A payer that never reuses a query id never sees a total.
 
 ### 20.8 Tests
 
@@ -1788,10 +1801,10 @@ a balance and turns it off):
 | Test | Covers |
 |---|---|
 | T-R1 | delivered, with and without a forward amount, and to the payer itself |
-| T-R2 | refused at R by a compute failure, by its supply bound, out of its capped gas (a test-only build), and by an action failure of the notification and of the report; a short bounce paid from S's balance |
+| T-R2 | refused at R by a compute failure, by its supply bound, out of its capped gas (a test-only build), also with no storage reserve and no bridge gas, and by an action failure of the notification and of the report; a short bounce paid from S's balance; two refusals under one query id |
 | T-R3 | an action-phase failure at S bounces to P |
-| T-R4 | every compute refusal at S, and ConfigParam 79 absent |
-| T-R5 | `wallet_gas_consumption` set too low; the need is the sum of its terms |
+| T-R4 | every compute refusal at S, a body over the cell cap among them, and ConfigParam 79 absent |
+| T-R5 | `wallet_gas_consumption` set too low; the need is the sum of its terms, S's compute included |
 | T-R6 | gas and forwarding prices raised between the legs, within and beyond the report margin |
 | T-R7 | re-report, clear, and a duplicate query id |
 | T-R8 | spoofed reports: an excess, another sender's delivery, a forged incoming transfer, another token's wallet, and forged refusals and bounces at S |
@@ -1800,6 +1813,7 @@ a balance and turns it off):
 | T-R11 | gas per leg |
 | T-R12 | the mint path credits source units with no scaling (6 decimals) |
 | T-R13 | the ordinary notification's +16 returns the tokens |
+| T-R14 | the largest body is delivered within `S_TRANSFER_GAS`; one cell more is refused by S and by the quote |
 
-Mutation controls M38 to M66 of `scripts/token-bridge-mutations.py` remove
+Mutation controls M38 to M70 of `scripts/token-bridge-mutations.py` remove
 each guard of this section and require its test to fail for its reason.

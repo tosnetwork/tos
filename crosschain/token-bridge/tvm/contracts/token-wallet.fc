@@ -227,11 +227,20 @@ global cell w_refusals;        ;; query id -> refused amount
   send transfer_refused.
 -}
 
-;; The most gas R may spend on internal_transfer_reported, and S on its bounce:
-;; twice the most either engine measured at the largest body each admits
-;; (token_bridge/reported.rs). Changing either is a wallet code change.
+;; The most gas R may spend on internal_transfer_reported, S on its bounce, and
+;; S on reported_transfer: twice the most either engine measured at the largest
+;; body each admits (token_bridge/reported.rs). Changing any is a wallet code
+;; change.
 const int R_GAS_LIMIT = 40000;
-const int S_BOUNCE_GAS = 95000;
+const int S_BOUNCE_GAS = 98000;
+const int S_TRANSFER_GAS = 132000;
+
+;; The most cells S's body to R may have, the forward payload included. S's
+;; compute grows with them (it measures the body and its message to price
+;; them), so the cap is what keeps S within S_TRANSFER_GAS. It caps rather than
+;; raises S's gas limit: SETGASLIMIT would let a short message spend S's own
+;; balance, and the cap keeps S's compute paid from P's message alone.
+const int REPORTED_BODY_CELLS = 256;
 
 ;; addr_std$10, no anycast, workchain 0, and nothing else.
 int canonical_basechain?(slice addr) inline {
@@ -272,16 +281,18 @@ int reported_compute_fee(int wallet_gas_consumption) inline {
 ;;   forwarding S's message to R, and R's bounce of it, which carries at most
 ;;   32 + 256 bits;
 ;;   R's compute;
+;;   S's own compute, which comes out of the value before mode 64 passes the
+;;   rest to R, so that R's budget never depends on the storage reserve;
 ;;   the largest action fine R can incur: a failed send is fined per cell of
 ;;   every message R built, and R builds at most the notification (no more
 ;;   cells than S's body), transfer_delivered (one) and the excess (none);
 ;;   the storage reserve R keeps.
-int reported_need(cell msg, cell msg_body, int report_tos_amount, int forward_tos_amount, int wallet_min_tos_for_storage, int wallet_gas_consumption) inline {
-  (int body_cells, _, _) = compute_data_size(msg_body, 8192);
+int reported_need(cell msg, int body_cells, int report_tos_amount, int forward_tos_amount, int wallet_min_tos_for_storage, int wallet_gas_consumption) inline {
   return forward_tos_amount + report_tos_amount
           + fee_of(msg, false)
           + get_forward_fee(false, 32 + 256, 1)
           + reported_compute_fee(wallet_gas_consumption)
+          + get_compute_fee(false, S_TRANSFER_GAS)
           + get_forward_fee(false, 0, body_cells + 2)
           + wallet_min_tos_for_storage;
 }
@@ -304,7 +315,9 @@ int reported_need(cell msg, cell msg_body, int report_tos_amount, int forward_to
 
   (cell msg, cell msg_body) = reported_message(query_id, token_amount, to_owner_address, response_address,
                                                report_tos_amount, forward_tos_amount, in_msg_body);
-  throw_unless(error::not_enough_tos, msg_value > reported_need(msg, msg_body, report_tos_amount, forward_tos_amount,
+  (int body_cells, _, _, int fits) = compute_data_size?(msg_body, REPORTED_BODY_CELLS);
+  throw_unless(error::payload_too_large, fits);
+  throw_unless(error::not_enough_tos, msg_value > reported_need(msg, body_cells, report_tos_amount, forward_tos_amount,
                                                                 wallet_min_tos_for_storage, wallet_gas_consumption));
 
   ;; +16: an action-phase failure here bounces P's message back to P.
@@ -403,7 +416,18 @@ int reported_bounce?(slice body) inline {
   int query_id = in_msg_body~load_query_id();
   int token_amount = in_msg_body~load_coins();
   w_balance += token_amount;
-  w_refusals~udict_set_builder(64, query_id, begin_cell().store_coins(token_amount));
+  ;; A second refusal under the same query id adds to the first: the record
+  ;; keeps the total refused under it, while each report names its own amount.
+  ;; The total cannot pass MAX_SUPPLY, since every amount was in this balance;
+  ;; if it ever did, the first record would stay rather than the handler throw.
+  int recorded = token_amount;
+  (slice prior, int found) = w_refusals.udict_get?(64, query_id);
+  if (found) {
+    int earlier = prior~load_coins();
+    int total = earlier + token_amount;
+    recorded = total <= MAX_SUPPLY ? total : earlier;
+  }
+  w_refusals~udict_set_builder(64, query_id, begin_cell().store_coins(recorded));
   save_data();
   send_refused(query_id, token_amount, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE + SEND_MODE_IGNORE_ERRORS);
 }
@@ -1063,7 +1087,9 @@ int get_reported_transfer_need(cell body) method_id {
   int forward_tos_amount = s~load_coins();
   (cell msg, cell msg_body) = reported_message(query_id, token_amount, to_owner_address, response_address,
                                                report_tos_amount, forward_tos_amount, s);
-  return reported_need(msg, msg_body, report_tos_amount, forward_tos_amount,
+  (int body_cells, _, _, int fits) = compute_data_size?(msg_body, REPORTED_BODY_CELLS);
+  throw_unless(error::payload_too_large, fits);
+  return reported_need(msg, body_cells, report_tos_amount, forward_tos_amount,
                        wallet_min_tos_for_storage, wallet_gas_consumption);
 }
 
