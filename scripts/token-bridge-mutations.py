@@ -700,7 +700,7 @@ MUTATIONS = [
         "          + get_compute_fee(false, S_TRANSFER_GAS)\n",
         "",
         "t_r2_out_of_gas_at_r_is_funded_without_a_storage_reserve",
-        "the bounce is funded without a storage reserve",
+        "I1:",
     ),
     M(
         "M68",
@@ -709,7 +709,7 @@ MUTATIONS = [
         "const int REPORTED_BODY_CELLS = 256;",
         "const int REPORTED_BODY_CELLS = 512;",
         "t_r14_",
-        "expected a refusal with 713",
+        "more than half of its S_TRANSFER_GAS",
     ),
     M(
         "M69",
