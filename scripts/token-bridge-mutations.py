@@ -697,14 +697,16 @@ MUTATIONS = [
         "t_r13_",
         "I1:",
     ),
+    # Like M46 to M48, M67 holds only through T-R5's need_from_terms: R's
+    # margined budget absorbs S's compute at the test's prices.
     M(
         "M67",
         "the value check omits S's own compute",
         f"{C}/token-wallet.fc",
         "          + get_compute_fee(false, S_TRANSFER_GAS)\n",
         "",
-        "t_r2_out_of_gas_at_r_is_funded_without_a_storage_reserve",
-        "I1:",
+        "t_r5_",
+        "the need is the sum of its terms",
     ),
     M(
         "M68",

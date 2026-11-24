@@ -1858,6 +1858,7 @@ transaction that the stored refusal counter counts the records (I11).
 
 Mutation controls M38 to M75 of `scripts/token-bridge-mutations.py` remove
 each guard of this section and require its test to fail for its reason. M46,
-M47 and M48 (the fine, the bounce forwarding and the storage reserve terms)
-hold only through T-R5's term-by-term recomputation of the need: at the
-test's prices the margins leave R funded without any one of them.
+M47, M48 and M67 (the fine, the bounce forwarding, the storage reserve and
+S's compute terms) hold only through T-R5's term-by-term recomputation of the
+need: at the test's prices the margins leave R funded without any one of
+them.
