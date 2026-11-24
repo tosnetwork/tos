@@ -211,6 +211,21 @@ fn validate_message_parameters(
     expected_stake: u64,
     via_pool: bool,
 ) -> bool {
+    validate_stake_message(dest, value, payload, expected_stake, via_pool, DEFAULT_MAX_FACTOR_RAW)
+}
+
+/// The default max factor of 3.0 as the stake order carries it.
+const DEFAULT_MAX_FACTOR_RAW: u32 = 196_608;
+
+/// `validate_message_parameters` for a stake order signed with `expected_max_factor`.
+fn validate_stake_message(
+    dest: &MsgAddressInt,
+    value: &u64,
+    payload: &Cell,
+    expected_stake: u64,
+    via_pool: bool,
+    expected_max_factor: u32,
+) -> bool {
     let fee = ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE;
     let (expected_dest, expected_value) =
         if via_pool { (pool_address(), fee) } else { (elector_address(), expected_stake + fee) };
@@ -259,7 +274,7 @@ fn validate_message_parameters(
         eprintln!("withf: stake_at mismatch");
         return false;
     }
-    if slice.get_next_u32().ok() != Some(196608) {
+    if slice.get_next_u32().ok() != Some(expected_max_factor) {
         eprintln!("withf: max_factor mismatch");
         return false;
     }
@@ -765,6 +780,16 @@ fn setup_default_provider(
     wallet_balance: u64,
     pool_balance: Option<u64>,
 ) {
+    setup_provider_with_max_factor(provider, wallet_balance, pool_balance, DEFAULT_MAX_FACTOR_RAW);
+}
+
+/// `setup_default_provider` for a node asked to sign `expected_max_factor`.
+fn setup_provider_with_max_factor(
+    provider: &mut MockElectionsProviderImpl,
+    wallet_balance: u64,
+    pool_balance: Option<u64>,
+    expected_max_factor: u32,
+) {
     provider.expect_election_parameters().returning(|| Ok(default_cfg15()));
 
     // validator_config: return empty (no existing key)
@@ -789,9 +814,9 @@ fn setup_default_provider(
     provider.expect_sign().returning(|_key, _data| Ok(SIGNATURE.to_vec()));
     provider
         .expect_create_pq_stake_authorization()
-        .withf(|election, max_factor, adnl, src_addr| {
+        .withf(move |election, max_factor, adnl, src_addr| {
             *election == ELECTION_ID as u32
-                && *max_factor == 196608
+                && *max_factor == expected_max_factor
                 && adnl == ADNL_ADDR
                 && (src_addr == POOL_ADDR || src_addr == addr_bytes(&wallet_address()))
         })
@@ -915,6 +940,43 @@ async fn test_participate_new_key_no_pool_stakes_directly() {
     assert_eq!(participant.stake, expected_stake);
     assert_eq!(participant.wallet_addr, addr_bytes(&wallet_address()));
     assert!(participant.stake_message_boc.is_some(), "the direct stake was not sent");
+}
+
+// =====================================================
+// TEST: a max factor above 3.0 is signed and sent as configured
+// =====================================================
+
+#[tokio::test]
+async fn test_participate_signs_a_max_factor_of_ten() {
+    let node_id = "node-1";
+    let mut harness = TestHarness::new();
+    harness.elections_config.max_factor = 10.0;
+    assert!(harness.elections_config.validate().is_ok());
+
+    setup_default_elector(&mut harness.elector_mock, ELECTION_ID, 0);
+    setup_provider_with_max_factor(&mut harness.provider_mock, WALLET_BALANCE, None, 655_360);
+    harness.wallet_mock.expect_address().returning(|| wallet_address());
+    let fee = ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE;
+    let expected_stake = (WALLET_BALANCE - fee - MIN_NANOTOS_FOR_STORAGE) / 2;
+    harness
+        .wallet_mock
+        .expect_message()
+        .times(1)
+        .withf(move |dest, value, payload| {
+            validate_stake_message(dest, value, payload, expected_stake, false, 655_360)
+        })
+        .returning(|_dest, _value, _payload| Ok(dummy_cell()));
+
+    let mut runner = harness.build(node_id);
+
+    let result = runner.run().await;
+    assert!(result.is_ok(), "run() failed: {:?}", result.err());
+
+    let node = runner.nodes.get(node_id).unwrap();
+    assert!(node.last_error.is_none(), "stake failed: {:?}", node.last_error);
+    let participant = node.participant.as_ref().expect("participant after participation");
+    assert_eq!(participant.max_factor, 655_360);
+    assert!(participant.stake_message_boc.is_some(), "the stake was not sent");
 }
 
 // =====================================================

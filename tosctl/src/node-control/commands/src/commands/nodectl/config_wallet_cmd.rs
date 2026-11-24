@@ -20,7 +20,9 @@ use chain_rpc_client::v2::{client_json_rpc::ClientJsonRpc, data_models::AccountS
 use colored::Colorize;
 use common::{
     WalletVersion,
-    app_config::{AppConfig, KeyConfig, PoolConfig, WalletConfig},
+    app_config::{
+        AppConfig, KeyConfig, PoolConfig, WalletConfig, max_factor_to_raw, validate_max_factor_raw,
+    },
     chain_utils::{display_tos, tos_to_nanotos},
     task_cancellation::CancellationCtx,
     time_format,
@@ -125,8 +127,13 @@ pub struct WalletStakeCmd {
     binding: String,
     #[arg(short = 'a', long = "amount", help = "Stake amount in coins")]
     amount: f64,
-    #[arg(short = 'm', long = "max-factor", default_value = "3.0", help = "Max factor (1.0..3.0)")]
-    max_factor: f32,
+    #[arg(
+        short = 'm',
+        long = "max-factor",
+        default_value = "3.0",
+        help = "Max factor (1.0..100.0)"
+    )]
+    max_factor: f64,
 }
 
 impl WalletCmd {
@@ -435,9 +442,7 @@ impl WalletSendCmd {
 
 impl WalletStakeCmd {
     pub async fn run(&self, path: &Path, cancellation_ctx: CancellationCtx) -> anyhow::Result<()> {
-        if !(1.0..=3.0).contains(&self.max_factor) {
-            anyhow::bail!("max-factor must be between 1.0 and 3.0");
-        }
+        let max_factor_raw = max_factor_to_raw(self.max_factor)?;
 
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
 
@@ -608,7 +613,6 @@ impl WalletStakeCmd {
         // The node's custodied PQ signer authorizes the stake for the staking
         // account; the operator never signs an election preimage through the
         // generic Ed25519 keyring.
-        let max_factor_raw = (self.max_factor * 65536.0) as u32;
         let authorization = provider
             .create_pq_stake_authorization(
                 stake_at,
@@ -836,6 +840,7 @@ fn build_manual_stake_payload(
 ) -> anyhow::Result<Cell> {
     anyhow::ensure!(query_id != 0, "stake query id must be non-zero");
     anyhow::ensure!(stake_amount > 0, "stake amount must be positive");
+    validate_max_factor_raw(max_factor)?;
     anyhow::ensure!(
         authorization.algorithm_id == 1,
         "node returned unsupported PQ stake algorithm {}",
@@ -1021,5 +1026,71 @@ mod stake_route_tests {
         .unwrap_err()
         .to_string();
         assert!(error.contains("query id must be non-zero"), "wrong refusal: {error}");
+    }
+
+    fn signed_max_factor(max_factor: f64) -> anyhow::Result<u32> {
+        let route = StakeRoute::new(None, &elector(), &wallet(), STAKE)?;
+        let body = build_manual_stake_payload(
+            &route,
+            &authorization(vec![0x55; 32]),
+            77,
+            STAKE,
+            1_700_000_000,
+            max_factor_to_raw(max_factor)?,
+            &[0x22; 32],
+        )?;
+        let mut fields = SliceData::load_cell(body)?;
+        fields.get_next_u32()?; // op
+        fields.get_next_u64()?; // query id
+        fields.get_next_u16()?; // algorithm id; the public key is a reference
+        assert_eq!(fields.get_next_u32()?, 1_700_000_000);
+        Ok(fields.get_next_u32()?)
+    }
+
+    /// The stake order carries the max factor as `value * 65536`, across the
+    /// whole range the reference Fift tool accepts.
+    #[test]
+    fn a_stake_order_carries_max_factors_from_one_to_one_hundred() -> anyhow::Result<()> {
+        assert_eq!(signed_max_factor(1.0)?, 65_536);
+        assert_eq!(signed_max_factor(3.0)?, 196_608);
+        assert_eq!(signed_max_factor(10.0)?, 655_360);
+        assert_eq!(signed_max_factor(100.0)?, 6_553_600);
+        for refused in [0.99, 100.01, f64::NAN, f64::INFINITY] {
+            assert!(signed_max_factor(refused).is_err(), "{refused} must be refused");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_stake_payload_refuses_an_encoded_max_factor_out_of_range() {
+        let route = StakeRoute::new(None, &elector(), &wallet(), STAKE).unwrap();
+        for raw in [0, 65_535, 6_553_601, u32::MAX] {
+            let error = build_manual_stake_payload(
+                &route,
+                &authorization(vec![0x55; 32]),
+                77,
+                STAKE,
+                1_700_000_000,
+                raw,
+                &[0x22; 32],
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains("1..100"), "wrong refusal for {raw}: {error}");
+        }
+    }
+
+    #[test]
+    fn the_stake_command_defaults_to_max_factor_three() {
+        use clap::Parser;
+        #[derive(clap::Parser)]
+        struct Cli {
+            #[command(flatten)]
+            stake: WalletStakeCmd,
+        }
+        let cli = Cli::try_parse_from(["stake", "-b", "node", "-a", "1"]).unwrap();
+        assert_eq!(cli.stake.max_factor, 3.0);
+        let cli = Cli::try_parse_from(["stake", "-b", "node", "-a", "1", "-m", "9.5"]).unwrap();
+        assert_eq!(cli.stake.max_factor, 9.5);
     }
 }

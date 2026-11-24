@@ -12,7 +12,10 @@ use chain_block::{
     Cell, ConfigParam15, MsgAddressInt, UnixTime, ValidatorDescr, ValidatorSet, write_boc,
 };
 use common::{
-    app_config::{BindingStatus, ElectionsConfig, NodeBinding, StakePolicy},
+    app_config::{
+        BindingStatus, ElectionsConfig, NodeBinding, StakePolicy, max_factor_to_raw,
+        validate_max_factor_raw,
+    },
     chain_utils::nanotos_to_dec_string,
     snapshot::{
         ElectionsParticipantSnapshot, ElectionsSnapshot, ElectionsStatus, OurElectionParticipant,
@@ -165,7 +168,7 @@ impl Node {
 /// The only requirement is that the TOS network deploys a compatible elector contract.
 pub(crate) struct ElectionRunner {
     nodes: HashMap<String, Node>,
-    default_max_factor: f32,
+    default_max_factor: f64,
     default_stake_policy: StakePolicy,
     past_elections: Vec<PastElections>,
     // Snapshot cache updated during tick execution and published to SnapshotStore in run_loop().
@@ -176,7 +179,7 @@ pub(crate) struct ElectionRunner {
 struct SnapshotCache {
     last_elections: Option<ElectionsSnapshot>,
     last_elections_status: ElectionsStatus,
-    last_max_factor: Option<f32>,
+    last_max_factor: Option<f64>,
     next_elections_range: Option<TimeRange>,
     // Current validator set (config param 34), cached for is_validator/index calculation.
     last_validator_set: Option<ValidatorSet>,
@@ -619,7 +622,7 @@ impl ElectionRunner {
         elections_info: &ElectionsInfo,
         cfg15: &ConfigParam15,
     ) -> anyhow::Result<()> {
-        let max_factor = (self.calc_max_factor() * 65536.0) as u32;
+        let max_factor = max_factor_to_raw(self.calc_max_factor())?;
         let mut node = self.nodes.get_mut(node_id).expect("node not found");
         // Find validator key for current elections in the validator config
         let validator_key = node.find_election_key(election_id).await?;
@@ -845,9 +848,7 @@ impl ElectionRunner {
                 participant.adnl_addr.as_slice()
             )
         );
-        if !(1.0..=3.0).contains(&(participant.max_factor as f32 / 65536.0)) {
-            anyhow::bail!("<max-factor> must be a real number 1..3");
-        }
+        validate_max_factor_raw(participant.max_factor)?;
         let authorization = node
             .api
             .create_pq_stake_authorization(
@@ -1025,7 +1026,7 @@ impl ElectionRunner {
         tracing::info!("elections: start={}, end={}", elections_start, elections_end);
     }
 
-    fn calc_max_factor(&self) -> f32 {
+    fn calc_max_factor(&self) -> f64 {
         self.default_max_factor
     }
 
