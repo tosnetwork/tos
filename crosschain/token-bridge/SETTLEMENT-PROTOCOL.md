@@ -684,7 +684,8 @@ All protocol messages are non-bounceable, and no protocol state depends on
 a bounce. A bounced message is accepted and ignored. Only an owner's or an
 advancer's own message can bounce. The wallet's bounce restore for
 `burn_notification` is removed. The bounce restore for transfers between
-wallets is unchanged.
+wallets is unchanged. Reported transfers between wallets (section 20) add a
+bounce handler of their own, outside settlement.
 
 ## 8. Permissionless funded retransmission (`advance`, `sync`)
 
@@ -1129,6 +1130,17 @@ allocation (section 3.1). `n` is checked by `lock`, and generations by
   initial data change, and the minter's initial data include its bridge.
 - **Interfaces kept.** The owner-facing `transfer` and `burn` layouts are
   unchanged.
+- **Reported transfers (section 20).** New opcodes only; no existing message
+  format changes. The wallet's storage gains `refusals`, empty in the initial
+  data, so wallet, minter and bridge addresses change again with the code.
+- **Behaviour change: the ordinary notification is sent with +16.** The
+  receiving wallet's `transfer_notification` used mode 1. An action-phase
+  failure there rolled back the credit while the sender had already been
+  debited, and nothing bounced: the tokens in flight were lost. With +16 the
+  transfer bounces back to the sending wallet, which restores the tokens. A
+  transfer that used to vanish now returns (T-R13). The sending wallet's own
+  `internal_transfer` send keeps mode 64: its action-phase failure rolls the
+  debit back with it, so nothing is lost there.
 - **Opening.** Wallets must be opened before their first burn.
 - **Bridge storage** changes: `new-bridge.fif` builds it, including the
   pinned namespace. The ConfigParam 79 format is unchanged.
@@ -1507,11 +1519,19 @@ measured values.
 `t_g_worst_case_cells_fit_the_declared_bound_and_the_account_limit` builds
 each participant's worst case from one real record of every kind cloned
 into every slot, with no cell shared between records. At commit
-`1f99ccdbe`: the wallet needs 115 cells; the bridge 897 cells at 8
+`1f99ccdbe`: the wallet needed 115 cells; the bridge 897 cells at 8
 channels (58 per channel), under the 2048-cell non-special masterchain
 limit; the minter 347 cells plus 63 per holder. `HOLDER_LIMIT` is 1000
 (63347 cells under the 65536-cell basechain limit); 2048 holders would have
-needed 129371. The declared worst cases are 128, 1000 and 64000 cells.
+needed 129371. The reported-transfer wallet code (section 20) is larger,
+and every participant stores it: the wallet now needs 142 cells, the bridge
+925, the minter 374 plus 63 per holder (63374 at 1000 holders). The
+declared worst cases are 160, 1000 and 64000 cells.
+
+**Bridge step gas.** An advance of a mint at the bridge prices the
+recipient wallet's StateInit, so it grows with the wallet code: 70648 gas
+with the reported-transfer wallet, over the 70000 declared before.
+`BRIDGE_STEP_GAS` is 80000, and every bridge budget follows from it.
 `FOLD_LIMIT` is 4. The windows are those of section 3.
 
 **Gas.** Every settlement transaction in the suite is checked against its
@@ -1587,3 +1607,199 @@ both sides of the limit in the native engine, and the mode-2 mutation's
 run in both engines alike. `scripts/verify-token-bridge.py` also pins mode 0
 for every mandatory log.
 
+
+## 20. Reported transfers and the balance report
+
+A transfer between wallets is outside settlement (section 4): the sender
+learns nothing of how it ended. A paying contract that must learn the outcome
+of every token payout uses a **reported transfer** instead. This section
+specifies the wallet side, as the USDC settlement design (section 4.3)
+requires it. `S` is the paying wallet, `P` its owner (the payer) and `R` the
+recipient's wallet. Every op is new; no existing message changes format.
+
+### 20.1 Messages
+
+```text
+reported_transfer#52545231 query_id:uint64 amount:Coins
+  destination:MsgAddressInt response_destination:MsgAddress
+  report_tos_amount:Coins forward_tos_amount:Coins
+  forward_payload:(Either Cell ^Cell) = ReportedTransfer;          -- P -> S
+internal_transfer_reported#52544931 query_id:uint64 amount:Coins
+  from:MsgAddressInt response_destination:MsgAddress
+  report_tos_amount:Coins forward_tos_amount:Coins
+  forward_payload:(Either Cell ^Cell) = InternalTransferReported;  -- S -> R
+transfer_delivered#52544431 query_id:uint64 amount:Coins
+  recipient:MsgAddressInt = TransferDelivered;                     -- R -> from
+transfer_refused#52544631 query_id:uint64 amount:Coins
+  = TransferRefused;                                               -- S -> P
+rereport_refusal#52545131 query_id:uint64 = RereportRefusal;       -- anyone -> S
+clear_refusal#52544331 query_id:uint64 = ClearRefusal;             -- P -> S
+provide_balance#52544231 query_id:uint64 = ProvideBalance;         -- P -> S
+take_balance#52544232 query_id:uint64 balance:Coins = TakeBalance; -- S -> P
+```
+
+The opcodes are frozen (`op-codes.fc`, pinned by
+`scripts/verify-token-bridge.py`). `transfer_delivered`, `transfer_refused`
+and `take_balance` are non-bounceable.
+
+**State.** The wallet's storage ends with `refusals:(HashmapE 64 Coins)`,
+the amount of each refused reported transfer by query id. It is empty in the
+initial data. Only the owner's own reported transfers create entries and only
+the owner clears them, so the dictionary is bounded by the owner's
+unacknowledged refusals. It is outside `WALLET_WORST_CELLS`, which bounds the
+settlement records.
+
+### 20.2 S on `reported_transfer`
+
+1. **Compute checks**, in this order; each throws, and P's bounceable message
+   bounces to P:
+   - the sender is the owner (705);
+   - `amount > 0`, and the balance covers it (706);
+   - the destination is a canonical `addr_std` on workchain 0, without
+     anycast (711). From global version 10 the VM itself refuses to load an
+     anycast or `addr_var` address (exit 9), before this check;
+   - the forward payload has at least one bit (708);
+   - `query_id` has no recorded refusal (712);
+   - ConfigParam 79 is present (666, as for every transfer).
+2. **Value check** (709). The attached value must exceed, priced from the
+   network:
+   - `forward_tos_amount + report_tos_amount`;
+   - the forwarding of S's message to R, every cell of it counted including
+     the root, and of R's bounce of it (at most 32 + 256 bits, one cell
+     counted);
+   - R's compute: the larger of the network's price of `R_GAS_LIMIT`
+     (`GETGASFEE`) and ConfigParam 79's `wallet_gas_consumption`, so a
+     mis-set bridge price cannot underfund R;
+   - the largest action fine R can incur: a failed send is fined per cell of
+     the messages R built, which are the notification (no more cells than
+     S's body), `transfer_delivered` (one) and the excess (none). The term is
+     the forwarding price of the body's cells plus two, which is never below
+     the fine;
+   - `wallet_min_tos_for_storage`.
+
+   `get_reported_transfer_need(body)` returns this value for a body, at the
+   current prices.
+3. Debit, and send `internal_transfer_reported` with R's StateInit,
+   bounceable, in **mode 64 + 16**: an action-phase failure at S bounces P's
+   message to P instead of keeping its value.
+
+### 20.3 R on `internal_transfer_reported`
+
+1. `set_gas_limit(R_GAS_LIMIT)` before anything else in the branch, and
+   before the configuration is read. S's value check pays for that much gas,
+   so the call only caps it: if R runs out, its compute fee is at most the
+   price of `R_GAS_LIMIT` and the rest of the value still pays the bounce.
+2. The sender must be the wallet of `from` (707).
+3. The configuration is read; the credit stays under `MAX_SUPPLY` (389); the
+   storage reserve is topped up as for a transfer.
+4. With a forward amount, `transfer_notification` to R's owner in mode
+   1 + 16.
+5. `transfer_delivered(query_id, amount, recipient = R's owner)` to `from`,
+   carrying `report_tos_amount`, in mode 1 + 16.
+6. The excess to `response_destination`, ignoring errors.
+
+Every way R can fail bounces to S: a compute failure, running out of the
+capped gas, or an action-phase failure of step 4 or 5. R never commits a
+credit without `transfer_delivered`.
+
+### 20.4 S on the bounce, and the other ops
+
+- **Bounce.** A bounced body that begins `0xffffffff` and
+  `internal_transfer_reported` is identified before the wallet loads its
+  data, and the gas limit is raised to `S_BOUNCE_GAS` at once, paid from S's
+  own balance when the bounce is short. A bounce cannot be forged and returns
+  only to its sender, so each one answers a debit S made, once. S restores
+  the amount, records `refusals[query_id] = amount`, and sends
+  `transfer_refused` to P with the bounce's value in mode 64 + 2. The
+  handler has no throw, and the report ignoring errors means the restore and
+  the record commit even when the report cannot be paid. It depends on the
+  256 bits of body that `capBounceMsgBody` keeps (T-R10).
+- **`rereport_refusal`** (anyone, funded by the sender): sends
+  `transfer_refused` for a recorded refusal in mode 64, without ignoring
+  errors, so a re-report that cannot be sent fails and keeps the record. An
+  unknown query id does nothing.
+- **`clear_refusal`** (owner only, 705): deletes the record; an absent record
+  is not an error.
+- **`provide_balance`** (owner only, 705): sends `take_balance(query_id,
+  balance)` to the owner with the remaining value, in mode 64. A reported
+  transfer in flight has already been debited.
+
+### 20.5 How a reported transfer ends
+
+| Where it stops | What P receives | State |
+|---|---|---|
+| S refuses in compute, or fails in its action phase | its own message, bounced | S unchanged |
+| R commits | `transfer_delivered` from R | tokens at R |
+| R fails in compute, out of its capped gas, or in its action phase | `transfer_refused` from S, or nothing if the bounce could not pay it, then a re-report | tokens back at S; the refusal recorded |
+
+The model checks after every transaction that a reported transfer ends at
+most once (I10), and the tests that each ended exactly once when the network
+is quiet. A duplicate or forged report is told apart by its sender: only R,
+the wallet of `from`, sends `transfer_delivered` naming P, and only S sends
+`transfer_refused` to P. An `excesses` carries only a query id and proves
+nothing (T-R8).
+
+### 20.6 Gas, measured on both engines
+
+`R_GAS_LIMIT` and `S_BOUNCE_GAS` are wallet code: changing either changes the
+wallet's code and every address that depends on it. Each is at least twice
+the most measured. Every transaction of the sandbox suite is held to that as
+it runs, and the trace replay requires the native engine to use the same gas
+for each one.
+
+| Leg | Most gas measured | Constant |
+|---|---|---|
+| R: `internal_transfer_reported` (a fresh wallet, notification, report and excess) | 19815 | `R_GAS_LIMIT` 40000 |
+| S: bounce with `refusals` 64 forks deep at the query id | 47153 | `S_BOUNCE_GAS` 95000 |
+| S: bounce with `refusals` empty | 9953 | |
+| S: `reported_transfer` (a 200-cell forward payload) | 52620 | paid by P's message |
+| S: `clear_refusal` (64 forks deep) | 45375 | paid by P's message |
+| S: `rereport_refusal` | 12696 | paid by the sender |
+| S: `provide_balance` | 6270 | paid by P's message |
+
+Measured by `reported::t_r11_gas_per_leg_is_within_its_constants`, which also
+requires `wallet_min_tos_for_storage` to cover the price of `S_BOUNCE_GAS`.
+
+### 20.7 Limits of the guarantee
+
+- **S's own compute.** The value check has no term for S's own compute fee,
+  which comes out of the value before mode 64 passes the rest to R. The
+  storage reserve term covers it. With `wallet_min_tos_for_storage` below the
+  price of S's compute, an R that runs out of its capped gas leaves too
+  little for its bounce, and the transfer ends with neither outcome: in the
+  sandbox, a reserve of 0 lost the tokens and one of 200,000 nanotos did
+  not. ConfigParam 79 must keep `wallet_min_tos_for_storage` above the price
+  of S's compute at the largest forward payload; T-R11 checks it for the
+  configuration it runs.
+- **Prices rising between the legs.** Within the payer's report margin the
+  report still pays for the payer's work (T-R6). Beyond it R still delivered
+  in the sandbox, but the report no longer covers the payer's pre-accept gas,
+  which is where a delivery report can be lost.
+- **Two transfers in flight with one query id.** Both pass S's check, and if
+  both are refused the second record replaces the first amount; each restore
+  and each report is still correct. A payer that never reuses a query id is
+  not affected.
+
+### 20.8 Tests
+
+`token_bridge/reported.rs`, with the model on (the supply-bound case patches
+a balance and turns it off):
+
+| Test | Covers |
+|---|---|
+| T-R1 | delivered, with and without a forward amount, and to the payer itself |
+| T-R2 | refused at R by a compute failure, by its supply bound, out of its capped gas (a test-only build), and by an action failure of the notification and of the report; a short bounce paid from S's balance |
+| T-R3 | an action-phase failure at S bounces to P |
+| T-R4 | every compute refusal at S, and ConfigParam 79 absent |
+| T-R5 | `wallet_gas_consumption` set too low; the need is the sum of its terms |
+| T-R6 | gas and forwarding prices raised between the legs, within and beyond the report margin |
+| T-R7 | re-report, clear, and a duplicate query id |
+| T-R8 | spoofed reports: an excess, another sender's delivery, a forged incoming transfer, another token's wallet, and forged refusals and bounces at S |
+| T-R9 | `provide_balance` |
+| T-R10 | the suite fails without `capBounceMsgBody` |
+| T-R11 | gas per leg |
+| T-R12 | the mint path credits source units with no scaling (6 decimals) |
+| T-R13 | the ordinary notification's +16 returns the tokens |
+
+Mutation controls M38 to M66 of `scripts/token-bridge-mutations.py` remove
+each guard of this section and require its test to fail for its reason.

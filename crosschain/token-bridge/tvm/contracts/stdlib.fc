@@ -59,6 +59,11 @@ cont bless(slice s) impure asm "BLESS";
 
 () accept_message() impure asm "ACCEPT";
 () set_gas_limit(int limit) impure asm "SETGASLIMIT";
+
+;; Network prices from ConfigParams 20/21 and 24/25. They require global
+;; version 6 or later. `is_mc` is true for the masterchain.
+int get_compute_fee(int is_mc, int gas_used) asm(gas_used is_mc) "GETGASFEE";
+int get_forward_fee(int is_mc, int bits, int cells) asm(cells bits is_mc) "GETFORWARDFEE";
 () commit() impure asm "COMMIT";
 () buy_gas(int amount) impure asm "BUYGAS";
 

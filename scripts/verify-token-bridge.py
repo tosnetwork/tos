@@ -139,8 +139,14 @@ def verify_tvm_sources() -> None:
             "throw_if(error::zero_destination, destination_address == 0);",
             "throw_unless(error::life_mismatch, wallet_life == w_born);",
             "require_cell_capacity(WALLET_WORST_CELLS, 0);",
+            # Reported transfers (SETTLEMENT-PROTOCOL.md section 20).
+            "throw_unless(error::not_canonical_destination, canonical_basechain?(to_owner_address));",
+            "throw_if(error::refusal_pending, recorded);",
+            "return max(get_compute_fee(false, R_GAS_LIMIT), wallet_gas_consumption);",
+            "+ wallet_min_tos_for_storage;",
         ],
     )
+    verify_reported_transfers(c)
     require_text(
         c / "token-minter.fc",
         [
@@ -178,7 +184,7 @@ def verify_tvm_sources() -> None:
         c / "votes-collector.fc",
         ["udict_add?", "get_token_bridge_config", "STATE_COLLECTOR_SIGNATURE_REMOVAL_SUSPENDED"],
     )
-    require_text(c / "stdlib.fc", ['"STTOMIS"', '"LDTOMIS"'])
+    require_text(c / "stdlib.fc", ['"STTOMIS"', '"LDTOMIS"', '"GETGASFEE"', '"GETFORWARDFEE"'])
 
     expected_params = {
         "ethereum.fc": (79, 1),
@@ -255,6 +261,120 @@ def verify_settlement_handlers_skip_config(contracts: Path) -> None:
                 for callee in call.findall(bodies.get(f, "")):
                     if callee in bodies or callee in CONFIG_READERS:
                         todo.append(callee)
+
+
+REPORTED_OPCODES = {
+    "op::reported_transfer": "0x52545231",
+    "op::internal_transfer_reported": "0x52544931",
+    "op::transfer_delivered": "0x52544431",
+    "op::transfer_refused": "0x52544631",
+    "op::rereport_refusal": "0x52545131",
+    "op::clear_refusal": "0x52544331",
+    "op::provide_balance": "0x52544231",
+    "op::take_balance": "0x52544232",
+}
+
+BOUNCE_ON_FAIL = "SEND_MODE_BOUNCE_ON_ACTION_FAIL"
+
+
+def sends(body: str) -> list[str]:
+    return re.findall(r"send_raw_message\((.*?)\);", body, flags=re.S)
+
+
+def verify_reported_transfers(contracts: Path) -> None:
+    """The reported transfer's ordering and send-mode invariants.
+
+    Each one is what keeps every way the transfer can end reported: the
+    recipient's wallet caps its gas before it spends anything and bounces on
+    every failure; the paying wallet raises its gas for a refusal before it
+    loads anything, cannot throw while it restores, and never lets the refusal
+    report roll the restore back.
+    """
+    text = (contracts / "token-wallet.fc").read_text(encoding="utf-8")
+    shared = "".join(
+        (contracts / inc).read_text(encoding="utf-8") + "\n"
+        for inc in ("settlement.fc", "utils.fc", "config.fc", "stdlib.fc", "messages.fc")
+    )
+    bodies = function_bodies(shared + text)
+    for name in (
+        "recv_internal",
+        "send_reported_tokens",
+        "receive_reported_tokens",
+        "reported_need",
+        "on_reported_bounce",
+        "on_rereport_refusal",
+        "on_clear_refusal",
+        "on_provide_balance",
+    ):
+        if name not in bodies:
+            raise AssertionError(f"token-wallet.fc: {name} is missing")
+    recv = bodies["recv_internal"]
+    branch = recv.split("if (op == op::internal_transfer_reported) {", 1)
+    if len(branch) != 2 or not re.match(
+        r"\s*(;;[^\n]*\n\s*)*set_gas_limit\(R_GAS_LIMIT\);", branch[1]
+    ):
+        raise AssertionError("token-wallet.fc: R must cap its gas first in its branch")
+    if recv.index("op == op::internal_transfer_reported") > recv.index("get_token_bridge_config()"):
+        raise AssertionError("token-wallet.fc: R must cap its gas before reading the configuration")
+    if recv.index("set_gas_limit(S_BOUNCE_GAS);") > recv.index("load_data();"):
+        raise AssertionError(
+            "token-wallet.fc: S must raise its gas for a refusal before loading its data"
+        )
+    r_sends = sends(bodies["receive_reported_tokens"])
+    if len(r_sends) != 3:
+        raise AssertionError("token-wallet.fc: R sends the notification, the report and the excess")
+    for send in r_sends:
+        if "SEND_MODE_IGNORE_ERRORS" not in send and BOUNCE_ON_FAIL not in send:
+            raise AssertionError(
+                f"token-wallet.fc: R's send must bounce on an action failure: {send}"
+            )
+    if not any("report.end_cell()" in s and BOUNCE_ON_FAIL in s for s in r_sends):
+        raise AssertionError(
+            "token-wallet.fc: R's delivery report must commit with the credit (+16)"
+        )
+    if not any(BOUNCE_ON_FAIL in s for s in sends(bodies["send_reported_tokens"])):
+        raise AssertionError(
+            "token-wallet.fc: S's message to R must bounce on an action failure (+16)"
+        )
+    notification = [
+        s for s in sends(bodies["receive_tokens"]) if "SEND_MODE_IGNORE_ERRORS" not in s
+    ]
+    if len(notification) != 1 or BOUNCE_ON_FAIL not in notification[0]:
+        raise AssertionError(
+            "token-wallet.fc: the ordinary notification must bounce on an action failure (+16)"
+        )
+    # The refusal is the only way the tokens come back: its handler must not
+    # throw, and its report must not roll the restore back.
+    seen, todo = set(), ["on_reported_bounce"]
+    call = re.compile(r"[~.]?([A-Za-z_][\w?']*)\s*\(")
+    while todo:
+        f = todo.pop()
+        if f in seen:
+            continue
+        seen.add(f)
+        body = bodies.get(f, "")
+        if re.search(r"\bthrow(_if|_unless)?\(", body):
+            raise AssertionError(f"token-wallet.fc: the refusal handler reaches a throw in {f}")
+        todo.extend(c for c in call.findall(body) if c in bodies)
+    if "SEND_MODE_IGNORE_ERRORS" not in bodies["on_reported_bounce"]:
+        raise AssertionError("token-wallet.fc: the refusal report must ignore errors (+2)")
+    need = bodies["reported_need"]
+    for term in (
+        "forward_tos_amount + report_tos_amount",
+        "fee_of(msg, false)",
+        "get_forward_fee(false, 32 + 256, 1)",
+        "reported_compute_fee(wallet_gas_consumption)",
+        "get_forward_fee(false, 0, body_cells + 2)",
+        "wallet_min_tos_for_storage",
+    ):
+        if term not in need:
+            raise AssertionError(
+                f"token-wallet.fc: the reported transfer's value check lacks {term}"
+            )
+    opcodes = (contracts / "op-codes.fc").read_text(encoding="utf-8")
+    for name, value in REPORTED_OPCODES.items():
+        if f"const int {name} = {value};" not in opcodes:
+            raise AssertionError(f"op-codes.fc: {name} must stay {value}")
 
 
 def verify_mandatory_logs(settlement: Path) -> None:

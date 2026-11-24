@@ -129,16 +129,18 @@ const int HOLDER_LIMIT = 1000;       ;; holders one minter serves
 ;; Worst-case state sizes, measured by the sandbox's T-G test on the compiled
 ;; contracts with every window full, every record at its largest, an old life
 ;; held in full and no cell shared between records:
-;;   wallet 115 cells; bridge 897 cells at 8 channels (58 per channel), under
-;;   the 2048-cell non-special masterchain limit; minter 347 cells plus 63 per
-;;   holder, 63347 at 1000 holders, under the 65536-cell basechain limit.
-;; Measured at commit 1f99ccdbe by the sandbox test
+;;   wallet 142 cells; bridge 925 cells at 8 channels (58 per channel), under
+;;   the 2048-cell non-special masterchain limit; minter 374 cells plus 63 per
+;;   holder, 63374 at 1000 holders, under the 65536-cell basechain limit.
+;; Measured with the reported-transfer wallet by the sandbox test
 ;; t_g_worst_case_cells_fit_the_declared_bound_and_the_account_limit, which
-;; fails if a later state exceeds these constants.
+;; fails if a later state exceeds these constants. The wallet's recorded
+;; refusals are not part of this bound: only the owner's own reported
+;; transfers create them and only the owner clears them (token-wallet.fc).
 ;; HOLDER_LIMIT is the largest round number of holders that fits.
 const int BRIDGE_WORST_CELLS = 1000;
 const int MINTER_WORST_CELLS = 64000;
-const int WALLET_WORST_CELLS = 128;
+const int WALLET_WORST_CELLS = 160;
 
 ;; Balances each contract keeps for its own storage.
 const int WALLET_RESERVE = 50000000;      ;; 0.05
@@ -154,10 +156,12 @@ const int WALLET_STEP_GAS = 40000;
 ;; makes anyone's choice: the record can sit under a fork at every one of the
 ;; 256 bits. The sandbox measures every step on that shape (token_bridge/deep.rs).
 const int MINTER_STEP_GAS = 300000;
-const int BRIDGE_STEP_GAS = 70000;
+;; The dearest bridge step is an advance of a mint, which prices the recipient
+;; wallet's StateInit: 70648 gas in the sandbox suite with the reported-transfer
+;; wallet code.
+const int BRIDGE_STEP_GAS = 80000;
 ;; An oracle vote at the bridge: a swap vote that deploys a minter computes
-;; its state's forwarding fee, the dearest bridge step (69698 gas at most
-;; in the sandbox suite). The oracles' message pays for it.
+;; its state's forwarding fee. The oracles' message pays for it.
 const int BRIDGE_VOTE_GAS = 100000;
 ;; A minter step that also promotes or strands FOLD_LIMIT records.
 const int MINTER_BATCH_GAS = 400000;

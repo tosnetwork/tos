@@ -17,7 +17,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use chain_block::{Deserializable, Message, MsgAddressInt, SliceData};
+use chain_block::{Coins, Deserializable, Message, MsgAddressInt, SliceData};
 
 use crate::harness::*;
 
@@ -29,6 +29,7 @@ pub struct WalletSnap {
     /// b -> held amount
     pub holds: BTreeMap<u64, i128>,
     pub credits_above: usize,
+    pub refusals: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -121,6 +122,10 @@ pub struct Model {
     pub skip_window_checks: bool,
     /// Accounts the chain froze or deleted: address -> (wallet?, amount, life).
     pub lost: BTreeMap<String, (bool, i128, i128)>,
+    /// (paying wallet, query id) -> (reported transfers sent, delivered, refused)
+    pub reported: BTreeMap<(Vec<u8>, u64), (u32, u32, u32)>,
+    /// Tokens in transfers a test holds outside the queue.
+    pub held: i128,
 }
 
 fn key(addr: &MsgAddressInt) -> Vec<u8> {
@@ -495,6 +500,86 @@ impl Model {
         let owner = wallet_owner(net, &d.addr);
         let gained = a.balance - b.balance;
         let life = a.born;
+        if let Some(bounce) = reported_bounce(&d.msg) {
+            // I10: R refused; S restores the amount and records the refusal once
+            let (query_id, amount) = bounce;
+            assert_eq!(
+                gained, amount as i128,
+                "I10: a refused reported transfer restores its amount"
+            );
+            let e = self.reported.entry((wallet.clone(), query_id)).or_default();
+            e.2 += 1;
+            assert!(
+                e.1 + e.2 <= e.0,
+                "I10: reported transfer {query_id} ended more often than it was sent"
+            );
+            let recorded = net.get(&d.addr, "get_refusal", vec![int_arg(query_id)]).int_at(0);
+            assert_eq!(recorded, amount as i128, "I10: the refusal of {query_id} is recorded");
+            return;
+        }
+        match op {
+            Some(OP_REPORTED_TRANSFER) => {
+                let sent: Vec<&Message> = d
+                    .outs
+                    .iter()
+                    .filter(|m| body_op(m) == Some(OP_INTERNAL_TRANSFER_REPORTED))
+                    .collect();
+                assert_eq!(sent.len(), 1, "I10: a reported transfer sends one message to R");
+                let r = ReportedBody::of(sent[0]);
+                assert_eq!(-gained, r.amount as i128, "I10: S debits what it sends");
+                assert!(
+                    sent[0].int_header().unwrap().bounce,
+                    "I10: S's message to R is bounceable"
+                );
+                let e = self.reported.entry((wallet.clone(), r.query_id)).or_default();
+                e.0 += 1;
+            }
+            Some(OP_INTERNAL_TRANSFER_REPORTED) => {
+                let r = ReportedBody::of(&d.msg);
+                assert_eq!(gained, r.amount as i128, "I10: R credits what S sent");
+                let delivered: Vec<&Message> =
+                    d.outs.iter().filter(|m| body_op(m) == Some(OP_TRANSFER_DELIVERED)).collect();
+                self.atomic(
+                    delivered.len() == 1,
+                    format!("R credited {} without its report", r.query_id),
+                );
+                if let Some(m) = delivered.first() {
+                    let mut s = settlement_body(m);
+                    s.get_next_u32().unwrap();
+                    assert_eq!(
+                        s.get_next_u64().unwrap(),
+                        r.query_id,
+                        "I10: the report names the query"
+                    );
+                    let amount = Coins::construct_from(&mut s).unwrap().as_u128();
+                    assert_eq!(amount, r.amount, "I10: the report names the amount");
+                    let recipient = MsgAddressInt::construct_from(&mut s).unwrap();
+                    assert_eq!(recipient, owner, "I10: the report names R's owner");
+                    assert!(is_to(m, &r.from), "I10: the report goes to S's owner");
+                    assert_eq!(
+                        value_of(m),
+                        r.report_tos_amount,
+                        "I10: the report carries its amount"
+                    );
+                }
+                let notified =
+                    d.outs.iter().filter(|m| body_op(m) == Some(OP_TRANSFER_NOTIFICATION)).count();
+                assert_eq!(
+                    notified,
+                    usize::from(r.forward_tos_amount > 0),
+                    "I10: one notification iff forwarded"
+                );
+                let sender = d.msg.src_ref().expect("a sender").clone();
+                let e = self.reported.entry((key(&sender), r.query_id)).or_default();
+                e.1 += 1;
+                assert!(
+                    e.1 + e.2 <= e.0,
+                    "I10: reported transfer {} ended more often than it was sent",
+                    r.query_id
+                );
+            }
+            _ => {}
+        }
         match op {
             Some(op::CREDIT) => {
                 let mut s = settlement_body(&d.msg);
@@ -874,9 +959,17 @@ impl Model {
                 }
             }
         }
-        let mut transfers: i128 = 0;
+        let mut transfers: i128 = self.held;
         for m in &net.queue {
-            if body_op(m) == Some(OP_INTERNAL_TRANSFER) || bounced_transfer(m) {
+            // Only tokens a wallet sent are in flight: a forged transfer, or
+            // its bounce back to the forger, carries none.
+            let between_wallets =
+                |a: Option<MsgAddressInt>| a.is_some_and(|a| kind_of(net, &a) == Some("wallet"));
+            let sent = (body_op(m) == Some(OP_INTERNAL_TRANSFER)
+                || body_op(m) == Some(OP_INTERNAL_TRANSFER_REPORTED))
+                && between_wallets(m.src_ref().cloned());
+            let returned = bounced_transfer(m) && between_wallets(m.dst_ref().cloned());
+            if sent || returned {
                 let mut s = m.body().expect("a body").clone();
                 if m.int_header().map(|h| h.bounced).unwrap_or(false) {
                     s.get_next_u32().unwrap();
@@ -919,9 +1012,51 @@ fn bounced_transfer(m: &Message) -> bool {
     if !m.int_header().map(|h| h.bounced).unwrap_or(false) {
         return false;
     }
-    let mut s = m.body().expect("a body").clone();
+    // Without capBounceMsgBody a bounce carries no body at all.
+    let Some(body) = m.body() else { return false };
+    let mut s = body.clone();
     s.get_next_u32().ok();
-    s.get_next_u32().ok() == Some(OP_INTERNAL_TRANSFER)
+    let op = s.get_next_u32().ok();
+    op == Some(OP_INTERNAL_TRANSFER) || op == Some(OP_INTERNAL_TRANSFER_REPORTED)
+}
+
+/// The query id and amount of a bounced internal_transfer_reported.
+pub fn reported_bounce(m: &Message) -> Option<(u64, u128)> {
+    if !m.int_header().map(|h| h.bounced).unwrap_or(false) {
+        return None;
+    }
+    let mut s = m.body()?.clone();
+    if s.get_next_u32().ok()? != 0xffff_ffff
+        || s.get_next_u32().ok()? != OP_INTERNAL_TRANSFER_REPORTED
+    {
+        return None;
+    }
+    let query_id = s.get_next_u64().ok()?;
+    let amount = Coins::construct_from(&mut s).ok()?.as_u128();
+    Some((query_id, amount))
+}
+
+/// The fields of an internal_transfer_reported.
+pub struct ReportedBody {
+    pub query_id: u64,
+    pub amount: u128,
+    pub from: MsgAddressInt,
+    pub report_tos_amount: u128,
+    pub forward_tos_amount: u128,
+}
+
+impl ReportedBody {
+    pub fn of(m: &Message) -> Self {
+        let mut s = settlement_body(m);
+        assert_eq!(s.get_next_u32().unwrap(), OP_INTERNAL_TRANSFER_REPORTED);
+        let query_id = s.get_next_u64().unwrap();
+        let amount = Coins::construct_from(&mut s).unwrap().as_u128();
+        let from = MsgAddressInt::construct_from(&mut s).unwrap();
+        let _response = chain_block::MsgAddress::construct_from(&mut s).unwrap();
+        let report_tos_amount = Coins::construct_from(&mut s).unwrap().as_u128();
+        let forward_tos_amount = Coins::construct_from(&mut s).unwrap().as_u128();
+        Self { query_id, amount, from, report_tos_amount, forward_tos_amount }
+    }
 }
 
 pub fn wallet_master(net: &Net, wallet: &MsgAddressInt) -> MsgAddressInt {
@@ -965,12 +1100,14 @@ pub fn wallet_snap(net: &Net, addr: &MsgAddressInt) -> WalletSnap {
         }
     }
     let credits_above = net.get(addr, "get_credits_above_count", vec![]).int_at(0) as usize;
+    let refusals = net.get(addr, "get_refusals_count", vec![]).int_at(0) as usize;
     WalletSnap {
         balance: data.int_at(0),
         born: st.int_at(0),
         minter_life: st.int_at(1),
         holds,
         credits_above,
+        refusals,
     }
 }
 

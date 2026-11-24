@@ -4,6 +4,8 @@ const int NON_BOUNCEABLE = 0x10;
 const int SEND_MODE_REGULAR = 0;
 const int SEND_MODE_PAY_FEES_SEPARETELY = 1;
 const int SEND_MODE_IGNORE_ERRORS = 2;
+;; An action-phase failure of this send bounces the inbound message.
+const int SEND_MODE_BOUNCE_ON_ACTION_FAIL = 16;
 const int SEND_MODE_DESTROY = 32;
 const int SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE = 64;
 const int SEND_MODE_CARRY_ALL_BALANCE = 128;

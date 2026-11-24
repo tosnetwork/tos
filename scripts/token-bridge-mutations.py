@@ -404,6 +404,295 @@ MUTATIONS = [
         "deep::every_minter_step",
         "over its declared",
     ),
+    # Reported transfers and the balance report (token_bridge/reported.rs)
+    M(
+        "M38",
+        "S sends a reported transfer for anyone",
+        f"{C}/token-wallet.fc",
+        "  throw_unless(error::unauthorized_transfer, equal_slices(w_owner, sender_address));\n"
+        "  throw_unless(error::not_enough_funds, token_amount > 0);\n",
+        "  throw_unless(error::not_enough_funds, token_amount > 0);\n",
+        "t_r4_",
+        "not the owner: S refuses with",
+    ),
+    M(
+        "M39",
+        "S sends a reported transfer of nothing",
+        f"{C}/token-wallet.fc",
+        "  throw_unless(error::not_enough_funds, token_amount > 0);\n"
+        "  throw_unless(error::not_enough_funds, token_amount <= w_balance);\n",
+        "  throw_unless(error::not_enough_funds, token_amount <= w_balance);\n",
+        "t_r4_",
+        "zero amount: S refuses with",
+    ),
+    M(
+        "M40",
+        "S sends more than its balance",
+        f"{C}/token-wallet.fc",
+        "  throw_unless(error::not_enough_funds, token_amount <= w_balance);\n"
+        "  throw_unless(error::not_canonical_destination",
+        "  throw_unless(error::not_canonical_destination",
+        "t_r4_",
+        "above the balance: S refuses with",
+    ),
+    M(
+        "M41",
+        "S accepts a destination that is not canonical on the basechain",
+        f"{C}/token-wallet.fc",
+        "  throw_unless(error::not_canonical_destination, canonical_basechain?(to_owner_address));\n",
+        "",
+        "t_r4_",
+        "the masterchain: S refuses with",
+    ),
+    M(
+        "M42",
+        "S accepts a body without a forward payload",
+        f"{C}/token-wallet.fc",
+        "  throw_unless(error::malformed_forward_payload, slice_bits(in_msg_body) >= 1);\n"
+        "  (_, int recorded)",
+        "  (_, int recorded)",
+        "t_r4_",
+        "no forward payload: S refuses with",
+    ),
+    M(
+        "M43",
+        "S reuses a query id whose refusal is recorded",
+        f"{C}/token-wallet.fc",
+        "  throw_if(error::refusal_pending, recorded);\n",
+        "",
+        "t_r7_",
+        "expected a refusal with 712",
+    ),
+    M(
+        "M44",
+        "S accepts a value equal to the need",
+        f"{C}/token-wallet.fc",
+        "throw_unless(error::not_enough_tos, msg_value > reported_need(",
+        "throw_unless(error::not_enough_tos, msg_value >= reported_need(",
+        "t_r4_",
+        "exactly the need: S refuses with",
+    ),
+    M(
+        "M45",
+        "R's compute is priced from ConfigParam 79 alone",
+        f"{C}/token-wallet.fc",
+        "  return max(get_compute_fee(false, R_GAS_LIMIT), wallet_gas_consumption);",
+        "  return wallet_gas_consumption;",
+        "t_r5_",
+        "network-priced compute term",
+    ),
+    M(
+        "M46",
+        "the value check omits R's largest action fine",
+        f"{C}/token-wallet.fc",
+        "          + get_forward_fee(false, 0, body_cells + 2)\n",
+        "",
+        "t_r5_",
+        "the need is the sum of its terms",
+    ),
+    M(
+        "M47",
+        "the value check omits the forwarding of R's bounce",
+        f"{C}/token-wallet.fc",
+        "          + get_forward_fee(false, 32 + 256, 1)\n",
+        "",
+        "t_r5_",
+        "the need is the sum of its terms",
+    ),
+    M(
+        "M48",
+        "the value check omits the storage reserve",
+        f"{C}/token-wallet.fc",
+        "          + wallet_min_tos_for_storage;\n}",
+        "          ;\n}",
+        "t_r5_",
+        "the need is the sum of its terms",
+    ),
+    M(
+        "M49",
+        "S sends to R without +16",
+        f"{C}/token-wallet.fc",
+        "  send_raw_message(msg, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE + SEND_MODE_BOUNCE_ON_ACTION_FAIL);",
+        "  send_raw_message(msg, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);",
+        "t_r3_",
+        "S's action failure bounces P's message",
+    ),
+    M(
+        "M50",
+        "R does not cap its gas",
+        f"{C}/token-wallet.fc",
+        "    set_gas_limit(R_GAS_LIMIT);\n",
+        "",
+        "t_r2_refused_at_r_out_of_its_capped_gas",
+        "R runs out of its capped gas",
+    ),
+    M(
+        "M51",
+        "R credits a transfer from any sender",
+        f"{C}/token-wallet.fc",
+        "  throw_unless(error::unauthorized_incoming_transfer,\n"
+        "          equal_slices(calculate_user_token_wallet_address(from_address, w_master, w_code), sender_address));\n"
+        "  (_, _, _, _, _, _, int wallet_min_tos_for_storage",
+        "  (_, _, _, _, _, _, int wallet_min_tos_for_storage",
+        "t_r8_",
+        "ended more often than it was sent",
+    ),
+    M(
+        "M52",
+        "R credits past MAX_SUPPLY",
+        f"{C}/token-wallet.fc",
+        "get_token_bridge_config();\n  int balance = w_balance + token_amount;\n"
+        "  throw_unless(error::supply_bound, balance <= MAX_SUPPLY);\n",
+        "get_token_bridge_config();\n  int balance = w_balance + token_amount;\n",
+        "t_r2_refused_at_r_by_its_supply_bound",
+        "refused for another reason",
+    ),
+    M(
+        "M53",
+        "R's notification of a reported transfer is sent without +16",
+        f"{C}/token-wallet.fc",
+        "    send_raw_message(msg.end_cell(), SEND_MODE_PAY_FEES_SEPARETELY + SEND_MODE_BOUNCE_ON_ACTION_FAIL);\n"
+        "  }\n\n  ;; The report commits",
+        "    send_raw_message(msg.end_cell(), SEND_MODE_PAY_FEES_SEPARETELY);\n"
+        "  }\n\n  ;; The report commits",
+        "t_r2_refused_at_r_by_an_action_failure",
+        "I1:",
+    ),
+    M(
+        "M54",
+        "R's delivery report is sent without +16",
+        f"{C}/token-wallet.fc",
+        "  send_raw_message(report.end_cell(), SEND_MODE_PAY_FEES_SEPARETELY + SEND_MODE_BOUNCE_ON_ACTION_FAIL);",
+        "  send_raw_message(report.end_cell(), SEND_MODE_PAY_FEES_SEPARETELY);",
+        "t_r2_refused_at_r_by_an_action_failure",
+        "I1:",
+    ),
+    M(
+        "M55",
+        "R credits without reporting the delivery",
+        f"{C}/token-wallet.fc",
+        "  send_raw_message(report.end_cell(), SEND_MODE_PAY_FEES_SEPARETELY + SEND_MODE_BOUNCE_ON_ACTION_FAIL);",
+        "",
+        "t_r1_",
+        "without its report",
+    ),
+    M(
+        "M56",
+        "S records a refusal without restoring the tokens",
+        f"{C}/token-wallet.fc",
+        "  w_balance += token_amount;\n  w_refusals~udict_set_builder",
+        "  w_refusals~udict_set_builder",
+        "t_r2_refused_at_r_by_a_compute_failure",
+        "restores its amount",
+    ),
+    M(
+        "M57",
+        "S restores a refused transfer without recording it",
+        f"{C}/token-wallet.fc",
+        "  w_refusals~udict_set_builder(64, query_id, begin_cell().store_coins(token_amount));\n",
+        "",
+        "t_r2_refused_at_r_by_a_compute_failure",
+        "is recorded",
+    ),
+    M(
+        "M58",
+        "S handles a refusal on the bounce's own value",
+        f"{C}/token-wallet.fc",
+        "    set_gas_limit(S_BOUNCE_GAS);\n",
+        "",
+        "t_r2_a_short_bounce",
+        "I1:",
+    ),
+    M(
+        "M59",
+        "S's refusal report can roll back the restore",
+        f"{C}/token-wallet.fc",
+        "  send_refused(query_id, token_amount, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE + SEND_MODE_IGNORE_ERRORS);",
+        "  send_refused(query_id, token_amount, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);",
+        "t_r2_a_short_bounce",
+        "I1:",
+    ),
+    M(
+        "M60",
+        "a re-report of an unknown query id is not ignored",
+        f"{C}/token-wallet.fc",
+        "  if (~ found) {\n    return ();\n  }\n  send_refused",
+        "  send_refused",
+        "t_r7_",
+        "the transaction failed",
+    ),
+    M(
+        "M61",
+        "a re-report that cannot be sent is skipped instead of failing",
+        f"{C}/token-wallet.fc",
+        "  send_refused(query_id, entry~load_coins(), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);",
+        "  send_refused(query_id, entry~load_coins(), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE + SEND_MODE_IGNORE_ERRORS);",
+        "t_r7_",
+        "an unfunded re-report fails",
+    ),
+    M(
+        "M62",
+        "anyone clears a refusal",
+        f"{C}/token-wallet.fc",
+        "  throw_unless(error::unauthorized_transfer, equal_slices(w_owner, sender_address));\n"
+        "  (w_refusals, _) = w_refusals.udict_delete?(64, query_id);",
+        "  (w_refusals, _) = w_refusals.udict_delete?(64, query_id);",
+        "t_r7_",
+        "expected a refusal with 705",
+    ),
+    M(
+        "M63",
+        "anyone learns the balance",
+        f"{C}/token-wallet.fc",
+        "  throw_unless(error::unauthorized_transfer, equal_slices(w_owner, sender_address));\n"
+        "  send_raw_message(begin_cell()\n          .store_msg_flags(NON_BOUNCEABLE)\n"
+        "          .store_slice(w_owner)\n          .store_coins(0)\n          .store_msgbody_prefix_slice()\n"
+        "          .store_body_header(op::take_balance",
+        "  send_raw_message(begin_cell()\n          .store_msg_flags(NON_BOUNCEABLE)\n"
+        "          .store_slice(w_owner)\n          .store_coins(0)\n          .store_msgbody_prefix_slice()\n"
+        "          .store_body_header(op::take_balance",
+        "t_r9_",
+        "expected a refusal with 705",
+    ),
+    M(
+        "M64",
+        "R_GAS_LIMIT is below twice R's measured most",
+        f"{C}/token-wallet.fc",
+        "const int R_GAS_LIMIT = 40000;",
+        "const int R_GAS_LIMIT = 36000;",
+        "t_r11_",
+        "more than half of its R_GAS_LIMIT",
+    ),
+    M(
+        "M65",
+        "S_BOUNCE_GAS is below twice the bounce's measured most",
+        f"{C}/token-wallet.fc",
+        "const int S_BOUNCE_GAS = 95000;",
+        "const int S_BOUNCE_GAS = 90000;",
+        "t_r11_",
+        "more than half of its S_BOUNCE_GAS",
+    ),
+    M(
+        "M66",
+        "an ordinary transfer's notification is sent without +16",
+        f"{C}/token-wallet.fc",
+        "    send_raw_message(msg.end_cell(), SEND_MODE_PAY_FEES_SEPARETELY + SEND_MODE_BOUNCE_ON_ACTION_FAIL);\n"
+        "  }\n\n  if ((response_address.preload_uint(2) != 0) & (msg_value > 0)) {\n"
+        "    var msg = begin_cell()\n            .store_msg_flags(NON_BOUNCEABLE)\n"
+        "            .store_slice(response_address)\n            .store_coins(msg_value)\n"
+        "            .store_msgbody_prefix_slice()\n            .store_body_header(op::excesses, query_id);\n"
+        "    send_raw_message(msg.end_cell(), SEND_MODE_IGNORE_ERRORS);\n  }\n\n  w_balance = balance;\n"
+        "  save_data();\n}\n\n;; ---- reported",
+        "    send_raw_message(msg.end_cell(), SEND_MODE_PAY_FEES_SEPARETELY);\n"
+        "  }\n\n  if ((response_address.preload_uint(2) != 0) & (msg_value > 0)) {\n"
+        "    var msg = begin_cell()\n            .store_msg_flags(NON_BOUNCEABLE)\n"
+        "            .store_slice(response_address)\n            .store_coins(msg_value)\n"
+        "            .store_msgbody_prefix_slice()\n            .store_body_header(op::excesses, query_id);\n"
+        "    send_raw_message(msg.end_cell(), SEND_MODE_IGNORE_ERRORS);\n  }\n\n  w_balance = balance;\n"
+        "  save_data();\n}\n\n;; ---- reported",
+        "t_r13_",
+        "I1:",
+    ),
     # EVM
     M(
         "E01",

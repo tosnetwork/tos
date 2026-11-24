@@ -7,6 +7,17 @@ const int op::excesses = 0xd53276db;
 const int op::burn = 0x595f07bc;
 const int op::burn_notification = 0x7bdd97de;
 
+;; Reported transfers and the balance report. S is the paying wallet, P its
+;; owner, R the recipient's wallet.
+const int op::reported_transfer = 0x52545231;           ;; P -> S
+const int op::internal_transfer_reported = 0x52544931;  ;; S -> R
+const int op::transfer_delivered = 0x52544431;          ;; R -> P
+const int op::transfer_refused = 0x52544631;            ;; S -> P
+const int op::rereport_refusal = 0x52545131;            ;; anyone -> S
+const int op::clear_refusal = 0x52544331;               ;; P -> S
+const int op::provide_balance = 0x52544231;             ;; P -> S
+const int op::take_balance = 0x52544232;                ;; S -> P
+
 ;; Minter
 const int op::mint = 21;
 
