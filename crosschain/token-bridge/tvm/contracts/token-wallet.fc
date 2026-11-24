@@ -17,12 +17,13 @@
 
   storage#_ balance:Coins owner_address:MsgAddressInt token_master_address:MsgAddressInt
             token_wallet_code:^Cell settlement:^WalletSettlement
-            refusals:(HashmapE 64 Coins) = Storage;
+            refusals_count:uint16 refusals:(HashmapE 64 Coins) = Storage;
   (WalletSettlement: see empty_wallet_settlement in utils.fc)
   pending_burn#_ cancel_requested:uint1 descriptor:^BurnDescriptor = PendingBurn;
 
   `refusals` holds, by query id, the amount of every reported transfer that the
-  recipient's wallet refused and the owner has not yet cleared.
+  recipient's wallet refused and the owner has not yet cleared, at most
+  REFUSALS_LIMIT of them; `refusals_count` counts them.
 -}
 
 global int w_balance;
@@ -40,6 +41,7 @@ global cell w_credits_above;   ;; k -> descriptor hash, for k at or above the wa
 global int w_next_burn;        ;; C3 sender: next b
 global int w_burn_ack;         ;; C3 sender: the minter's storage floor
 global cell w_burns;           ;; b -> PendingBurn
+global int w_refusals_count;   ;; entries in w_refusals
 global cell w_refusals;        ;; query id -> refused amount
 
 () load_data() impure inline {
@@ -49,6 +51,7 @@ global cell w_refusals;        ;; query id -> refused amount
     w_master = ds~load_msg_addr();
     w_code = ds~load_ref();
     slice ss = ds~load_ref().begin_parse();
+    w_refusals_count = ds~load_uint(16);
     w_refusals = ds~load_dict();
     ds.end_parse();
     w_born = ss~load_uint(64);
@@ -84,6 +87,7 @@ global cell w_refusals;        ;; query id -> refused amount
             .store_uint(w_burn_ack, 64)
             .store_dict(w_burns)
             .end_cell())
+        .store_uint(w_refusals_count, 16)
         .store_dict(w_refusals)
         .end_cell());
 }
@@ -231,9 +235,9 @@ global cell w_refusals;        ;; query id -> refused amount
 ;; S on reported_transfer: twice the most either engine measured at the largest
 ;; body each admits (token_bridge/reported.rs). Changing any is a wallet code
 ;; change.
-const int R_GAS_LIMIT = 40000;
-const int S_BOUNCE_GAS = 98000;
-const int S_TRANSFER_GAS = 132000;
+const int R_GAS_LIMIT = 41000;
+const int S_BOUNCE_GAS = 58000;
+const int S_TRANSFER_GAS = 127000;
 
 ;; The most cells S's body to R may have, the forward payload included. S's
 ;; compute grows with them (it measures the body and its message to price
@@ -241,6 +245,21 @@ const int S_TRANSFER_GAS = 132000;
 ;; raises S's gas limit: SETGASLIMIT would let a short message spend S's own
 ;; balance, and the cap keeps S's compute paid from P's message alone.
 const int REPORTED_BODY_CELLS = 256;
+
+;; The factor by which R's budget may be priced: R runs after S, at whatever
+;; prices hold then, so R's compute, its bounce and its action fine are priced
+;; at REPORT_MARGIN times the prices S sees. Gas and forwarding prices may rise
+;; by less than this between the legs and every transfer still ends, delivered
+;; or refused. The payer's report funding uses the same margin. What R does not
+;; spend goes back as the excess.
+const int REPORT_MARGIN = 10;
+
+;; The most refusals a wallet records. S refuses a new reported transfer while
+;; it holds this many, and a refusal that arrives when it does (a transfer
+;; already in flight) restores the tokens and is reported, but not recorded.
+;; This bounds the wallet's state: the worst case is counted in
+;; WALLET_WORST_CELLS (settlement.fc).
+const int REFUSALS_LIMIT = 32;
 
 ;; addr_std$10, no anycast, workchain 0, and nothing else.
 int canonical_basechain?(slice addr) inline {
@@ -279,21 +298,22 @@ int reported_compute_fee(int wallet_gas_consumption) inline {
 ;; The value a reported_transfer must exceed, priced from the network:
 ;;   the forward and report amounts;
 ;;   forwarding S's message to R, and R's bounce of it, which carries at most
-;;   32 + 256 bits;
-;;   R's compute;
+;;   32 + 256 bits (the bounce at REPORT_MARGIN times the price);
+;;   R's compute, at REPORT_MARGIN times the price;
 ;;   S's own compute, which comes out of the value before mode 64 passes the
 ;;   rest to R, so that R's budget never depends on the storage reserve;
 ;;   the largest action fine R can incur: a failed send is fined per cell of
 ;;   every message R built, and R builds at most the notification (no more
-;;   cells than S's body), transfer_delivered (one) and the excess (none);
+;;   cells than S's body), transfer_delivered (one) and the excess (none),
+;;   at REPORT_MARGIN times the price;
 ;;   the storage reserve R keeps.
 int reported_need(cell msg, int body_cells, int report_tos_amount, int forward_tos_amount, int wallet_min_tos_for_storage, int wallet_gas_consumption) inline {
   return forward_tos_amount + report_tos_amount
           + fee_of(msg, false)
-          + get_forward_fee(false, 32 + 256, 1)
-          + reported_compute_fee(wallet_gas_consumption)
+          + REPORT_MARGIN * get_forward_fee(false, 32 + 256, 1)
+          + REPORT_MARGIN * reported_compute_fee(wallet_gas_consumption)
           + get_compute_fee(false, S_TRANSFER_GAS)
-          + get_forward_fee(false, 0, body_cells + 2)
+          + REPORT_MARGIN * get_forward_fee(false, 0, body_cells + 2)
           + wallet_min_tos_for_storage;
 }
 
@@ -312,6 +332,7 @@ int reported_need(cell msg, int body_cells, int report_tos_amount, int forward_t
   throw_unless(error::malformed_forward_payload, slice_bits(in_msg_body) >= 1);
   (_, int recorded) = w_refusals.udict_get?(64, query_id);
   throw_if(error::refusal_pending, recorded);
+  throw_unless(error::refusals_full, w_refusals_count < REFUSALS_LIMIT);
 
   (cell msg, cell msg_body) = reported_message(query_id, token_amount, to_owner_address, response_address,
                                                report_tos_amount, forward_tos_amount, in_msg_body);
@@ -389,13 +410,13 @@ int reported_need(cell msg, int body_cells, int report_tos_amount, int forward_t
   save_data();
 }
 
-() send_refused(int query_id, int token_amount, int mode) impure inline {
+() send_refused(int op, int query_id, int token_amount, int mode) impure inline {
   send_raw_message(begin_cell()
           .store_msg_flags(NON_BOUNCEABLE)
           .store_slice(w_owner)
           .store_coins(0)
           .store_msgbody_prefix_slice()
-          .store_body_header(op::transfer_refused, query_id)
+          .store_body_header(op, query_id)
           .store_coins(token_amount)
           .end_cell(), mode);
 }
@@ -410,7 +431,8 @@ int reported_bounce?(slice body) inline {
 ;; S, on R's refusal. The gas limit was raised to S_BOUNCE_GAS, paid from S's own
 ;; balance where the bounce is short: a bounce cannot be forged and returns only
 ;; to the sender, so each one answers a debit S made, once. The restore and the
-;; record commit even when the report cannot be sent.
+;; record commit even when the report cannot be sent. Nothing here throws, and
+;; the state grows by at most one entry below REFUSALS_LIMIT.
 () on_reported_bounce(slice in_msg_body) impure {
   in_msg_body~skip_bits(32 + 32);
   int query_id = in_msg_body~load_query_id();
@@ -420,20 +442,25 @@ int reported_bounce?(slice body) inline {
   ;; keeps the total refused under it, while each report names its own amount.
   ;; The total cannot pass MAX_SUPPLY, since every amount was in this balance;
   ;; if it ever did, the first record would stay rather than the handler throw.
-  int recorded = token_amount;
+  ;; At REFUSALS_LIMIT a new query id is not recorded: the tokens are back and
+  ;; the report below still goes out, but it cannot be repeated.
   (slice prior, int found) = w_refusals.udict_get?(64, query_id);
   if (found) {
     int earlier = prior~load_coins();
     int total = earlier + token_amount;
-    recorded = total <= MAX_SUPPLY ? total : earlier;
+    int recorded = total <= MAX_SUPPLY ? total : earlier;
+    w_refusals~udict_set_builder(64, query_id, begin_cell().store_coins(recorded));
+  } elseif (w_refusals_count < REFUSALS_LIMIT) {
+    w_refusals~udict_set_builder(64, query_id, begin_cell().store_coins(token_amount));
+    w_refusals_count += 1;
   }
-  w_refusals~udict_set_builder(64, query_id, begin_cell().store_coins(recorded));
   save_data();
-  send_refused(query_id, token_amount, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE + SEND_MODE_IGNORE_ERRORS);
+  send_refused(op::transfer_refused, query_id, token_amount, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE + SEND_MODE_IGNORE_ERRORS);
 }
 
-;; Anyone may fund a repeat of a recorded refusal. A failure to send it fails
-;; the transaction and keeps the record.
+;; Anyone may fund a repeat of a recorded refusal, sent as transfer_rereported
+;; with the recorded total, so the owner can tell it from a new refusal. A
+;; failure to send it fails the transaction and keeps the record.
 () on_rereport_refusal(slice in_msg_body) impure {
   int query_id = in_msg_body~load_query_id();
   in_msg_body.end_parse();
@@ -441,14 +468,17 @@ int reported_bounce?(slice body) inline {
   if (~ found) {
     return ();
   }
-  send_refused(query_id, entry~load_coins(), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+  send_refused(op::transfer_rereported, query_id, entry~load_coins(), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
 }
 
 () on_clear_refusal(slice in_msg_body, slice sender_address) impure {
   int query_id = in_msg_body~load_query_id();
   in_msg_body.end_parse();
   throw_unless(error::unauthorized_transfer, equal_slices(w_owner, sender_address));
-  (w_refusals, _) = w_refusals.udict_delete?(64, query_id);
+  (w_refusals, int deleted) = w_refusals.udict_delete?(64, query_id);
+  if (deleted) {
+    w_refusals_count -= 1;
+  }
   save_data();
 }
 
@@ -1063,13 +1093,7 @@ int get_refusal(int query_id) method_id {
 
 int get_refusals_count() method_id {
   load_data();
-  int n = 0;
-  (int k, _, int found) = w_refusals.udict_get_min?(64);
-  while (found) {
-    n += 1;
-    (k, _, found) = w_refusals.udict_get_next?(64, k);
-  }
-  return n;
+  return w_refusals_count;
 }
 
 ;; The value a reported_transfer with this body must exceed at the current

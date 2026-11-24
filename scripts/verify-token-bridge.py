@@ -143,6 +143,9 @@ def verify_tvm_sources() -> None:
             "throw_unless(error::not_canonical_destination, canonical_basechain?(to_owner_address));",
             "throw_if(error::refusal_pending, recorded);",
             "throw_unless(error::payload_too_large, fits);",
+            "throw_unless(error::refusals_full, w_refusals_count < REFUSALS_LIMIT);",
+            "} elseif (w_refusals_count < REFUSALS_LIMIT) {",
+            "const int REPORT_MARGIN = 10;",
             "recorded = total <= MAX_SUPPLY ? total : earlier;",
             "return max(get_compute_fee(false, R_GAS_LIMIT), wallet_gas_consumption);",
             "+ wallet_min_tos_for_storage;",
@@ -270,6 +273,7 @@ REPORTED_OPCODES = {
     "op::internal_transfer_reported": "0x52544931",
     "op::transfer_delivered": "0x52544431",
     "op::transfer_refused": "0x52544631",
+    "op::transfer_rereported": "0x52545232",
     "op::rereport_refusal": "0x52545131",
     "op::clear_refusal": "0x52544331",
     "op::provide_balance": "0x52544231",
@@ -371,10 +375,10 @@ def verify_reported_transfers(contracts: Path) -> None:
     for term in (
         "forward_tos_amount + report_tos_amount",
         "fee_of(msg, false)",
-        "get_forward_fee(false, 32 + 256, 1)",
-        "reported_compute_fee(wallet_gas_consumption)",
+        "REPORT_MARGIN * get_forward_fee(false, 32 + 256, 1)",
+        "REPORT_MARGIN * reported_compute_fee(wallet_gas_consumption)",
         "get_compute_fee(false, S_TRANSFER_GAS)",
-        "get_forward_fee(false, 0, body_cells + 2)",
+        "REPORT_MARGIN * get_forward_fee(false, 0, body_cells + 2)",
         "wallet_min_tos_for_storage",
     ):
         if term not in need:

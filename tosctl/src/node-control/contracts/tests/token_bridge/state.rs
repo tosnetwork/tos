@@ -266,6 +266,7 @@ pub struct WalletData {
     pub next_burn: u64,
     pub burn_ack: u64,
     pub burns: Option<Cell>,
+    pub refusals_count: u16,
     /// query id -> refused amount
     pub refusals: Option<Cell>,
 }
@@ -289,6 +290,7 @@ impl WalletData {
         let next_burn = t.get_next_u64().unwrap();
         let burn_ack = t.get_next_u64().unwrap();
         let burns = dict_of(&mut t);
+        let refusals_count = s.get_next_u16().unwrap();
         let refusals = dict_of(&mut s);
         Self {
             balance,
@@ -306,6 +308,7 @@ impl WalletData {
             next_burn,
             burn_ack,
             burns,
+            refusals_count,
             refusals,
         }
     }
@@ -330,6 +333,7 @@ impl WalletData {
                 store_dict(t, &self.burns);
             }))
             .unwrap();
+            b.append_u16(self.refusals_count).unwrap();
             store_dict(b, &self.refusals);
         })
     }

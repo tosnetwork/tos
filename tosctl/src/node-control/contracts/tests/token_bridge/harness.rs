@@ -52,6 +52,7 @@ pub const OP_REPORTED_TRANSFER: u32 = 0x5254_5231;
 pub const OP_INTERNAL_TRANSFER_REPORTED: u32 = 0x5254_4931;
 pub const OP_TRANSFER_DELIVERED: u32 = 0x5254_4431;
 pub const OP_TRANSFER_REFUSED: u32 = 0x5254_4631;
+pub const OP_TRANSFER_REREPORTED: u32 = 0x5254_5232;
 pub const OP_REREPORT_REFUSAL: u32 = 0x5254_5131;
 pub const OP_CLEAR_REFUSAL: u32 = 0x5254_4331;
 pub const OP_PROVIDE_BALANCE: u32 = 0x5254_4231;
@@ -1766,6 +1767,7 @@ pub fn wallet_state_init(minter: &MsgAddressInt, owner: &MsgAddressInt) -> State
             s.append_bit_zero().unwrap();
         }))
         .unwrap();
+        b.append_raw(&[0u8; 2], 16).unwrap(); // refusals_count
         b.append_bit_zero().unwrap(); // refusals
     });
     StateInit::with_code_and_data(codes().wallet.clone(), data)

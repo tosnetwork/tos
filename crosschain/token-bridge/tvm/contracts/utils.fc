@@ -18,8 +18,9 @@ cell empty_wallet_settlement() inline {
             .end_cell();
 }
 
-;; The last field is the wallet's recorded refusals of reported transfers,
-;; refusals:(HashmapE 64 Coins) keyed by query id, empty when it is created.
+;; The last fields are the wallet's recorded refusals of reported transfers,
+;; refusals_count:uint16 refusals:(HashmapE 64 Coins) keyed by query id, none
+;; when it is created.
 cell pack_token_wallet_data(int balance, slice owner_address, slice token_master_address, cell token_wallet_code) inline {
     return  begin_cell()
             .store_coins(balance)
@@ -27,6 +28,7 @@ cell pack_token_wallet_data(int balance, slice owner_address, slice token_master
             .store_slice(token_master_address)
             .store_ref(token_wallet_code)
             .store_ref(empty_wallet_settlement())
+            .store_uint(0, 16)
             .store_dict(null())
             .end_cell();
 }

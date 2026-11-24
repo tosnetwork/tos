@@ -17,7 +17,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use chain_block::{Coins, Deserializable, Message, MsgAddressInt, SliceData};
+use chain_block::{Coins, Deserializable, HashmapType, Message, MsgAddressInt, SliceData};
 
 use crate::harness::*;
 
@@ -515,10 +515,19 @@ impl Model {
                 e.1 + e.2 <= e.0,
                 "I10: reported transfer {query_id} ended more often than it was sent"
             );
-            let total = self.refusal_records.entry((wallet.clone(), query_id)).or_insert(0);
-            *total += amount as i128;
             let recorded = net.get(&d.addr, "get_refusal", vec![int_arg(query_id)]).int_at(0);
-            assert_eq!(recorded, *total, "I10: the refusal of {query_id} is recorded");
+            let limit = declared("REFUSALS_LIMIT") as usize;
+            let known = self.refusal_records.contains_key(&(wallet.clone(), query_id));
+            if recorded < 0 && !known {
+                // at the limit a new query id restores the tokens unrecorded
+                assert!(b.refusals >= limit, "I10: the refusal of {query_id} is recorded");
+                assert_eq!(a.refusals, b.refusals, "I10: nothing is recorded at the limit");
+            } else {
+                let total = self.refusal_records.entry((wallet.clone(), query_id)).or_insert(0);
+                *total += amount as i128;
+                assert_eq!(recorded, *total, "I10: the refusal of {query_id} is recorded");
+            }
+            assert!(a.refusals <= limit, "I10: no more than REFUSALS_LIMIT refusals are recorded");
             return;
         }
         match op {
@@ -1110,6 +1119,18 @@ pub fn wallet_snap(net: &Net, addr: &MsgAddressInt) -> WalletSnap {
     }
     let credits_above = net.get(addr, "get_credits_above_count", vec![]).int_at(0) as usize;
     let refusals = net.get(addr, "get_refusals_count", vec![]).int_at(0) as usize;
+    // I11: the stored counter counts the recorded refusals
+    let stored = net.bc.get_account(addr).and_then(|a| a.get_data()).expect("a wallet's data");
+    let w = crate::state::WalletData::parse(&stored);
+    let mut entries = 0usize;
+    chain_block::HashmapE::with_hashmap(64, w.refusals.clone())
+        .iterate_slices(|_, _| {
+            entries += 1;
+            Ok(true)
+        })
+        .expect("the refusals");
+    assert_eq!(refusals, entries, "I11: the refusal counter counts the records");
+    assert_eq!(w.refusals_count as usize, entries, "I11: the stored counter counts the records");
     WalletSnap {
         balance: data.int_at(0),
         born: st.int_at(0),

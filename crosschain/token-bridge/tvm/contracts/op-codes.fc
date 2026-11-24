@@ -13,6 +13,7 @@ const int op::reported_transfer = 0x52545231;           ;; P -> S
 const int op::internal_transfer_reported = 0x52544931;  ;; S -> R
 const int op::transfer_delivered = 0x52544431;          ;; R -> P
 const int op::transfer_refused = 0x52544631;            ;; S -> P
+const int op::transfer_rereported = 0x52545232;         ;; S -> P
 const int op::rereport_refusal = 0x52545131;            ;; anyone -> S
 const int op::clear_refusal = 0x52544331;               ;; P -> S
 const int op::provide_balance = 0x52544231;             ;; P -> S

@@ -107,7 +107,8 @@ fn bounce_legs(net: &Net, from: usize) -> Vec<Transaction> {
 /// (query id, amount) of a transfer_refused.
 fn refused_fields(m: &Message) -> (u64, u128) {
     let mut s = m.body().expect("a body").clone();
-    assert_eq!(s.get_next_u32().unwrap(), OP_TRANSFER_REFUSED);
+    let op = s.get_next_u32().unwrap();
+    assert!(op == OP_TRANSFER_REFUSED || op == OP_TRANSFER_REREPORTED, "a refusal report");
     let query_id = s.get_next_u64().unwrap();
     let amount = Coins::construct_from(&mut s).unwrap().as_u128();
     (query_id, amount)
@@ -401,26 +402,31 @@ fn t_r2_a_short_bounce_is_paid_from_the_paying_wallet() {
     let start = net.delivered.len();
     succeeded(&net.send(msg));
     assert_eq!(
-        refused_fields(&sent_to(&net, start, &p, OP_TRANSFER_REFUSED)[0]),
+        refused_fields(&sent_to(&net, start, &p, OP_TRANSFER_REREPORTED)[0]),
         (r.query_id, 100)
     );
     assert_every_reported_transfer_ended(&net);
 }
 
-/// Fills `owner`'s refusals so that `key` sits under a fork at every one of
-/// its 64 bits: the keys `key xor 2^i`. A refusal of `key` then walks and
-/// rebuilds 64 forks.
+/// Replaces `owner`'s refusals with the deepest shape around `key` that
+/// REFUSALS_LIMIT allows: the keys `key xor 2^i` for every i below the limit
+/// less one, so a refusal of `key` walks and rebuilds a fork for each, and
+/// brings the wallet to its limit.
 fn fill_refusals_deep(net: &mut Net, owner: &MsgAddressInt, key: u64) {
+    let others = declared_u64("REFUSALS_LIMIT") - 1;
     net.patch_wallet(owner, |w| {
-        let mut d = HashmapE::with_hashmap(64, w.refusals.clone());
+        let mut d = HashmapE::with_bit_len(64);
         let value = SliceData::load_cell(cell(|b| coins(b, 1))).unwrap();
-        for i in 0..64 {
+        for i in 0..others {
             let mut k = BuilderData::new();
             k.append_u64(key ^ (1u64 << i)).unwrap();
             d.set(SliceData::load_builder(k).unwrap(), &value).unwrap();
         }
         w.refusals = d.data().cloned();
+        w.refusals_count = others as u16;
     });
+    let wallet = account_hash(&net.wallet_of(owner));
+    net.model.refusal_records.retain(|(w, _), _| *w != wallet);
 }
 
 /// T-R2: with no storage reserve in ConfigParam 79 and no bridge gas, an R
@@ -476,6 +482,7 @@ fn t_r2_a_second_refusal_under_one_query_id_adds_to_the_record() {
     net.configure();
     assert_eq!(net.tokens(&p), 1_000, "both amounts are back at S");
     assert_eq!(net.refusal(&p, 95), 130, "the record keeps both refusals");
+    assert_eq!(net.refusals_count(&p), 1, "one record, one count");
     let mut reports: Vec<(u64, u128)> =
         sent_to(&net, start, &p, OP_TRANSFER_REFUSED).iter().map(refused_fields).collect();
     reports.sort();
@@ -483,10 +490,11 @@ fn t_r2_a_second_refusal_under_one_query_id_adds_to_the_record() {
     let start = net.delivered.len();
     let msg = net.wallet_query(net.stranger.address(), &p, OP_REREPORT_REFUSAL, 95, TOS);
     succeeded(&net.send(msg));
-    assert_eq!(refused_fields(&sent_to(&net, start, &p, OP_TRANSFER_REFUSED)[0]), (95, 130));
+    assert_eq!(refused_fields(&sent_to(&net, start, &p, OP_TRANSFER_REREPORTED)[0]), (95, 130));
     let msg = net.wallet_query(&p, &p, OP_CLEAR_REFUSAL, 95, TOS);
     succeeded(&net.send(msg));
     assert_eq!(net.refusal(&p, 95), -1, "clearing removes the whole record");
+    assert_eq!(net.refusals_count(&p), 0, "and its count");
     assert_every_reported_transfer_ended(&net);
 }
 
@@ -684,14 +692,16 @@ fn need_from_terms(net: &Net, sent: &Message, r: &Reported) -> u128 {
     }
     let (cells, bits) = n;
     let (body_cells, _) = size_of(&body);
-    let compute = gas_fee(net, declared_u64("R_GAS_LIMIT")).max(net.wallet_gas.into())
+    // R's compute, its bounce and its fine at REPORT_MARGIN times the price
+    let margin = declared("REPORT_MARGIN") as u128;
+    let compute = margin * gas_fee(net, declared_u64("R_GAS_LIMIT")).max(net.wallet_gas.into())
         + gas_fee(net, declared_u64("S_TRANSFER_GAS"));
     r.forward_tos_amount
         + r.report_tos_amount
         + fwd_fee(net, bits, cells)
-        + fwd_fee(net, 32 + 256, 1)
+        + margin * fwd_fee(net, 32 + 256, 1)
         + compute
-        + fwd_fee(net, 0, body_cells + 2)
+        + margin * fwd_fee(net, 0, body_cells + 2)
         + u128::from(net.wallet_min_storage)
 }
 
@@ -714,7 +724,7 @@ fn t_r5_a_low_bridge_gas_price_cannot_underfund_the_recipient() {
     assert!(network > 1, "the network price of R_GAS_LIMIT is above the mis-set bridge gas");
     assert_eq!(
         configured - low,
-        u128::from(TOS / 50) - network,
+        declared("REPORT_MARGIN") as u128 * (u128::from(TOS / 50) - network),
         "the network-priced compute term replaces the mis-set bridge gas"
     );
     let start = net.delivered.len();
@@ -787,6 +797,54 @@ fn t_r6_a_price_rise_within_the_report_margin_is_absorbed() {
     assert_every_reported_transfer_ended(&net);
 }
 
+/// T-R6: the same rise with nothing in ConfigParam 79 to absorb it: no storage
+/// reserve, no bridge gas and no report value, at exactly the need and to a
+/// fresh R. R's compute, its bounce and its action fine are priced with
+/// REPORT_MARGIN, so up to that factor every transfer still ends, delivered or
+/// refused, and no token is lost.
+#[test]
+fn t_r6_a_rise_within_the_margin_ends_every_transfer_without_a_reserve() {
+    let mut net = minted();
+    let p = net.user(0);
+    net.wallet_min_storage = 0;
+    net.wallet_gas = 0;
+    net.configure();
+    for (i, factor) in [7u64, 8, 9].into_iter().enumerate() {
+        let fresh = MsgAddressInt::with_params(0, UInt256::from([0x60 + i as u8; 32])).unwrap();
+        let r = Reported { report_tos_amount: 0, ..Reported::to(&fresh, 101 + i as u64, 10) };
+        let start = with_prices_raised(&mut net, &p, &r, factor);
+        let delivered = sent_to(&net, start, &p, OP_TRANSFER_DELIVERED).len();
+        let refused = net.refusal(&p, r.query_id) >= 0;
+        assert_eq!(
+            usize::from(refused) + delivered,
+            1,
+            "at {factor} times the prices the transfer ends once"
+        );
+    }
+    assert_every_reported_transfer_ended(&net);
+}
+
+/// T-R6: just beyond the margin, with no reserve, no bridge gas and no report
+/// value. R spends at most half of R_GAS_LIMIT, so at 11 times the prices it
+/// still delivers and the tokens are conserved. The guarantee stops at the
+/// margin: SETTLEMENT-PROTOCOL.md section 20.7 records where, measured, a
+/// transfer stops ending (30 times the prices without a reserve).
+#[test]
+fn t_r6_just_beyond_the_margin_without_a_reserve_it_still_delivers() {
+    let mut net = minted();
+    let p = net.user(0);
+    net.wallet_min_storage = 0;
+    net.wallet_gas = 0;
+    net.configure();
+    let factor = REPORT_MARGIN as u64 + 1;
+    let fresh = MsgAddressInt::with_params(0, UInt256::from([0x6f; 32])).unwrap();
+    let r = Reported { report_tos_amount: 0, ..Reported::to(&fresh, 111, 10) };
+    let start = with_prices_raised(&mut net, &p, &r, factor);
+    assert_eq!(sent_to(&net, start, &p, OP_TRANSFER_DELIVERED).len(), 1, "R still delivers");
+    assert_eq!(net.tokens(&fresh), 10, "the tokens moved once");
+    assert_every_reported_transfer_ended(&net);
+}
+
 /// T-R6: a rise beyond REPORT_MARGIN. R itself is still funded by its margins
 /// (R_GAS_LIMIT is twice its use, and the storage reserve), so it delivers and
 /// the tokens are conserved, but the report no longer pays for the payer's
@@ -846,9 +904,13 @@ fn t_r7_rereport_clear_and_a_duplicate_query_id() {
     let msg = net.wallet_query(&stranger, &p, OP_REREPORT_REFUSAL, 41, TOS);
     let tx = net.send(msg);
     succeeded(&tx);
-    let refused = sent_to(&net, start, &p, OP_TRANSFER_REFUSED);
+    let refused = sent_to(&net, start, &p, OP_TRANSFER_REREPORTED);
     assert_eq!(refused.len(), 1, "the refusal is reported again");
     assert_eq!(refused_fields(&refused[0]), (41, 200));
+    assert!(
+        sent_to(&net, start, &p, OP_TRANSFER_REFUSED).is_empty(),
+        "a re-report is not a new refusal"
+    );
     assert_eq!(net.refusal(&p, 41), 200, "a re-report keeps the record");
     // a re-report that pays for its compute but not for the report's
     // forwarding fails in its action phase and keeps the record
@@ -864,7 +926,7 @@ fn t_r7_rereport_clear_and_a_duplicate_query_id() {
     let msg = net.wallet_query(&stranger, &p, OP_REREPORT_REFUSAL, 99, TOS);
     succeeded(&net.send(msg));
     assert!(
-        sent_to(&net, start, &p, OP_TRANSFER_REFUSED).is_empty(),
+        sent_to(&net, start, &p, OP_TRANSFER_REREPORTED).is_empty(),
         "a re-report of an unknown query sends nothing"
     );
     // only the owner clears
@@ -883,7 +945,7 @@ fn t_r7_rereport_clear_and_a_duplicate_query_id() {
     let msg = net.wallet_query(&stranger, &p, OP_REREPORT_REFUSAL, 41, TOS);
     succeeded(&net.send(msg));
     assert!(
-        sent_to(&net, start, &p, OP_TRANSFER_REFUSED).is_empty(),
+        sent_to(&net, start, &p, OP_TRANSFER_REREPORTED).is_empty(),
         "a cleared refusal is not reported"
     );
     // the query id is free again
@@ -1125,9 +1187,9 @@ fn t_r11_gas_per_leg_is_within_its_constants() {
             fill_refusals_deep(&mut net, &p, query_id);
             let start = net.delivered.len();
             refuse_at_r(&mut net, &p, &Reported { query_id, ..r.clone() });
-            // S's own leg, looking the query id up 64 forks deep
+            // S's own leg, looking the query id up at the deepest path the limit allows
             note("S reported_transfer", &legs(&net, start, OP_REPORTED_TRANSFER)[0]);
-            note("S bounce (refusals 64 forks deep)", &bounce_legs(&net, start)[0]);
+            note("S bounce (refusals at the limit, 31 forks deep)", &bounce_legs(&net, start)[0]);
             let msg = net.wallet_query(&z, &p, OP_REREPORT_REFUSAL, query_id, TOS);
             let start = net.delivered.len();
             succeeded(&net.send(msg));
@@ -1178,7 +1240,8 @@ fn t_r11_gas_per_leg_is_within_its_constants() {
         2 * t_max <= declared_u64("S_TRANSFER_GAS"),
         "S_TRANSFER_GAS is at least twice S's most"
     );
-    let s_max = seen["S bounce (refusals 64 forks deep)"].max(seen["S bounce (refusals empty)"]);
+    let s_max = seen["S bounce (refusals at the limit, 31 forks deep)"]
+        .max(seen["S bounce (refusals empty)"]);
     eprintln!("T-R11 R_GAS_LIMIT {} for R at most {r_max}", declared("R_GAS_LIMIT"));
     eprintln!("T-R11 S_BOUNCE_GAS {} for the bounce at most {s_max}", declared("S_BOUNCE_GAS"));
     assert!(2 * r_max <= declared_u64("R_GAS_LIMIT"), "R_GAS_LIMIT is at least twice R's most");
@@ -1188,8 +1251,8 @@ fn t_r11_gas_per_leg_is_within_its_constants() {
     );
     let reserve = u128::from(net.wallet_min_storage);
     assert!(
-        gas_fee(&net, declared_u64("S_BOUNCE_GAS")) <= reserve,
-        "the storage reserve covers S_BOUNCE_GAS"
+        declared("REPORT_MARGIN") as u128 * gas_fee(&net, declared_u64("S_BOUNCE_GAS")) <= reserve,
+        "the storage reserve covers S_BOUNCE_GAS at REPORT_MARGIN times the gas price"
     );
     assert!(
         gas_fee(&net, seen["S reported_transfer"]) <= reserve,
@@ -1270,6 +1333,12 @@ fn t_r13_a_failed_ordinary_notification_returns_the_tokens() {
     assert!(!o.action_ok, "the notification fails in R's action phase");
     assert!(o.bounced, "the failed notification bounces the transfer");
     assert_eq!((net.tokens(&p), net.tokens(&q)), (1_000, 0), "the tokens are back at the sender");
+    // an ordinary transfer's bounce is not a reported refusal
+    assert_eq!(net.refusals_count(&p), 0, "an ordinary bounce records no refusal");
+    assert!(
+        sent_to(&net, start, &p, OP_TRANSFER_REFUSED).is_empty(),
+        "an ordinary bounce sends no transfer_refused"
+    );
 }
 
 /// T-R14: the largest body S admits, REPORTED_BODY_CELLS cells, is delivered
@@ -1308,6 +1377,54 @@ fn t_r14_the_largest_payload_is_delivered_and_one_cell_more_is_refused() {
     assert_every_reported_transfer_ended(&net);
 }
 
+/// T-R15: the refusal limit. With REFUSALS_LIMIT records S refuses a new
+/// reported transfer (714). A transfer already in flight when the limit is
+/// reached is still refused cleanly: its tokens come back and its report goes
+/// out, but no record is kept. Clearing one record admits a transfer again, and
+/// its refusal is recorded. The counter follows every step (I11).
+#[test]
+fn t_r15_the_refusal_limit_bounds_the_records_and_loses_no_token() {
+    let mut net = minted();
+    let p = net.user(0);
+    let q = net.user(1);
+    let limit = declared("REFUSALS_LIMIT");
+    fill_refusals_deep(&mut net, &p, 0x7700_0000_0000_0000);
+    assert_eq!(net.refusals_count(&p), limit - 1, "one below the limit");
+    // two transfers in flight, both admitted below the limit, both refused
+    let start = net.delivered.len();
+    for (query_id, amount) in [(201u64, 40u128), (202, 60)] {
+        let r = Reported::to(&q, query_id, amount);
+        let need = net.reported_need(&p, &r);
+        let msg = net.reported_message(&p, &p, &r, need + 1);
+        succeeded(&net.send_one(msg));
+    }
+    net.remove_config();
+    net.settle();
+    net.configure();
+    assert_eq!(net.tokens(&p), 1_000, "both refused transfers are back at S");
+    assert_eq!(net.refusals_count(&p), limit, "the first refusal reaches the limit");
+    assert_eq!(net.refusal(&p, 201), 40, "the first is recorded");
+    assert_eq!(net.refusal(&p, 202), -1, "the one at the limit is not recorded");
+    let mut reports: Vec<(u64, u128)> =
+        sent_to(&net, start, &p, OP_TRANSFER_REFUSED).iter().map(refused_fields).collect();
+    reports.sort();
+    assert_eq!(reports, vec![(201, 40), (202, 60)], "both are reported");
+    // at the limit S refuses new reported transfers
+    let start = net.delivered.len();
+    let tx = send_funded(&mut net, &p, &Reported::to(&q, 203, 10));
+    refused_with(&tx, err("refusals_full"));
+    assert_eq!(bounced_to(&net, start, &p), 1, "the refusal bounces to P");
+    // clearing one admits a transfer again, and its refusal is recorded
+    let msg = net.wallet_query(&p, &p, OP_CLEAR_REFUSAL, 201, TOS);
+    succeeded(&net.send(msg));
+    assert_eq!(net.refusals_count(&p), limit - 1, "clearing counts down");
+    refuse_at_r(&mut net, &p, &Reported::to(&q, 204, 25));
+    assert_eq!(net.refusal(&p, 204), 25, "a refusal after clearing is recorded");
+    assert_eq!(net.refusals_count(&p), limit, "and counted");
+    assert_eq!(net.tokens(&p), 1_000, "no token is lost");
+    assert_every_reported_transfer_ended(&net);
+}
+
 /// The opcodes the suite uses are the ones op-codes.fc declares.
 #[test]
 fn t_r_opcodes_match_the_sources() {
@@ -1316,6 +1433,7 @@ fn t_r_opcodes_match_the_sources() {
         ("op::internal_transfer_reported", OP_INTERNAL_TRANSFER_REPORTED),
         ("op::transfer_delivered", OP_TRANSFER_DELIVERED),
         ("op::transfer_refused", OP_TRANSFER_REFUSED),
+        ("op::transfer_rereported", OP_TRANSFER_REREPORTED),
         ("op::rereport_refusal", OP_REREPORT_REFUSAL),
         ("op::clear_refusal", OP_CLEAR_REFUSAL),
         ("op::provide_balance", OP_PROVIDE_BALANCE),
@@ -1324,5 +1442,10 @@ fn t_r_opcodes_match_the_sources() {
     ] {
         assert_eq!(declared(name), i128::from(value), "{name}");
     }
+    assert_eq!(
+        declared("REPORT_MARGIN"),
+        REPORT_MARGIN as i128,
+        "the wallet prices R with the payer's report margin"
+    );
     let _ = ReportedBody::of;
 }

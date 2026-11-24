@@ -203,6 +203,10 @@ fn worst(s: &Samples, holders: u64, channels: u64) -> Worst {
     let mut w = WalletData::parse(&data_of(net, &net.wallet_of(&user)));
     w.credits_above = full64(0, window("CREDIT_WINDOW"), &s.wallet_credit);
     w.burns = full64(0, window("HOLDER_BURN_WINDOW"), &s.wallet_burn);
+    // every refusal the wallet may record, each at the largest amount
+    let refusal = SliceData::load_cell(cell(|b| coins(b, MAX_SUPPLY))).unwrap();
+    w.refusals = full64(0, window("REFUSALS_LIMIT"), &refusal);
+    w.refusals_count = window("REFUSALS_LIMIT") as u16;
     let wallet = w.build();
     let wallet_bound = bound(&code_of(net, &net.wallet_of(&user)), &wallet);
 

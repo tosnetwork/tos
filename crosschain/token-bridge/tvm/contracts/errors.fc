@@ -30,6 +30,8 @@ const int error::refusal_pending = 712;
 ;; A reported transfer's body to the recipient's wallet, forward payload
 ;; included, has more than REPORTED_BODY_CELLS cells.
 const int error::payload_too_large = 713;
+;; A reported transfer while the wallet holds REFUSALS_LIMIT recorded refusals.
+const int error::refusals_full = 714;
 
 ;; token minter errors
 const int error::discovery_fee_not_matched = 75;

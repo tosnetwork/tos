@@ -129,18 +129,17 @@ const int HOLDER_LIMIT = 1000;       ;; holders one minter serves
 ;; Worst-case state sizes, measured by the sandbox's T-G test on the compiled
 ;; contracts with every window full, every record at its largest, an old life
 ;; held in full and no cell shared between records:
-;;   wallet 142 cells; bridge 925 cells at 8 channels (58 per channel), under
-;;   the 2048-cell non-special masterchain limit; minter 374 cells plus 63 per
-;;   holder, 63374 at 1000 holders, under the 65536-cell basechain limit.
+;;   wallet 206 cells, REFUSALS_LIMIT recorded refusals included; bridge 929
+;;   cells at 8 channels (58 per channel), under the 2048-cell non-special
+;;   masterchain limit; minter 378 cells plus 63 per holder, 63378 at 1000
+;;   holders, under the 65536-cell basechain limit.
 ;; Measured with the reported-transfer wallet by the sandbox test
 ;; t_g_worst_case_cells_fit_the_declared_bound_and_the_account_limit, which
-;; fails if a later state exceeds these constants. The wallet's recorded
-;; refusals are not part of this bound: only the owner's own reported
-;; transfers create them and only the owner clears them (token-wallet.fc).
+;; fails if a later state exceeds these constants.
 ;; HOLDER_LIMIT is the largest round number of holders that fits.
 const int BRIDGE_WORST_CELLS = 1000;
 const int MINTER_WORST_CELLS = 64000;
-const int WALLET_WORST_CELLS = 160;
+const int WALLET_WORST_CELLS = 256;
 
 ;; Balances each contract keeps for its own storage.
 const int WALLET_RESERVE = 50000000;      ;; 0.05
@@ -157,7 +156,7 @@ const int WALLET_STEP_GAS = 40000;
 ;; 256 bits. The sandbox measures every step on that shape (token_bridge/deep.rs).
 const int MINTER_STEP_GAS = 300000;
 ;; The dearest bridge step is an advance of a mint, which prices the recipient
-;; wallet's StateInit: 70648 gas in the sandbox suite with the reported-transfer
+;; wallet's StateInit: 71202 gas in the sandbox suite with the reported-transfer
 ;; wallet code.
 const int BRIDGE_STEP_GAS = 80000;
 ;; An oracle vote at the bridge: a swap vote that deploys a minter computes
