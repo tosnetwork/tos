@@ -45,3 +45,7 @@ mod payouts;
 mod ported;
 #[path = "service_actor_token/surplus.rs"]
 mod surplus;
+#[path = "service_actor_token/capacity.rs"]
+mod capacity;
+#[path = "service_actor_token/mutations.rs"]
+mod mutations;

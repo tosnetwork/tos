@@ -40,6 +40,7 @@
 ;;   withdrawable_tos_revenue:Coins locked_storage_fees:Coins
 ;;   locked_outcome_fees:Coins call_day:uint32 calls_today:uint32
 ;;   revenue_payouts_in_flight:uint8 returned_count:uint32
+;;   returns_in_flight:uint16 surplus_payouts_in_flight:uint8
 ;;   ^TokenLedger ^BalanceQuery ^AssetRoute
 ;; TokenLedger (token atomic units):
 ;;   pending_liability:Coins refundable_liability:Coins returned_liability:Coins
@@ -238,7 +239,28 @@ const int MIN_RESPONSE_SLA = 3600; ;; 1 hour
 const int MAX_RESPONSE_SLA = 2592000; ;; 30 days
 const int MIN_REFUND_CLAIM_WINDOW = 3600; ;; 1 hour
 const int MAX_REFUND_CLAIM_WINDOW = 2592000; ;; 30 days
-const int MAX_LIVE_GLOBAL = 100000;
+;; ---- The state bound ---------------------------------------------------------
+;; A basechain account holds at most ConfigParam 43's max_acc_state_cells
+;; (65,536 at genesis). A state over it fails the action phase, and a failed
+;; notification leaves its tokens unattributed, so every structure that grows
+;; is capped, and the caps keep the worst state at 80% of the limit (52,428):
+;;
+;;   base                                     <= 320 (code, policy, attestor key, route)
+;;   live entry, being swept, with its counter     9 cells x MAX_LIVE_GLOBAL
+;;   returned entry, being paid, with its counter 10 cells x (MAX_RETURNED_GLOBAL
+;;                                                  + MAX_LIVE_GLOBAL + MAX_RETURNS_IN_FLIGHT)
+;;   funding return in flight                      5 cells x MAX_RETURNS_IN_FLIGHT
+;;   owner payout in flight                        5 cells x (4 revenue + 4 surplus)
+;;   one notification in flight                   10
+;;
+;;   320 + 9 x 1,500 + 10 x 3,512 + 5 x 512 + 40 + 10 = 51,550 <= 52,428
+;;
+;; A returned entry can outnumber MAX_RETURNED_GLOBAL by the live entries and
+;; funding returns refused in flight; the bound counts those as both, which
+;; over-counts. Each dictionary entry adds at most two cells (a leaf and a fork)
+;; whatever the dictionary's shape. tests/service_actor_token/capacity.rs builds
+;; this worst state with every cell distinct and counts it: 46,969 cells.
+const int MAX_LIVE_GLOBAL = 1500;
 const int MAX_LIVE_PER_CALLER = 1000;
 
 ;; The actor's own compute for a payout-creating op, and for the balance-query
@@ -248,7 +270,7 @@ const int PAYOUT_GAS_ALLOWANCE = 200000000; ;; 0.2 TOS
 ;; Returned entries: they do not hold live-capacity slots, and admission stops
 ;; for a caller, or for everyone, at these caps (accepting_tokens).
 const int MAX_RETURNED_PER_CALLER = 16;
-const int MAX_RETURNED_GLOBAL = 10000;
+const int MAX_RETURNED_GLOBAL = 1500;
 ;; How long a returned entry waits for its caller before anyone may sweep it
 ;; to that caller, and how long a buyer payout waits before anyone may
 ;; recheck it and an owner payout before its owner may abandon it.
@@ -259,6 +281,10 @@ const int PAYOUT_ABANDON_AGE = 2592000; ;; 30 days
 const int RECHECK_QUERY_TTL = 3600;
 ;; At most this many revenue payouts are in flight at once.
 const int MAX_REVENUE_PAYOUTS = 4;
+;; At most this many surplus payouts, and this many funding returns, are in
+;; flight at once (see the state bound above).
+const int MAX_SURPLUS_PAYOUTS = 4;
+const int MAX_RETURNS_IN_FLIGHT = 512;
 ;; The "no cap" value of max_token_liability and max_liability_per_actor.
 const int NO_TOKEN_CAP = 1329227995784915872903807060280344575; ;; 2^120 - 1
 
@@ -309,6 +335,8 @@ global int call_day;
 global int calls_today;
 global int revenue_payouts_in_flight;
 global int returned_count;
+global int returns_in_flight;
+global int surplus_payouts_in_flight;
 global int pending_liability;
 global int refundable_liability;
 global int returned_liability;
@@ -345,6 +373,8 @@ cell slice_ref_at(slice s, int i) asm "PLDREFVAR";
   calls_today = as_~load_uint(32);
   revenue_payouts_in_flight = as_~load_uint(8);
   returned_count = as_~load_uint(32);
+  returns_in_flight = as_~load_uint(16);
+  surplus_payouts_in_flight = as_~load_uint(8);
   slice ts = as_~load_ref().begin_parse();
   query_cell = as_~load_ref();
   route_cell = as_~load_ref();
@@ -381,6 +411,8 @@ cell slice_ref_at(slice s, int i) asm "PLDREFVAR";
     .store_uint(calls_today, 32)
     .store_uint(revenue_payouts_in_flight, 8)
     .store_uint(returned_count, 32)
+    .store_uint(returns_in_flight, 16)
+    .store_uint(surplus_payouts_in_flight, 8)
     .store_ref(token)
     .store_ref(query_cell)
     .store_ref(route_cell)
@@ -1042,6 +1074,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     return 0;
   }
   if (kind == kind::funding_return) {
+    returns_in_flight -= 1;
     if (outcome != outcome::delivered) {
       add_returned(id, recipient, amount);
     }
@@ -1067,6 +1100,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     return 0;
   }
   ;; kind::surplus: the amount is back with the surplus unless delivered.
+  surplus_payouts_in_flight -= 1;
   return 0;
 }
 
@@ -1235,6 +1269,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
         result = 0;
         (payout_id, int lock) = create_payout(kind::surplus, 0, owner, q_requester, q_amount,
           own_wallet, undo_cell(source::none, null()));
+        surplus_payouts_in_flight += 1;
         save_state();
         send_log(begin_cell().store_uint(log::balance, 32).store_uint(query_id, 64)
           .store_uint(q_purpose, 1).store_uint(q_target, 64).store_coins(balance)
@@ -1470,13 +1505,16 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
 
     ;; Refused: the tokens go back to their sender as a funding return, paid
     ;; from its RETURN_BUDGET. No cap applies to it.
-    if ((amount <= 0) | (next_payout_id >= (1 << 64) - 1)) {
-      ;; No token to return, or no payout id left: nothing is stored.
+    if ((amount <= 0) | (next_payout_id >= (1 << 64) - 1)
+        | (returns_in_flight >= MAX_RETURNS_IN_FLIGHT)) {
+      ;; No token to return, no payout id left, or MAX_RETURNS_IN_FLIGHT returns
+      ;; already unresolved: nothing is stored, and the log names the reason.
       emit_funding(query_id, from, amount, reason, 0, 1);
       return ();
     }
     (int payout_id, int lock) = create_payout(kind::funding_return, 0, from, from, amount,
       own_wallet, undo_cell(source::none, null()));
+    returns_in_flight += 1;
     save_state();
     emit_funding(query_id, from, amount, reason, payout_id, 1);
     send_payout(payout_id, amount, from, from, own_wallet, backing + lock);
@@ -1781,6 +1819,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     int amount = in_msg~load_coins();
     in_msg.end_parse();
     throw_unless(err::surplus_insufficient, amount > 0);
+    throw_unless(err::payout_in_flight, surplus_payouts_in_flight < MAX_SURPLUS_PAYOUTS);
     throw_unless(err::invalid_destination, canonical_basechain?(owner));
     (int q_active, _, _, int q_created_at, _, _, _, _, _) = unpack_query();
     throw_if(err::balance_query_busy, q_active & (now() < q_created_at + RECHECK_QUERY_TTL));
@@ -1836,10 +1875,11 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     next_payout_id);
 }
 
-(int, int, int, int, int, int, int) get_native_ledger() method_id {
+(int, int, int, int, int, int, int, int, int) get_native_ledger() method_id {
   load_state();
   return (withdrawable_tos_revenue, locked_storage_fees, locked_outcome_fees, call_day,
-    calls_today, revenue_payouts_in_flight, returned_count);
+    calls_today, revenue_payouts_in_flight, returned_count, returns_in_flight,
+    surplus_payouts_in_flight);
 }
 
 (int, int, int, int, int) get_token_ledger() method_id {

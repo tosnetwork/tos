@@ -316,6 +316,8 @@ impl World {
             calls_today: r.int_at(4) as u32,
             revenue_payouts_in_flight: r.int_at(5) as u32,
             returned_count: r.int_at(6) as u32,
+            returns_in_flight: r.int_at(7) as u32,
+            surplus_payouts_in_flight: r.int_at(8) as u32,
         }
     }
 
@@ -750,6 +752,8 @@ pub struct ActorData {
     pub calls_today: u32,
     pub revenue_payouts_in_flight: u8,
     pub returned_count: u32,
+    pub returns_in_flight: u16,
+    pub surplus_payouts_in_flight: u8,
     /// pending, refundable, returned, in_flight, token revenue
     pub token: [u128; 5],
     pub query: Cell,
@@ -795,6 +799,8 @@ impl ActorData {
         let calls_today = a.get_next_u32().unwrap();
         let revenue_payouts_in_flight = a.get_next_byte().unwrap();
         let returned_count = a.get_next_u32().unwrap();
+        let returns_in_flight = a.get_next_u16().unwrap();
+        let surplus_payouts_in_flight = a.get_next_byte().unwrap();
         let mut t = SliceData::load_cell(a.checked_drain_reference().unwrap()).unwrap();
         let token = [c(&mut t), c(&mut t), c(&mut t), c(&mut t), c(&mut t)];
         let query = a.checked_drain_reference().unwrap();
@@ -814,6 +820,8 @@ impl ActorData {
             calls_today,
             revenue_payouts_in_flight,
             returned_count,
+            returns_in_flight,
+            surplus_payouts_in_flight,
             token,
             query,
             route,
@@ -836,6 +844,8 @@ impl ActorData {
             b.append_u32(self.calls_today).unwrap();
             b.append_u8(self.revenue_payouts_in_flight).unwrap();
             b.append_u32(self.returned_count).unwrap();
+            b.append_u16(self.returns_in_flight).unwrap();
+            b.append_u8(self.surplus_payouts_in_flight).unwrap();
             b.checked_append_reference(token).unwrap();
             b.checked_append_reference(self.query.clone()).unwrap();
             b.checked_append_reference(self.route.clone()).unwrap();
