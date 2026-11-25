@@ -315,8 +315,8 @@ transaction and reports the same gas.
 | Constant | Value | Most measured | Bounds |
 | --- | --- | --- | --- |
 | `PRE_ACCEPT_GAS` | 24,000 | 10,026 | an outcome handler up to its `set_gas_limit` |
-| `OUTCOME_HANDLER_GAS` | 300,000 | 117,742 | a whole outcome handler (a refund or sweep refused at R) |
-| `ADMISSION_GAS` | 300,000 | 131,613 | the notification handler, with a 16-entry ConfigParam 84 whose last entry is the actor's master |
+| `OUTCOME_HANDLER_GAS` | 300,000 | 117,865 | a whole outcome handler (a refund or sweep refused at R) |
+| `ADMISSION_GAS` | 300,000 | 146,463 | the notification handler, with a 16-entry ConfigParam 84 whose last entry is the actor's master |
 | `ABSENT_REPORT_GAS` | 20,000 | 8,178 | the answer to a report of an absent payout |
 
 A re-reporter sends `rereport_refusal` to the actor's wallet with at least
@@ -337,14 +337,14 @@ therefore capped, and the caps keep the worst state at 80% of the limit
 
 | Part | Cells each | Count | Cells |
 | --- | --- | --- | --- |
-| base: code, policy, attestor key, route | | | 320 |
+| base: code, policy, attestor key, route | | | 360 |
 | live entry being swept, with its caller's counter | 9 | `MAX_LIVE_GLOBAL` = 1,500 | 13,500 |
 | returned entry being paid, with its caller's counter | 10 | 1,500 + 1,500 + 512 | 35,120 |
 | funding return in flight | 5 | `MAX_RETURNS_IN_FLIGHT` = 512 | 2,560 |
 | owner payout in flight | 5 | 4 revenue + 4 surplus | 40 |
 | attestor key named by pending requests | 15 | `MAX_LIVE_ATTESTOR_KEYS` = 4 | 60 |
 | one notification in flight | | | 10 |
-| total | | | 51,610 |
+| total | | | 51,650 |
 
 The returned count is `MAX_RETURNED_GLOBAL` plus every live entry and funding
 return, because a payout refused in flight still creates its returned entry.
@@ -352,7 +352,7 @@ That over-counts, since a live entry refused in flight stops being live.
 
 Each dictionary entry adds at most two cells, a leaf and a fork, whatever the
 dictionary's shape. `tests/service_actor_token/capacity.rs` builds this worst
-state with every cell distinct and counts it: 47,025 cells. The same file shows
+state with every cell distinct and counts it: 47,046 cells. The same file shows
 three things:
 - a further funding is refused (1907) and returned;
 - with ConfigParam 43 lowered below the bound, the same funding fails;

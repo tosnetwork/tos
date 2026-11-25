@@ -841,6 +841,22 @@ fn conformance_vectors_come_from_contract_execution() {
     let buyer = w.user(0);
     let terms = w.terms_cell();
     let forward = w.call_forward();
+    // The funding prices at the state the funding vectors are taken in, from
+    // get_funding_prices and get_service_data.
+    let funding_prices = |w: &World| {
+        let (min_funding, admission, return_budget, report, lock, payout) = w.prices();
+        serde_json::json!({
+            "storage_fee": w.get("get_service_data", vec![]).int_at(4).to_string(),
+            "min_funding_value": min_funding.to_string(),
+            "admission_gas_allowance": admission.to_string(),
+            "return_budget": return_budget.to_string(),
+            "report_tos_amount": report.to_string(),
+            "outcome_fee_lock": lock.to_string(),
+            "payout_funding": payout.to_string(),
+            "accepting_tokens": w.get("get_accepting_tokens", vec![]).int_at(0) != 0,
+        })
+    };
+    let prices_at_funding = funding_prices(&w);
     let funding = Actor::funding_transfer(
         41,
         PRICE,
@@ -919,6 +935,76 @@ fn conformance_vectors_come_from_contract_execution() {
     outcomes.insert("refund_refused_at_r".into(), serde_json::json!(sao1_refused));
     outcomes.insert("returned_claim_bounced_at_s".into(), serde_json::json!(sao1_bounced));
     outcomes.insert("surplus_delivered".into(), serde_json::json!(sao1_surplus));
+    // A call whose terms carry an attestor, answered by a signed respond. The
+    // ML-DSA-44 signature is hedged, so the vector pins the key, the terms, the
+    // snapshot and the response domain hash, and that the signed respond is
+    // accepted; the signature bytes themselves differ per run.
+    let attestor = Attestor::new([0x5a; 32]);
+    let mut a = World::with(Options {
+        attestor_pubkey: Some(attestor.public_key.clone()),
+        ..Options::default()
+    });
+    let a_deploy = a.net.bc.get_account(&a.actor).unwrap().get_data().unwrap();
+    let a_buyer = a.user(0);
+    let a_terms = a.terms_cell();
+    let a_prices = funding_prices(&a);
+    let a_start = a.fund(&a_buyer, PRICE, a.call_forward(), Some(a.token_call([0xB1; 32])));
+    let a_sat1 = log_bodies(&a, a_start, 0x5341_5431);
+    let a_snapshot = decode_request_snapshot(
+        &chain_block::read_single_root_boc(chain_block::base64_decode(&a_sat1[0]).unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        a_snapshot.terms.attestor_key_id,
+        Some(attestor.key_id()),
+        "the terms carry the attestor"
+    );
+    let (caller, price, rd, cd, rh, th) = request(&a, a_snapshot.request_id);
+    let response_hash = [0xB2; 32];
+    let network = global_id(&a);
+    let domain = contracts::service_respond_domain_hash(
+        network,
+        &a.actor,
+        &caller,
+        a_snapshot.request_id,
+        &rh,
+        &response_hash,
+        &th,
+        price as u64,
+        rd,
+        cd,
+    )
+    .unwrap();
+    let respond =
+        Actor::respond_signed(51, a_snapshot.request_id, response_hash, &attestor.sign(&domain))
+            .unwrap();
+    let a_owner = a.owner.clone();
+    succeeded(&a.op(&a_owner, respond, TOS));
+    assert!(!a.request_exists(a_snapshot.request_id), "the signed respond is accepted");
+    let key_sha256 = {
+        use sha2::{Digest, Sha256};
+        hex32(&Sha256::digest(&attestor.public_key))
+    };
+    let attested = serde_json::json!({
+        "actor": a.actor.to_string(),
+        "attestor_seed_hex": hex32(&[0x5a; 32]),
+        "attestor_key_id": hex32(&attestor.key_id()),
+        "attestor_public_key_sha256": key_sha256,
+        "deploy_data_boc_base64": b64(&a_deploy),
+        "terms_hash": hex32(&a_snapshot.terms_hash),
+        "terms_cell_boc_base64": b64(&a_terms),
+        "funding_prices": a_prices,
+        "sat1": a_sat1,
+        "respond": {
+            "global_id": network,
+            "request_id": a_snapshot.request_id,
+            "response_hash": hex32(&response_hash),
+            "domain_hash": hex32(&domain),
+            "signature_context": String::from_utf8_lossy(contracts::service_actor::SERVICE_ACTOR_RESPOND_CONTEXT),
+            "accepted": true,
+        },
+    });
     let code = Actor::code().unwrap();
     let actual = serde_json::json!({
         "schema": "tos.service.actor.token.v1.vectors",
@@ -941,12 +1027,14 @@ fn conformance_vectors_come_from_contract_execution() {
         "deploy_data_boc_base64": b64(&deploy_data),
         "terms_hash": hex32(&snapshot.terms_hash),
         "terms_cell_boc_base64": b64(&terms),
+        "funding_prices": prices_at_funding,
         "funding_transfer_body_boc_base64": b64(&funding),
         "sat1": sat1,
         "saf1_refused_amount": saf1,
         "saf1_underfunded": saf1_underfunded,
         "sao1": outcomes,
         "sab1_surplus": sab1,
+        "attested": attested,
     });
     if let Ok(path) = std::env::var("SERVICE_ACTOR_TOKEN_VECTORS_OUT") {
         std::fs::write(&path, serde_json::to_string_pretty(&actual).unwrap() + "\n").unwrap();

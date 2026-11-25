@@ -24,6 +24,11 @@ fn deploy_records_initial_state() {
     let master = chain_block::MsgAddressInt::construct_from(&mut r.slice_at(0)).unwrap();
     assert_eq!(master, w.net.minter());
     assert_eq!(r.cell_at(2).repr_hash(), codes().wallet.repr_hash());
+    assert_eq!(
+        w.get("get_bridge_config_param", vec![]).int_at(0),
+        i128::from(CONFIG_PARAM),
+        "the route names the asset's bridge parameter"
+    );
     let own = chain_block::MsgAddressInt::construct_from(
         &mut w.get("get_own_wallet", vec![]).slice_at(0),
     )
