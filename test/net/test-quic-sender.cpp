@@ -799,10 +799,12 @@ class RawQuicTestRunner final : public td::actor::Actor {
 
   // A raw endpoint's port only has to be free: nothing addresses it by number
   // before it exists. The test ports lie inside the operating systems'
-  // dynamic port ranges (from 32768 on Linux, from 49152 on macOS), where
-  // another process's socket can hold one at any moment, and a macOS bind
-  // refuses a UDP port in use even with SO_REUSEADDR. Such a port is skipped
-  // for the next one; any other failure ends the test with its cause.
+  // dynamic port ranges (from 32768 on Linux, from 49152 on macOS), so any
+  // one of them can be held at that moment, usually by another process's
+  // ephemeral socket. Our SO_REUSEADDR does not help: macOS refuses a
+  // wildcard bind of a UDP port another socket holds, and so does Linux when
+  // that socket did not set SO_REUSEADDR itself. Such a port is skipped for
+  // the next one; any other failure ends the test with its cause.
   template <class Callback>
   RawQuicEndpoint bind_raw_endpoint(tos::quic::QuicServer::Options options) {
     constexpr int kMaxAttempts = 16;

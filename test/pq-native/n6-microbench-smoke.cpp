@@ -11,6 +11,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <random>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -142,14 +143,18 @@ struct Operation {
   std::uint64_t verify_calls{};
 };
 
-// Times every operation once per round, in an order that rotates each round, so
-// the samples of all operations are spread over the same wall-clock span. The
-// large-regression bounds compare operations with one another; measured one
-// after the other, each operation's samples came from its own short window, and
-// a slower stretch of the host (a busy neighbour on a shared runner, a move to a
-// slower core) inside one window moved that ratio with no change in the code.
-// Interleaved, such a stretch reaches every operation alike. The verification
-// counter is read around each call, outside its timed span.
+// Times every operation once per round, so the samples of all operations are
+// spread over the same wall-clock span. The large-regression bounds compare
+// operations with one another; measured one after the other, each operation's
+// samples came from its own short window, and a slower stretch of the host (a
+// busy neighbour on a shared runner, a move to a slower core) inside one window
+// moved that ratio with no change in the code. Interleaved, such a stretch
+// reaches every operation alike. Each round runs the operations in a fresh
+// random order (Fisher-Yates over a fixed-seed mt19937, whose output the
+// standard fixes, so every platform runs the same orders), so no operation
+// keeps one position or one predecessor whose cache or frequency state it
+// inherits. The verification counter is read around each call, outside its
+// timed span.
 void measure_interleaved(std::vector<Operation *> operations, std::size_t warmup, std::size_t samples) {
   for (std::size_t i = 0; i < warmup; ++i) {
     for (auto *operation : operations) {
@@ -160,9 +165,13 @@ void measure_interleaved(std::vector<Operation *> operations, std::size_t warmup
   for (auto *operation : operations) {
     operation->elapsed.reserve(samples);
   }
+  std::mt19937 order_rng(0x4e36);
+  auto order = operations;
   for (std::size_t round = 0; round < samples; ++round) {
-    for (std::size_t k = 0; k < operations.size(); ++k) {
-      auto *operation = operations[(round + k) % operations.size()];
+    for (std::size_t i = order.size(); i > 1; --i) {
+      std::swap(order[i - 1], order[order_rng() % i]);
+    }
+    for (auto *operation : order) {
       const auto calls_before = tos::pq::mldsa44_verification_calls_for_test();
       const auto begin = Clock::now();
       operation->run();
