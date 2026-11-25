@@ -43,6 +43,8 @@ mod oracles;
 mod query;
 #[path = "token_bridge/recovery.rs"]
 mod recovery;
+#[path = "token_bridge/reported.rs"]
+mod reported;
 #[path = "token_bridge/source.rs"]
 mod source;
 #[path = "token_bridge/state.rs"]
