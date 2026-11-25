@@ -220,6 +220,7 @@ global cell w_refusals;        ;; query id -> refused amount
     forward_tos_amount:Coins forward_payload:(Either Cell ^Cell)   S -> R
   transfer_delivered query_id:uint64 amount:Coins recipient:MsgAddressInt   R -> P
   transfer_refused query_id:uint64 amount:Coins                             S -> P
+  transfer_rereported query_id:uint64 total:Coins                           S -> P
   rereport_refusal query_id:uint64                                          anyone -> S
   clear_refusal query_id:uint64                                             P -> S
   provide_balance query_id:uint64                                           P -> S

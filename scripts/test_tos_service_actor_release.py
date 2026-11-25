@@ -95,14 +95,29 @@ class FrozenBytes(unittest.TestCase):
         for name, selected in profiles.PROFILES.items():
             with self.subTest(profile=name):
                 artifact = release.decode_base64_file(ROOT / selected["artifact_base64"])
-                self.assertEqual(artifact, release.sdk_code(release.SDK, selected["sdk_constant"]))
+                sdk = release.sdk_code(ROOT / selected["sdk"], selected["sdk_constant"])
+                self.assertEqual(artifact, sdk)
 
-    def test_the_test_artifact_differs_from_the_release_artifact(self):
-        release_boc, test_boc = (
-            release.decode_base64_file(ROOT / profiles.PROFILES[name]["artifact_base64"])
-            for name in (profiles.RELEASE, profiles.TEST)
+    def test_each_test_artifact_differs_from_its_release_artifact(self):
+        self.assertEqual(
+            profiles.TEST_PAIRS,
+            ((profiles.RELEASE, profiles.TEST), (profiles.TOKEN, profiles.TOKEN_TEST)),
         )
-        self.assertNotEqual(release_boc, test_boc)
+        for released, tested in profiles.TEST_PAIRS:
+            release_boc, test_boc = (
+                release.decode_base64_file(ROOT / profiles.PROFILES[name]["artifact_base64"])
+                for name in (released, tested)
+            )
+            with self.subTest(pair=(released, tested)):
+                self.assertNotEqual(release_boc, test_boc)
+
+    def test_each_profile_names_its_rails_contract_and_source(self):
+        for name, selected in profiles.PROFILES.items():
+            with self.subTest(profile=name):
+                fields = release.expected_fields(name)
+                self.assertEqual(fields["source"], selected["source"])
+                self.assertEqual(fields["contract"], selected["contract"])
+        self.assertEqual(profiles.PROFILES[profiles.TOKEN]["source"], profiles.TOKEN_SOURCE)
 
     def test_build_output_must_report_every_pinned_field(self):
         complete = "code_hash=a\nboc_sha256=b\nboc_bytes=1\ncompiler_arguments=-W x\n"
@@ -131,6 +146,17 @@ class TestProfile(unittest.TestCase):
             profiles.TEST_OVERRIDES, {"MIN_RESPONSE_SLA": 600, "MIN_REFUND_CLAIM_WINDOW": 600}
         )
         self.assertEqual(profiles.PROFILES[profiles.RELEASE]["overrides"], {})
+        self.assertEqual(profiles.PROFILES[profiles.TOKEN]["overrides"], {})
+        self.assertEqual(profiles.PROFILES[profiles.TOKEN_TEST]["overrides"], profiles.TEST_OVERRIDES)
+
+    def test_the_token_test_source_differs_from_its_source_in_two_lines(self):
+        with tempfile.TemporaryDirectory() as work:
+            derived = profiles.source_for(profiles.TOKEN_TEST, Path(work)).read_text().splitlines()
+            original = (ROOT / profiles.TOKEN_SOURCE).read_text().splitlines()
+            changed = [(a, b) for a, b in zip(original, derived) if a != b]
+            self.assertEqual(len(original), len(derived))
+            self.assertEqual([a.split(" = ")[0] for a, _ in changed],
+                             ["const int MIN_RESPONSE_SLA", "const int MIN_REFUND_CLAIM_WINDOW"])
 
     def test_only_the_named_values_change(self):
         derived = profiles.apply_overrides(self.SOURCE, profiles.TEST_OVERRIDES)

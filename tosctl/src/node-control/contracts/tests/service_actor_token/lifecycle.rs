@@ -24,8 +24,10 @@ fn deploy_records_initial_state() {
     let master = chain_block::MsgAddressInt::construct_from(&mut r.slice_at(0)).unwrap();
     assert_eq!(master, w.net.minter());
     assert_eq!(r.cell_at(2).repr_hash(), codes().wallet.repr_hash());
-    let own = chain_block::MsgAddressInt::construct_from(&mut w.get("get_own_wallet", vec![]).slice_at(0))
-        .unwrap();
+    let own = chain_block::MsgAddressInt::construct_from(
+        &mut w.get("get_own_wallet", vec![]).slice_at(0),
+    )
+    .unwrap();
     assert_eq!(own, w.wallet(), "the actor derives its own wallet as the bridge does");
     assert_eq!(
         Actor::token_wallet_address(&w.actor, &w.init.route).unwrap(),
@@ -103,4 +105,3 @@ fn an_expired_request_is_refunded_to_the_claimed_destination() {
     assert_eq!(w.native().locked_storage_fees, 0);
     assert_eq!(w.native().withdrawable_revenue, STORAGE_FEE - BOUNTY);
 }
-

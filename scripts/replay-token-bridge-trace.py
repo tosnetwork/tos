@@ -203,7 +203,9 @@ def outgoing(tx: Cell) -> list[dict]:
             read_int_address(m)
             destination = m.uint(2)
             assert destination in (0, 1), "an external or absent destination"
-            topic = None
+            # An absent destination is recorded as the empty topic, as the
+            # sandbox recorder writes it (token_bridge/harness.rs).
+            topic = ""
             if destination == 1:
                 length = m.uint(9)
                 topic = f"{m.uint(length):0{length // 4}x}"

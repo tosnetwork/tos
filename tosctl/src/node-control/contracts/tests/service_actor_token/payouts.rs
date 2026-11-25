@@ -69,7 +69,8 @@ pub fn prepare(w: &mut World, kind: u8) -> Case {
             let id = w.call(&buyer);
             w.advance(SLA + WINDOW);
             let stranger = w.net.stranger.address().clone();
-            let msg = w.op_message(&stranger, Actor::sweep_expired_request(2, id).unwrap(), funding);
+            let msg =
+                w.op_message(&stranger, Actor::sweep_expired_request(2, id).unwrap(), funding);
             Case { msg, kind, amount: PRICE, recipient: buyer, source: id }
         }
         kind::REVENUE => {
@@ -80,12 +81,14 @@ pub fn prepare(w: &mut World, kind: u8) -> Case {
             Case { msg, kind, amount: PRICE, recipient: owner, source: 0 }
         }
         kind::FUNDING_RETURN => {
-            let msg = w.funding_message(&buyer, PRICE + 5, w.call_forward(), Some(w.token_call([2; 32])));
+            let msg =
+                w.funding_message(&buyer, PRICE + 5, w.call_forward(), Some(w.token_call([2; 32])));
             Case { msg, kind, amount: PRICE + 5, recipient: buyer, source: 0 }
         }
         kind::RETURNED_CLAIM => {
             let entry = returned_entry(w, &buyer);
-            let msg = w.op_message(&buyer, Actor::claim_returned(3, entry, &dest).unwrap(), funding);
+            let msg =
+                w.op_message(&buyer, Actor::claim_returned(3, entry, &dest).unwrap(), funding);
             Case { msg, kind, amount: PRICE, recipient: dest, source: entry }
         }
         kind::RETURNED_SWEEP => {
@@ -123,7 +126,10 @@ pub fn run(w: &mut World, case: Case, way: Way) {
     };
     let what = format!("kind {} {:?}", case.kind, way);
     for d in w.actor_txs_since(start) {
-        assert!(!outcome(&d.tx).aborted || label_of(&d.msg) == "empty", "{what}: an actor step failed");
+        assert!(
+            !outcome(&d.tx).aborted || label_of(&d.msg) == "empty",
+            "{what}: an actor step failed"
+        );
     }
     let outcomes = w.outcome_logs_since(start);
     assert_eq!(outcomes.len(), 1, "{what}: one outcome: {outcomes:?}");
@@ -291,10 +297,13 @@ fn claim_destinations_are_validated() {
     let anycast = {
         let mut a = w.user(1);
         if let MsgAddressInt::AddrStd(ref mut s) = a {
-            s.anycast = Some(chain_block::AnycastInfo::with_rewrite_pfx(
-                chain_block::SliceData::from_raw(vec![0x80], 1),
-            )
-            .unwrap());
+            s.anycast = Some(
+                chain_block::AnycastInfo::with_rewrite_pfx(chain_block::SliceData::from_raw(
+                    vec![0x80],
+                    1,
+                ))
+                .unwrap(),
+            );
         }
         a
     };
@@ -335,11 +344,20 @@ fn claim_destinations_are_validated() {
     refused_with(&tx, err::INVALID_DESTINATION);
     // Claims by another caller, and of an absent entry.
     let other = w.user(1);
-    refused_with(&w.op(&other, Actor::claim_returned(1, entry, &other).unwrap(), funding), err::NOT_REFUND_CALLER);
-    refused_with(&w.op(&buyer, Actor::claim_returned(1, 999, &buyer).unwrap(), funding), err::RETURNED_NOT_FOUND);
+    refused_with(
+        &w.op(&other, Actor::claim_returned(1, entry, &other).unwrap(), funding),
+        err::NOT_REFUND_CALLER,
+    );
+    refused_with(
+        &w.op(&buyer, Actor::claim_returned(1, 999, &buyer).unwrap(), funding),
+        err::RETURNED_NOT_FOUND,
+    );
     // A claimer off workchain 0.
     let mc = MsgAddressInt::with_params(-1, buyer.address().clone()).unwrap();
-    refused_with(&w.op(&mc, Actor::claim_returned(1, entry, &buyer).unwrap(), funding), err::INVALID_DESTINATION);
+    refused_with(
+        &w.op(&mc, Actor::claim_returned(1, entry, &buyer).unwrap(), funding),
+        err::INVALID_DESTINATION,
+    );
 }
 
 #[test]
@@ -349,13 +367,23 @@ fn a_returned_entry_is_swept_to_its_caller_after_its_deadline() {
     let entry = returned_entry(&mut w, &buyer);
     let funding = w.payout_funding();
     let stranger = w.net.stranger.address().clone();
-    refused_with(&w.op(&stranger, Actor::sweep_returned(1, entry).unwrap(), funding), err::SWEEP_TOO_EARLY);
+    refused_with(
+        &w.op(&stranger, Actor::sweep_returned(1, entry).unwrap(), funding),
+        err::SWEEP_TOO_EARLY,
+    );
     w.advance(MONTH);
     let before = (w.tokens(&buyer), w.tokens(&stranger));
     succeeded(&w.op(&stranger, Actor::sweep_returned(2, entry).unwrap(), funding));
-    assert_eq!((w.tokens(&buyer), w.tokens(&stranger)), (before.0 + PRICE, before.1), "to the caller, never the sweeper");
+    assert_eq!(
+        (w.tokens(&buyer), w.tokens(&stranger)),
+        (before.0 + PRICE, before.1),
+        "to the caller, never the sweeper"
+    );
     assert!(w.returned(entry).is_none());
-    refused_with(&w.op(&stranger, Actor::sweep_returned(3, entry).unwrap(), funding), err::RETURNED_NOT_FOUND);
+    refused_with(
+        &w.op(&stranger, Actor::sweep_returned(3, entry).unwrap(), funding),
+        err::RETURNED_NOT_FOUND,
+    );
 }
 
 #[test]
@@ -376,7 +404,10 @@ fn a_refused_funding_return_becomes_a_returned_entry_claimed_double_claimed_and_
     assert_eq!(w.returned(id).unwrap().paying, 0);
     let first = w.op_one(&buyer, Actor::claim_returned(2, id, &buyer).unwrap(), funding);
     succeeded(&first.tx);
-    refused_with(&w.op_one(&buyer, Actor::claim_returned(3, id, &buyer).unwrap(), funding).tx, err::PAYOUT_IN_FLIGHT);
+    refused_with(
+        &w.op_one(&buyer, Actor::claim_returned(3, id, &buyer).unwrap(), funding).tx,
+        err::PAYOUT_IN_FLIGHT,
+    );
     // The first claim bounces at S: still the buyer's.
     let wallet = w.wallet();
     w.deliver_until(|m| body_op(m) == Some(OP_REPORTED_TRANSFER) && m.dst_ref() == Some(&wallet));
@@ -398,7 +429,8 @@ fn returned_entries_stop_admission_at_the_per_caller_cap() {
     let mut w = World::new();
     let buyer = w.user(0);
     for _ in 0..protocol_constants::MAX_RETURNED_PER_CALLER {
-        let msg = w.funding_message(&buyer, PRICE + 1, w.call_forward(), Some(w.token_call([1; 32])));
+        let msg =
+            w.funding_message(&buyer, PRICE + 1, w.call_forward(), Some(w.token_call([1; 32])));
         w.refusing_at_r(msg, false);
     }
     assert_eq!(w.caller_returned(&buyer), protocol_constants::MAX_RETURNED_PER_CALLER);
@@ -425,7 +457,8 @@ fn rereport(w: &mut World, query_id: u64) -> usize {
     let start = w.net.delivered.len();
     let stranger = w.net.stranger.address().clone();
     let funding = w.get("get_rereport_funding", vec![]).int_at(0) as u64;
-    let msg = w.net.wallet_query(&stranger, &w.actor.clone(), OP_REREPORT_REFUSAL, query_id, funding);
+    let msg =
+        w.net.wallet_query(&stranger, &w.actor.clone(), OP_REREPORT_REFUSAL, query_id, funding);
     w.send(msg);
     start
 }
@@ -467,7 +500,10 @@ fn a_rereport_or_refusal_of_an_absent_payout_is_answered_with_clear_refusal_only
     let txs = w.actor_txs_since(start);
     assert_eq!(txs.len(), 1, "the re-report reaches the actor, not the catch-all");
     succeeded(&txs[0].tx);
-    assert!(txs[0].outs.iter().any(|m| body_op(m) == Some(OP_CLEAR_REFUSAL)), "answered with clear_refusal");
+    assert!(
+        txs[0].outs.iter().any(|m| body_op(m) == Some(OP_CLEAR_REFUSAL)),
+        "answered with clear_refusal"
+    );
     assert_eq!(w.data_hash(), data, "no state changed");
     assert_eq!(w.refusals(), 2, "the stale record is cleared");
     w.gas.get("52545232").copied().expect("the absent-payout re-report handler ran");
@@ -499,8 +535,11 @@ fn a_rereport_with_another_total_is_logged_and_clears_nothing() {
         let mut m = HashmapE::with_bit_len(64);
         let mut k = BuilderData::new();
         k.append_u64(payout).unwrap();
-        m.set(SliceData::load_builder(k).unwrap(), &SliceData::load_cell(cell(|b| coins(b, PRICE + 7))).unwrap())
-            .unwrap();
+        m.set(
+            SliceData::load_builder(k).unwrap(),
+            &SliceData::load_cell(cell(|b| coins(b, PRICE + 7))).unwrap(),
+        )
+        .unwrap();
         d.refusals = m.data().cloned();
         d.refusals_count = 1;
     });
@@ -551,7 +590,8 @@ fn no_permanent_halt_funded_rereports_clear_every_record_and_payouts_resume() {
     // 32 funding returns refused at R, every report lost: S is full.
     let mut ids = Vec::new();
     for i in 0..32u8 {
-        let msg = w.funding_message(&buyer, PRICE + 1, w.call_forward(), Some(w.token_call([i; 32])));
+        let msg =
+            w.funding_message(&buyer, PRICE + 1, w.call_forward(), Some(w.token_call([i; 32])));
         let start = w.refusing_at_r(msg, true);
         ids.push(w.funding_logs_since(start)[0].payout_id);
     }
@@ -603,7 +643,10 @@ fn an_unrecorded_refusal_at_the_limit_with_a_lost_report_stays_paying_and_owner_
     assert_eq!(w.refusals(), 32, "the refusal was not recorded");
     assert_eq!(w.actor_tokens(), PRICE, "the tokens are back at S");
     // Kind 3 recovers through abandon_payout, then surplus.
-    refused_with(&w.op(&owner, Actor::abandon_payout(1, payout).unwrap(), TOS), err::ABANDON_TOO_EARLY);
+    refused_with(
+        &w.op(&owner, Actor::abandon_payout(1, payout).unwrap(), TOS),
+        err::ABANDON_TOO_EARLY,
+    );
     w.advance(MONTH);
     succeeded(&w.op(&owner, Actor::abandon_payout(1, payout).unwrap(), TOS));
     assert!(w.payout(payout).is_none());

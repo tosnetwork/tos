@@ -33,9 +33,15 @@ mod state;
 #[path = "service_actor_token/world.rs"]
 mod world;
 
-#[path = "service_actor_token/lifecycle.rs"]
-mod lifecycle;
 #[path = "service_actor_token/funding.rs"]
 mod funding;
+#[path = "service_actor_token/gas.rs"]
+mod gas;
+#[path = "service_actor_token/lifecycle.rs"]
+mod lifecycle;
 #[path = "service_actor_token/payouts.rs"]
 mod payouts;
+#[path = "service_actor_token/ported.rs"]
+mod ported;
+#[path = "service_actor_token/surplus.rs"]
+mod surplus;

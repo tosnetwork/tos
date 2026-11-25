@@ -184,7 +184,9 @@ impl World {
         };
         let code = match &options.code {
             Some(code) => code.clone(),
-            None => ServiceActorTokenContract::code_for(options.profile).expect("the embedded code"),
+            None => {
+                ServiceActorTokenContract::code_for(options.profile).expect("the embedded code")
+            }
         };
         let data = rewrite(ServiceActorTokenContract::build_data(&init).expect("deploy data"));
         let state_init = StateInit::with_code_and_data(code.clone(), data);
@@ -371,7 +373,8 @@ impl World {
         if r.int_at(0) == 0 {
             return None;
         }
-        let addr = |i: usize| MsgAddressInt::construct_from(&mut r.slice_at(i)).expect("an address");
+        let addr =
+            |i: usize| MsgAddressInt::construct_from(&mut r.slice_at(i)).expect("an address");
         Some(PayoutData {
             kind: r.int_at(1) as u8,
             request_id: r.int_at(2) as u64,
@@ -558,13 +561,15 @@ impl World {
     /// `from` sends `body` to the actor with `value`, bounceable, and everything
     /// it causes runs. Returns the actor's transaction.
     pub fn op(&mut self, from: &MsgAddressInt, body: Cell, value: u64) -> chain_block::Transaction {
-        let msg = MessageBuilder::internal(from, &self.actor, value).bounce(true).body(body).build();
+        let msg =
+            MessageBuilder::internal(from, &self.actor, value).bounce(true).body(body).build();
         self.send(msg)
     }
 
     /// The same, but only the actor's own transaction runs.
     pub fn op_one(&mut self, from: &MsgAddressInt, body: Cell, value: u64) -> Delivery {
-        let msg = MessageBuilder::internal(from, &self.actor, value).bounce(true).body(body).build();
+        let msg =
+            MessageBuilder::internal(from, &self.actor, value).bounce(true).body(body).build();
         self.execute(msg)
     }
 
@@ -623,9 +628,19 @@ impl World {
     /// A fully funded call at the published terms; returns its request id.
     pub fn call(&mut self, buyer: &MsgAddressInt) -> u64 {
         let (next, ..) = self.counters();
-        let start = self.fund(buyer, self.init.price_per_call, self.call_forward(), Some(self.token_call([7; 32])));
+        let start = self.fund(
+            buyer,
+            self.init.price_per_call,
+            self.call_forward(),
+            Some(self.token_call([7; 32])),
+        );
         let snapshots = self.snapshots_since(start);
-        assert_eq!(snapshots.len(), 1, "the call was admitted: {:?}", self.funding_logs_since(start));
+        assert_eq!(
+            snapshots.len(),
+            1,
+            "the call was admitted: {:?}",
+            self.funding_logs_since(start)
+        );
         assert_eq!(snapshots[0].request_id, next);
         next
     }
@@ -908,7 +923,8 @@ impl World {
         let start = self.net.delivered.len();
         self.execute(msg);
         self.deliver_until(|m| {
-            body_op(m) == Some(OP_INTERNAL_TRANSFER_REPORTED) && !m.int_header().is_some_and(|h| h.bounced)
+            body_op(m) == Some(OP_INTERNAL_TRANSFER_REPORTED)
+                && !m.int_header().is_some_and(|h| h.bounced)
         });
         self.net.remove_config();
         self.deliver_one();

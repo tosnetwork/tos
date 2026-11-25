@@ -10,8 +10,8 @@
 //! stranded.
 
 use chain_block::{
-    Cell, Deserializable, IBitstring, MsgAddressInt, Serializable, SettlementAssetStatus, StateInit,
-    UInt256,
+    Cell, Deserializable, IBitstring, MsgAddressInt, Serializable, SettlementAssetStatus,
+    StateInit, UInt256,
 };
 use contracts::service_actor_token::{
     ServiceActorTokenContract as Actor, err, kind, outcome, protocol_constants,
@@ -45,7 +45,8 @@ fn refused_call(w: &mut World, reason: i32) {
     let buyer = w.user(0);
     let before = w.tokens(&buyer);
     let ledger = w.ledger();
-    let start = w.fund(&buyer, w.init.price_per_call, w.call_forward(), Some(w.token_call([3; 32])));
+    let start =
+        w.fund(&buyer, w.init.price_per_call, w.call_forward(), Some(w.token_call([3; 32])));
     assert_returned(w, start, &buyer, before, reason);
     assert_eq!(w.ledger(), ledger, "the ledger is as before");
     assert_eq!(w.native().locked_outcome_fees, 0, "the return's lock is released");
@@ -104,7 +105,8 @@ fn a_foreign_tokens_notification_returns_them_to_their_sender() {
         b.append_bit_one().unwrap();
         b.checked_append_reference(w.token_call([1; 32])).unwrap();
     });
-    let msg = MessageBuilder::internal(&buyer, &buyer_wallet, 2 * TOS).bounce(true).body(body).build();
+    let msg =
+        MessageBuilder::internal(&buyer, &buyer_wallet, 2 * TOS).bounce(true).body(body).build();
     let start = w.net.delivered.len();
     w.send(msg);
     assert_eq!(w.data_hash(), data, "a foreign notification changes no state");
@@ -146,24 +148,36 @@ fn underfunded_and_forwardless_transfers_store_nothing_and_become_surplus() {
 fn a_malformed_payload_takes_the_refusal_path_without_a_throw() {
     let cases: Vec<(&str, Option<Cell>)> = vec![
         ("no payload", None),
-        ("another tag", Some(cell(|b| {
-            b.append_u32(0x5354_4399).unwrap();
-            b.append_raw(&[0u8; 64], 512).unwrap();
-        }))),
-        ("too short", Some(cell(|b| {
-            b.append_u32(0x5354_4301).unwrap();
-            b.append_raw(&[0u8; 32], 256).unwrap();
-        }))),
-        ("trailing bits", Some(cell(|b| {
-            b.append_u32(0x5354_4301).unwrap();
-            b.append_raw(&[0u8; 64], 512).unwrap();
-            b.append_bit_one().unwrap();
-        }))),
-        ("a trailing reference", Some(cell(|b| {
-            b.append_u32(0x5354_4301).unwrap();
-            b.append_raw(&[0u8; 64], 512).unwrap();
-            b.checked_append_reference(Cell::default()).unwrap();
-        }))),
+        (
+            "another tag",
+            Some(cell(|b| {
+                b.append_u32(0x5354_4399).unwrap();
+                b.append_raw(&[0u8; 64], 512).unwrap();
+            })),
+        ),
+        (
+            "too short",
+            Some(cell(|b| {
+                b.append_u32(0x5354_4301).unwrap();
+                b.append_raw(&[0u8; 32], 256).unwrap();
+            })),
+        ),
+        (
+            "trailing bits",
+            Some(cell(|b| {
+                b.append_u32(0x5354_4301).unwrap();
+                b.append_raw(&[0u8; 64], 512).unwrap();
+                b.append_bit_one().unwrap();
+            })),
+        ),
+        (
+            "a trailing reference",
+            Some(cell(|b| {
+                b.append_u32(0x5354_4301).unwrap();
+                b.append_raw(&[0u8; 64], 512).unwrap();
+                b.checked_append_reference(Cell::default()).unwrap();
+            })),
+        ),
     ];
     for (name, payload) in cases {
         let mut w = World::new();
@@ -208,19 +222,28 @@ fn an_absent_or_malformed_configparam_84_takes_the_refusal_path() {
     let malformed: Vec<(&str, Option<Cell>)> = vec![
         ("absent", None),
         ("empty cell", Some(Cell::default())),
-        ("another tag", Some(cell(|b| {
-            b.append_u8(2).unwrap();
-            b.append_bit_zero().unwrap();
-        }))),
-        ("trailing bits", Some(cell(|b| {
-            b.append_u8(1).unwrap();
-            b.append_bit_zero().unwrap();
-            b.append_bit_one().unwrap();
-        }))),
-        ("no entries", Some(cell(|b| {
-            b.append_u8(1).unwrap();
-            b.append_bit_zero().unwrap();
-        }))),
+        (
+            "another tag",
+            Some(cell(|b| {
+                b.append_u8(2).unwrap();
+                b.append_bit_zero().unwrap();
+            })),
+        ),
+        (
+            "trailing bits",
+            Some(cell(|b| {
+                b.append_u8(1).unwrap();
+                b.append_bit_zero().unwrap();
+                b.append_bit_one().unwrap();
+            })),
+        ),
+        (
+            "no entries",
+            Some(cell(|b| {
+                b.append_u8(1).unwrap();
+                b.append_bit_zero().unwrap();
+            })),
+        ),
     ];
     for (name, value) in malformed {
         let mut w = World::new();
@@ -236,8 +259,11 @@ fn an_absent_or_malformed_configparam_84_takes_the_refusal_path() {
         let mut d = HashmapE::with_bit_len(256);
         let mut leaf = chain_block::BuilderData::new();
         tweak(&mut leaf);
-        d.set(SliceData::from_raw(master.as_slice().to_vec(), 256), &SliceData::load_builder(leaf).unwrap())
-            .unwrap();
+        d.set(
+            SliceData::from_raw(master.as_slice().to_vec(), 256),
+            &SliceData::load_builder(leaf).unwrap(),
+        )
+        .unwrap();
         let _ = w;
         cell(|b| {
             b.append_u8(1).unwrap();
@@ -245,7 +271,8 @@ fn an_absent_or_malformed_configparam_84_takes_the_refusal_path() {
             b.checked_append_reference(d.data().cloned().unwrap()).unwrap();
         })
     };
-    let good = w.asset_record(SettlementAssetStatus::Active, protocol_constants::NO_TOKEN_CAP, None);
+    let good =
+        w.asset_record(SettlementAssetStatus::Active, protocol_constants::NO_TOKEN_CAP, None);
     let good_cell = {
         let mut b = chain_block::BuilderData::new();
         good.write_to(&mut b).unwrap();
@@ -253,17 +280,23 @@ fn an_absent_or_malformed_configparam_84_takes_the_refusal_path() {
     };
     let bits = |c: &Cell| chain_block::SliceData::load_cell(c.clone()).unwrap();
     for (name, tweak) in [
-        ("truncated", Box::new(|b: &mut chain_block::BuilderData| {
-            b.append_u8(1).unwrap();
-            b.append_u8(1).unwrap();
-        }) as Box<dyn Fn(&mut chain_block::BuilderData)>),
-        ("bad status 9", Box::new(|b: &mut chain_block::BuilderData| {
-            let mut s = bits(&good_cell);
-            s.get_next_bits(16).unwrap();
-            b.append_u8(1).unwrap();
-            b.append_u8(9).unwrap();
-            b.append_bytestring(&s).unwrap();
-        })),
+        (
+            "truncated",
+            Box::new(|b: &mut chain_block::BuilderData| {
+                b.append_u8(1).unwrap();
+                b.append_u8(1).unwrap();
+            }) as Box<dyn Fn(&mut chain_block::BuilderData)>,
+        ),
+        (
+            "bad status 9",
+            Box::new(|b: &mut chain_block::BuilderData| {
+                let mut s = bits(&good_cell);
+                s.get_next_bits(16).unwrap();
+                b.append_u8(1).unwrap();
+                b.append_u8(9).unwrap();
+                b.append_bytestring(&s).unwrap();
+            }),
+        ),
     ] {
         let value = record(&w, &*tweak);
         w.set_param_84(Some(value));
@@ -294,7 +327,11 @@ fn payouts_never_read_recognition() {
     w.advance(SLA);
     succeeded(&w.op(&buyer, Actor::expire(1, a).unwrap(), TOS));
     // Suspended, then absent: the refund and the sweep still pay.
-    w.recognize(Some(SettlementAssetStatus::AdmissionSuspended), protocol_constants::NO_TOKEN_CAP, None);
+    w.recognize(
+        Some(SettlementAssetStatus::AdmissionSuspended),
+        protocol_constants::NO_TOKEN_CAP,
+        None,
+    );
     let funding = w.payout_funding();
     let before = w.tokens(&buyer);
     succeeded(&w.op(&buyer, Actor::claim_refund(1, a, &buyer).unwrap(), funding));
@@ -357,8 +394,20 @@ fn every_admission_refusal_ends_in_a_funding_return() {
     let owner = w.owner.clone();
     let filler = owner.clone();
     let body = Actor::update_policy(
-        1, PRICE, STORAGE_FEE, BOUNTY, SLA, WINDOW, false, true, None, &filler, 0,
-        protocol_constants::NO_TOKEN_CAP, [0x11; 32], [0x22; 32],
+        1,
+        PRICE,
+        STORAGE_FEE,
+        BOUNTY,
+        SLA,
+        WINDOW,
+        false,
+        true,
+        None,
+        &filler,
+        0,
+        protocol_constants::NO_TOKEN_CAP,
+        [0x11; 32],
+        [0x22; 32],
     )
     .unwrap();
     succeeded(&w.op(&owner, body, TOS));
@@ -367,7 +416,10 @@ fn every_admission_refusal_ends_in_a_funding_return() {
     // policy bounds a deployer could set directly
     for (code, rewrite) in [
         (err::INVALID_RESPONSE_SLA, Options { response_sla: 10, ..Options::default() }),
-        (err::INVALID_REFUND_CLAIM_WINDOW, Options { refund_claim_window: 10, ..Options::default() }),
+        (
+            err::INVALID_REFUND_CLAIM_WINDOW,
+            Options { refund_claim_window: 10, ..Options::default() },
+        ),
         (err::INVALID_CLEANUP_BOUNTY, Options { cleanup_bounty: 1, ..Options::default() }),
         (err::INSUFFICIENT_STORAGE_FEE, Options { storage_fee: BOUNTY, ..Options::default() }),
     ] {
@@ -376,7 +428,11 @@ fn every_admission_refusal_ends_in_a_funding_return() {
     }
 
     // restricted access
-    let mut w = World::with(Options { open_access: false, authorized_caller: Some(1), ..Options::default() });
+    let mut w = World::with(Options {
+        open_access: false,
+        authorized_caller: Some(1),
+        ..Options::default()
+    });
     refused_call(&mut w, err::NOT_AUTHORIZED);
     let caller = w.user(1);
     w.call(&caller);
@@ -402,7 +458,10 @@ fn every_admission_refusal_ends_in_a_funding_return() {
     refused_call(&mut w, err::CAPACITY_EXCEEDED_GLOBAL);
     let mut w = World::new();
     let buyer = w.user(0);
-    w.patch(|d| d.requests[2] = counter_dict(&d.requests[2], &buyer, protocol_constants::MAX_LIVE_PER_CALLER));
+    w.patch(|d| {
+        d.requests[2] =
+            counter_dict(&d.requests[2], &buyer, protocol_constants::MAX_LIVE_PER_CALLER)
+    });
     refused_call(&mut w, err::CAPACITY_EXCEEDED_CALLER);
     let mut w = World::new();
     w.patch(|d| d.next_request_id = u64::MAX);
@@ -413,7 +472,8 @@ fn every_admission_refusal_ends_in_a_funding_return() {
     let mut w = World::new();
     let buyer = w.user(0);
     w.patch(|d| {
-        d.payout_dicts[2] = counter_dict(&d.payout_dicts[2], &buyer, protocol_constants::MAX_RETURNED_PER_CALLER)
+        d.payout_dicts[2] =
+            counter_dict(&d.payout_dicts[2], &buyer, protocol_constants::MAX_RETURNED_PER_CALLER)
     });
     refused_call(&mut w, err::NOT_ACCEPTING_TOKENS);
 
@@ -517,8 +577,12 @@ fn a_sender_off_workchain_0_is_refused_and_its_return_becomes_a_returned_entry()
     let actor = w.actor.clone();
     let terms = w.terms_hash();
     let forward = w.call_forward();
-    let body = Actor::funding_transfer(3, PRICE, &actor, &mc_owner, forward, [1; 32], terms).unwrap();
-    let msg = MessageBuilder::internal(&mc_owner, &wallet, forward as u64 + TOS).bounce(true).body(body).build();
+    let body =
+        Actor::funding_transfer(3, PRICE, &actor, &mc_owner, forward, [1; 32], terms).unwrap();
+    let msg = MessageBuilder::internal(&mc_owner, &wallet, forward as u64 + TOS)
+        .bounce(true)
+        .body(body)
+        .build();
     let start = w.net.delivered.len();
     w.send(msg);
     let logs = w.funding_logs_since(start);
@@ -535,6 +599,7 @@ fn a_sender_off_workchain_0_is_refused_and_its_return_becomes_a_returned_entry()
     assert_eq!(w.surplus(), 0);
     // Its sender, off workchain 0, cannot claim it (1934).
     let funding = w.payout_funding();
-    let tx = w.op(&mc_owner, Actor::claim_returned(1, logs[0].payout_id, &w.user(0)).unwrap(), funding);
+    let tx =
+        w.op(&mc_owner, Actor::claim_returned(1, logs[0].payout_id, &w.user(0)).unwrap(), funding);
     refused_with(&tx, err::INVALID_DESTINATION);
 }
