@@ -1,0 +1,1966 @@
+;; Copyright (C) 2025-2026  TOS Network.
+;; Service Actor, token rail: a provider that sells per-call access priced in
+;; one recognized TOS-network token, fixed at deploy.
+;;
+;; The request lifecycle, terms, attestor, SRP2 response domain and request
+;; snapshot are those of the native Service Actor (service-actor-code.fc).
+;; What changes is funding, payouts and accounting:
+;;
+;; * A call is funded by an ordinary token transfer to this actor whose
+;;   transfer_notification carries a `token_call` payload. The notification
+;;   handler never throws once the notification is authenticated (it came from
+;;   this actor's own token wallet) and funded: an admission refusal returns
+;;   the tokens to their sender as a payout.
+;; * Every token payout is a reported transfer, whose outcome (delivered,
+;;   refused at the recipient's wallet R, or bounced at this actor's wallet S)
+;;   comes back to this actor authenticated, bound to the payout id and amount,
+;;   and is accepted at most once. Ledger effects commit at the outcome.
+;; * ConfigParam 84 is read at admission only. No payout path reads it.
+;;
+;; Gas rule. No handler calls accept_message, and the only set_gas_limit raises
+;; the limit in the outcome handlers, after the sender, the payout id and the
+;; amount (and, for a delivery, the recipient) have been matched against the
+;; stored payout. From there the handler is paid from that payout's
+;; outcome_fee_lock, which its requester funded, once, because the payout is
+;; deleted in the same transaction. Every other handler runs on the gas its
+;; own message bought.
+;;
+;; Persistent data:
+;;   owner:MsgAddress active:uint1 next_request_id:uint64 pending_count:uint32
+;;   live_count:uint32 next_payout_id:uint64
+;;   ^Policy ^Accounting ^Requests ^Payouts
+;; Policy:
+;;   policy_version:uint32 price_per_call:Coins storage_fee:Coins
+;;   cleanup_bounty:Coins response_sla:uint32 refund_claim_window:uint32
+;;   open_access:uint1 has_authorized_caller:uint1 authorized_caller:MsgAddress
+;;   rate_limit_per_day:uint32 max_token_liability:Coins
+;;   ^[metadata_hash:uint256 proof_scheme_hash:uint256 has_attestor:uint1
+;;     attestor_key_id:uint256 attestor_key:(Maybe ^StoredKey)]
+;; Accounting (native ledger, nanoTOS):
+;;   withdrawable_tos_revenue:Coins locked_storage_fees:Coins
+;;   locked_outcome_fees:Coins call_day:uint32 calls_today:uint32
+;;   revenue_payouts_in_flight:uint8 returned_count:uint32
+;;   ^TokenLedger ^BalanceQuery ^AssetRoute
+;; TokenLedger (token atomic units):
+;;   pending_liability:Coins refundable_liability:Coins returned_liability:Coins
+;;   in_flight:Coins withdrawable_token_revenue:Coins
+;; BalanceQuery:
+;;   active:uint1 query_id:uint64 purpose:uint1 created_at:uint32 floor:uint64
+;;   delivered_since_floor:Coins recheck_target:uint64 amount:Coins
+;;   requester:MsgAddress
+;; AssetRoute:
+;;   master:MsgAddressInt wallet_code_hash:uint256 wallet_code:^Cell
+;; Requests:
+;;   pending_requests:(HashmapE 64 ^PendingRequest) refunds:(HashmapE 64 ^Refund)
+;;   caller_live_counts:(HashmapE 256 uint32)
+;; Payouts:
+;;   payouts:(HashmapE 64 ^Payout) returned:(HashmapE 64 ^Returned)
+;;   caller_returned_counts:(HashmapE 256 uint32)
+;;
+;; PendingRequest and Refund keep the native layouts.
+;; Payout:
+;;   kind:uint3 request_id:uint64 recipient:MsgAddressInt requester:MsgAddressInt
+;;   amount:Coins created_at:uint32
+;;   ^[recipient_wallet:MsgAddressInt own_wallet:MsgAddressInt
+;;     outcome_fee_lock:Coins ^LedgerUndo]
+;;   kind: 1 refund, 2 sweep, 3 revenue withdrawal, 4 funding return,
+;;         5 returned-entry claim, 6 surplus recovery, 7 returned-entry sweep.
+;;   request_id is the request id for kinds 1 and 2, the returned entry's id
+;;   for kinds 5 and 7, and 0 otherwise.
+;; LedgerUndo: source:uint2 (0 none, 1 pending, 2 refunds) then, for kinds 1
+;;   and 2, the request's entry cell by reference.
+;; Returned:
+;;   caller:MsgAddressInt amount:Coins paying:uint64 return_deadline:uint64
+;;
+;; Internal messages (op query_id ...):
+;;   transfer_notification#7362d09c query_id:uint64 amount:Coins from:MsgAddress
+;;     forward_payload:(Either Cell ^Cell)   -- from this actor's token wallet
+;;     with forward_payload = token_call#53544301 request_hash:uint256
+;;     expected_terms_hash:uint256
+;;   respond#53544302 request_id:uint64 response_hash:uint256
+;;     signature:(Maybe ^StoredSignature, present iff the request has an attestor)
+;;   expire#53544303 request_id:uint64
+;;   claim_refund#53544304 request_id:uint64 destination:MsgAddressInt
+;;   sweep_expired_request#53544305 request_id:uint64
+;;   update_policy#53544306 price_per_call:Coins storage_fee:Coins
+;;     cleanup_bounty:Coins response_sla:uint32 refund_claim_window:uint32
+;;     active:uint1 open_access:uint1 has_authorized_caller:uint1
+;;     authorized_caller:MsgAddress rate_limit_per_day:uint32
+;;     max_token_liability:Coins ^[metadata_hash:uint256 proof_scheme_hash:uint256]
+;;   rotate_attestor_key#53544307 attestor_key:^StoredKey
+;;   revoke_attestor#53544308
+;;   withdraw_revenue#53544309 token_amount:Coins tos_amount:Coins
+;;   claim_returned#5354430a id:uint64 destination:MsgAddressInt
+;;   recover_surplus#5354430b amount:Coins
+;;   abandon_payout#5354430c id:uint64
+;;   sweep_returned#5354430d id:uint64
+;;   recheck_payout#5354430f id:uint64
+;;   and, from the token wallets: transfer_delivered, transfer_refused,
+;;   transfer_rereported, take_balance, and the bounce of this actor's own
+;;   reported_transfer and provide_balance.
+;;
+;; External out-messages:
+;;   SAT1#53415431 request_id:uint64 caller:MsgAddressInt request_hash:uint256
+;;     response_deadline:uint64 refund_claim_deadline:uint64 terms:^TokenTerms
+;;   SAF1#53414631 query_id:uint64 from:MsgAddressInt amount:Coins reason:uint16
+;;     payout_id:uint64
+;;   SAO1#53414f31 payout_id:uint64 kind:uint3 request_id:uint64
+;;     recipient:MsgAddressInt amount:Coins outcome:uint3
+;;   SAB1#53414231 query_id:uint64 purpose:uint1 target:uint64 balance:Coins
+;;     surplus:Coins result:uint16 payout_id:uint64
+
+#include "signing-domain.fc";
+#include "pq.fc";
+#include "pq-bytes.fc";
+
+const int op::respond = 0x53544302;
+const int op::expire = 0x53544303;
+const int op::claim_refund = 0x53544304;
+const int op::sweep_expired_request = 0x53544305;
+const int op::update_policy = 0x53544306;
+const int op::rotate_attestor_key = 0x53544307;
+const int op::revoke_attestor = 0x53544308;
+const int op::withdraw_revenue = 0x53544309;
+const int op::claim_returned = 0x5354430A;
+const int op::recover_surplus = 0x5354430B;
+const int op::abandon_payout = 0x5354430C;
+const int op::sweep_returned = 0x5354430D;
+const int op::recheck_payout = 0x5354430F;
+const int payload::token_call = 0x53544301;
+
+;; The bridge token wallet's ops this actor sends or answers.
+const int op::transfer = 0x0f8a7ea5;
+const int op::transfer_notification = 0x7362d09c;
+const int op::excesses = 0xd53276db;
+const int op::reported_transfer = 0x52545231;
+const int op::transfer_delivered = 0x52544431;
+const int op::transfer_refused = 0x52544631;
+const int op::transfer_rereported = 0x52545232;
+const int op::clear_refusal = 0x52544331;
+const int op::provide_balance = 0x52544231;
+const int op::take_balance = 0x52544232;
+
+const int err::not_owner = 1900;
+const int err::inactive = 1901;
+const int err::insufficient_payment = 1902;
+const int err::invalid_response_sla = 1903;
+const int err::invalid_refund_claim_window = 1904;
+const int err::invalid_cleanup_bounty = 1905;
+const int err::insufficient_storage_fee = 1906;
+const int err::capacity_exceeded_global = 1907;
+const int err::capacity_exceeded_caller = 1908;
+const int err::request_id_overflow = 1909;
+const int err::unknown_op = 1910;
+const int err::bad_response_signature = 1911;
+const int err::response_window_closed = 1912;
+const int err::request_not_pending = 1913;
+const int err::expire_too_early = 1914;
+const int err::expire_too_late = 1915;
+const int err::refund_claim_expired = 1916;
+const int err::refund_not_found = 1917;
+const int err::not_refund_caller = 1918;
+const int err::sweep_too_early = 1919;
+const int err::request_not_live = 1920;
+const int err::insufficient_balance = 1921;
+const int err::insufficient_revenue = 1922;
+const int err::not_authorized = 1923;
+const int err::rate_limited = 1924;
+const int err::bad_attestor_key = 1925;
+const int err::terms_mismatch = 1926;
+const int err::amount_range = 1927;
+const int err::operating_reserve_unfunded = 1928;
+const int err::insufficient_execution_payment = 1929;
+const int err::payout_in_flight = 1930;
+const int err::returned_not_found = 1931;
+const int err::asset_route_invalid = 1932;
+const int err::asset_not_recognized = 1933;
+const int err::invalid_destination = 1934;
+const int err::not_accepting_tokens = 1935;
+const int err::surplus_insufficient = 1936;
+const int err::exposure_cap = 1937;
+const int err::abandon_too_early = 1938;
+;; A token_call payload that does not parse; a refusal reason only.
+const int err::malformed_payload = 1939;
+const int err::payout_not_found = 1940;
+const int err::recheck_not_allowed = 1941;
+const int err::recheck_too_early = 1942;
+const int err::balance_query_busy = 1943;
+
+const int log::request_snapshot = 0x53415431; ;; "SAT1"
+const int log::funding = 0x53414631;          ;; "SAF1"
+const int log::outcome = 0x53414f31;          ;; "SAO1"
+const int log::balance = 0x53414231;          ;; "SAB1"
+
+const int kind::refund = 1;
+const int kind::sweep = 2;
+const int kind::revenue = 3;
+const int kind::funding_return = 4;
+const int kind::returned_claim = 5;
+const int kind::surplus = 6;
+const int kind::returned_sweep = 7;
+
+const int outcome::delivered = 0;
+const int outcome::refused = 1;
+const int outcome::bounced = 2;
+const int outcome::rechecked = 3;
+const int outcome::mismatch = 4;
+const int outcome::abandoned = 5;
+
+const int source::none = 0;
+const int source::pending = 1;
+const int source::refunds = 2;
+
+const int purpose::surplus = 0;
+const int purpose::recheck = 1;
+
+;; ---- Coin arithmetic --------------------------------------------------------
+const int MAX_COINS = 1329227995784915872903807060280344576; ;; 2^120, exclusive
+
+int checked_add_amount(int a, int b) impure inline {
+  throw_unless(err::amount_range, (a >= 0) & (b >= 0));
+  int total = a + b;
+  throw_unless(err::amount_range, total < MAX_COINS);
+  return total;
+}
+
+int checked_sub_amount(int a, int b) impure inline {
+  throw_unless(err::amount_range, (b >= 0) & (a >= b));
+  return a - b;
+}
+
+;; ---- Protocol constants -----------------------------------------------------
+;; The native rail's bounds, unchanged.
+const int MINIMUM_CLEANUP_BOUNTY = 100000000; ;; 0.1 TOS
+const int MAXIMUM_CLEANUP_BOUNTY = 1000000000; ;; 1 TOS
+const int MINIMUM_STORAGE_FEE = 100000000; ;; 0.1 TOS
+const int MINIMUM_OPERATING_RESERVE = 1000000000; ;; 1 TOS
+const int MIN_RESPONSE_SLA = 3600; ;; 1 hour
+const int MAX_RESPONSE_SLA = 2592000; ;; 30 days
+const int MIN_REFUND_CLAIM_WINDOW = 3600; ;; 1 hour
+const int MAX_REFUND_CLAIM_WINDOW = 2592000; ;; 30 days
+const int MAX_LIVE_GLOBAL = 100000;
+const int MAX_LIVE_PER_CALLER = 1000;
+
+;; The actor's own compute for a payout-creating op, and for the balance-query
+;; legs it runs on its sender's value; unused value is returned.
+const int PAYOUT_GAS_ALLOWANCE = 200000000; ;; 0.2 TOS
+
+;; Returned entries: they do not hold live-capacity slots, and admission stops
+;; for a caller, or for everyone, at these caps (accepting_tokens).
+const int MAX_RETURNED_PER_CALLER = 16;
+const int MAX_RETURNED_GLOBAL = 10000;
+;; How long a returned entry waits for its caller before anyone may sweep it
+;; to that caller, and how long a buyer payout waits before anyone may
+;; recheck it and an owner payout before its owner may abandon it.
+const int RETURN_WINDOW = 2592000; ;; 30 days
+const int PAYOUT_RECHECK_AGE = 2592000; ;; 30 days
+const int PAYOUT_ABANDON_AGE = 2592000; ;; 30 days
+;; A pending balance query younger than this is never replaced or cleared.
+const int RECHECK_QUERY_TTL = 3600;
+;; At most this many revenue payouts are in flight at once.
+const int MAX_REVENUE_PAYOUTS = 4;
+;; The "no cap" value of max_token_liability and max_liability_per_actor.
+const int NO_TOKEN_CAP = 1329227995784915872903807060280344575; ;; 2^120 - 1
+
+;; The paying and receiving wallets' frozen constants (token-wallet.fc): what
+;; R may spend on a reported transfer, what S may spend on its bounce and on
+;; reported_transfer, and the margin every later leg is priced at.
+const int R_GAS_LIMIT = 41000;
+const int S_BOUNCE_GAS = 58000;
+const int S_TRANSFER_GAS = 127000;
+const int REPORT_MARGIN = 10;
+;; S's clear_refusal and rereport_refusal at their deepest paths, twice the
+;; most measured (crosschain/token-bridge/SETTLEMENT-PROTOCOL.md section 20).
+const int CLEAR_REFUSAL_GAS = 52000;
+const int S_REREPORT_GAS = 19042;
+
+;; This actor's own gas, each twice the most either engine measured at
+;; capacity (tests/service_actor_token_sandbox.rs, gas_at_capacity):
+;; PRE_ACCEPT_GAS bounds an outcome handler up to its set_gas_limit,
+;; OUTCOME_HANDLER_GAS the whole handler, ADMISSION_GAS the notification
+;; handler, ABSENT_REPORT_GAS the answer to a report of an absent payout.
+const int PRE_ACCEPT_GAS = 12000;
+const int OUTCOME_HANDLER_GAS = 90000;
+const int ADMISSION_GAS = 120000;
+const int ABSENT_REPORT_GAS = 20000;
+
+;; What the paying wallet's value check needs beyond the network-priced legs
+;; this actor can compute: ConfigParam 79's wallet_min_tos_for_storage and any
+;; excess of its wallet_gas_consumption over R_GAS_LIMIT's price. Unused value
+;; returns to the requester as R's excess.
+const int TOKEN_WALLET_ALLOWANCE = 300000000; ;; 0.3 TOS
+
+const int domain::respond = 0x53525032; ;; "SRP2"
+
+;; ---- State ------------------------------------------------------------------
+;; At most 31 globals exist; the policy, the balance query and the route stay
+;; cells and are unpacked where they are read.
+global slice owner;
+global int active;
+global int next_request_id;
+global int pending_count;
+global int live_count;
+global int next_payout_id;
+global cell policy_cell;
+global int withdrawable_tos_revenue;
+global int locked_storage_fees;
+global int locked_outcome_fees;
+global int call_day;
+global int calls_today;
+global int revenue_payouts_in_flight;
+global int returned_count;
+global int pending_liability;
+global int refundable_liability;
+global int returned_liability;
+global int in_flight;
+global int withdrawable_token_revenue;
+global cell query_cell;
+global cell route_cell;
+global cell pending_requests;
+global cell refunds;
+global cell caller_live_counts;
+global cell payouts;
+global cell returned;
+global cell caller_returned_counts;
+
+cell slice_ref_at(slice s, int i) asm "PLDREFVAR";
+
+() load_state() impure inline {
+  slice ds = get_data().begin_parse();
+  owner = ds~load_msg_addr();
+  active = ds~load_uint(1);
+  next_request_id = ds~load_uint(64);
+  pending_count = ds~load_uint(32);
+  live_count = ds~load_uint(32);
+  next_payout_id = ds~load_uint(64);
+  policy_cell = ds~load_ref();
+  slice as_ = ds~load_ref().begin_parse();
+  slice rs = ds~load_ref().begin_parse();
+  slice ps = ds~load_ref().begin_parse();
+  ds.end_parse();
+  withdrawable_tos_revenue = as_~load_coins();
+  locked_storage_fees = as_~load_coins();
+  locked_outcome_fees = as_~load_coins();
+  call_day = as_~load_uint(32);
+  calls_today = as_~load_uint(32);
+  revenue_payouts_in_flight = as_~load_uint(8);
+  returned_count = as_~load_uint(32);
+  slice ts = as_~load_ref().begin_parse();
+  query_cell = as_~load_ref();
+  route_cell = as_~load_ref();
+  as_.end_parse();
+  pending_liability = ts~load_coins();
+  refundable_liability = ts~load_coins();
+  returned_liability = ts~load_coins();
+  in_flight = ts~load_coins();
+  withdrawable_token_revenue = ts~load_coins();
+  ts.end_parse();
+  pending_requests = rs~load_dict();
+  refunds = rs~load_dict();
+  caller_live_counts = rs~load_dict();
+  rs.end_parse();
+  payouts = ps~load_dict();
+  returned = ps~load_dict();
+  caller_returned_counts = ps~load_dict();
+  ps.end_parse();
+}
+
+() save_state() impure inline {
+  cell token = begin_cell()
+    .store_coins(pending_liability)
+    .store_coins(refundable_liability)
+    .store_coins(returned_liability)
+    .store_coins(in_flight)
+    .store_coins(withdrawable_token_revenue)
+  .end_cell();
+  cell accounting = begin_cell()
+    .store_coins(withdrawable_tos_revenue)
+    .store_coins(locked_storage_fees)
+    .store_coins(locked_outcome_fees)
+    .store_uint(call_day, 32)
+    .store_uint(calls_today, 32)
+    .store_uint(revenue_payouts_in_flight, 8)
+    .store_uint(returned_count, 32)
+    .store_ref(token)
+    .store_ref(query_cell)
+    .store_ref(route_cell)
+  .end_cell();
+  cell requests = begin_cell()
+    .store_dict(pending_requests)
+    .store_dict(refunds)
+    .store_dict(caller_live_counts)
+  .end_cell();
+  cell payout_dicts = begin_cell()
+    .store_dict(payouts)
+    .store_dict(returned)
+    .store_dict(caller_returned_counts)
+  .end_cell();
+  set_data(begin_cell()
+    .store_slice(owner)
+    .store_uint(active, 1)
+    .store_uint(next_request_id, 64)
+    .store_uint(pending_count, 32)
+    .store_uint(live_count, 32)
+    .store_uint(next_payout_id, 64)
+    .store_ref(policy_cell)
+    .store_ref(accounting)
+    .store_ref(requests)
+    .store_ref(payout_dicts)
+  .end_cell());
+}
+
+(int, int, int, int, int, int, int, int, slice, int, int, int, int, int, int, cell)
+    unpack_policy(cell c) inline {
+  slice ps = c.begin_parse();
+  int policy_version = ps~load_uint(32);
+  int price = ps~load_coins();
+  int fee = ps~load_coins();
+  int bounty = ps~load_coins();
+  int sla = ps~load_uint(32);
+  int window = ps~load_uint(32);
+  int open = ps~load_uint(1);
+  int has_auth = ps~load_uint(1);
+  slice auth = ps~load_msg_addr();
+  int rate = ps~load_uint(32);
+  int max_tokens = ps~load_coins();
+  slice cs = ps~load_ref().begin_parse();
+  ps.end_parse();
+  int meta = cs~load_uint(256);
+  int proof = cs~load_uint(256);
+  int has_att = cs~load_uint(1);
+  int att_id = cs~load_uint(256);
+  cell att_key = cs~load_maybe_ref();
+  cs.end_parse();
+  return (policy_version, price, fee, bounty, sla, window, open, has_auth, auth, rate, max_tokens,
+    meta, proof, has_att, att_id, att_key);
+}
+
+cell pack_policy(int policy_version, int price, int fee, int bounty, int sla, int window, int open,
+                 int has_auth, slice auth, int rate, int max_tokens, int meta, int proof,
+                 int has_att, int att_id, cell att_key) inline {
+  return begin_cell()
+    .store_uint(policy_version, 32)
+    .store_coins(price)
+    .store_coins(fee)
+    .store_coins(bounty)
+    .store_uint(sla, 32)
+    .store_uint(window, 32)
+    .store_uint(open, 1)
+    .store_uint(has_auth, 1)
+    .store_slice(auth)
+    .store_uint(rate, 32)
+    .store_coins(max_tokens)
+    .store_ref(begin_cell()
+      .store_uint(meta, 256)
+      .store_uint(proof, 256)
+      .store_uint(has_att, 1)
+      .store_uint(att_id, 256)
+      .store_maybe_ref(att_key)
+    .end_cell())
+  .end_cell();
+}
+
+(int, int, int, int, int, int, int, int, slice) unpack_query() inline {
+  slice qs = query_cell.begin_parse();
+  int q_active = qs~load_uint(1);
+  int q_id = qs~load_uint(64);
+  int q_purpose = qs~load_uint(1);
+  int q_created_at = qs~load_uint(32);
+  int q_floor = qs~load_uint(64);
+  int q_delivered = qs~load_coins();
+  int q_target = qs~load_uint(64);
+  int q_amount = qs~load_coins();
+  slice q_requester = qs~load_msg_addr();
+  qs.end_parse();
+  return (q_active, q_id, q_purpose, q_created_at, q_floor, q_delivered, q_target, q_amount,
+    q_requester);
+}
+
+cell pack_query(int q_active, int q_id, int q_purpose, int q_created_at, int q_floor,
+                int q_delivered, int q_target, int q_amount, slice q_requester) inline {
+  return begin_cell()
+    .store_uint(q_active, 1)
+    .store_uint(q_id, 64)
+    .store_uint(q_purpose, 1)
+    .store_uint(q_created_at, 32)
+    .store_uint(q_floor, 64)
+    .store_coins(q_delivered)
+    .store_uint(q_target, 64)
+    .store_coins(q_amount)
+    .store_slice(q_requester)
+  .end_cell();
+}
+
+cell empty_query() inline {
+  return pack_query(0, 0, 0, 0, 0, 0, 0, 0, begin_cell().store_uint(0, 2).end_cell().begin_parse());
+}
+
+(slice, int, cell) unpack_route(cell c) inline {
+  slice rs = c.begin_parse();
+  slice master = rs~load_msg_addr();
+  int code_hash = rs~load_uint(256);
+  cell code = rs~load_ref();
+  rs.end_parse();
+  return (master, code_hash, code);
+}
+
+;; The route as stored, read without the rest of the state.
+cell peek_route() inline {
+  slice ds = get_data().begin_parse();
+  return slice_ref_at(slice_ref_at(ds, 1).begin_parse(), 2);
+}
+
+;; ---- Addresses ----------------------------------------------------------------
+
+;; addr_std$10, no anycast, workchain 0, and nothing else.
+int canonical_basechain?(slice addr) inline {
+  return addr.slice_bits() == 267 ? (addr.slice_refs() == 0) & (addr.preload_uint(11) == 0x400) : false;
+}
+
+;; The bridge token wallet's initial state for `wallet_owner` under `master`
+;; (utils.fc, calculate_token_wallet_state_init): balance 0, an empty
+;; settlement half and no refusals.
+cell token_wallet_state_init(slice wallet_owner, slice master, cell code) inline {
+  cell settlement = begin_cell()
+    .store_uint(0, 64 + 64 + 1 + 32)
+    .store_uint(0, 64 + 64 + 64)
+    .store_dict(null())
+    .store_uint(0, 64 + 64)
+    .store_dict(null())
+  .end_cell();
+  cell data = begin_cell()
+    .store_coins(0)
+    .store_slice(wallet_owner)
+    .store_slice(master)
+    .store_ref(code)
+    .store_ref(settlement)
+    .store_uint(0, 16)
+    .store_dict(null())
+  .end_cell();
+  return begin_cell().store_uint(0, 2).store_dict(code).store_dict(data).store_uint(0, 1).end_cell();
+}
+
+slice token_wallet_address(slice wallet_owner, slice master, cell code) inline {
+  return begin_cell()
+    .store_uint(4, 3)
+    .store_int(0, 8)
+    .store_uint(cell_hash(token_wallet_state_init(wallet_owner, master, code)), 256)
+  .end_cell().begin_parse();
+}
+
+slice own_wallet_of(cell route) inline {
+  (slice master, _, cell code) = unpack_route(route);
+  return token_wallet_address(my_address(), master, code);
+}
+
+;; claim_refund and claim_returned pay only to a canonical basechain address
+;; other than this actor.
+int valid_destination?(slice destination) inline {
+  return canonical_basechain?(destination) & (~ equal_slice_bits(destination, my_address()));
+}
+
+;; ---- Prices -------------------------------------------------------------------
+;; Every TOS amount below is priced at run time from the basechain's gas and
+;; forwarding prices.
+
+int gas_fee(int gas) inline {
+  return get_compute_fee(false, gas);
+}
+
+int max_fwd_fee() inline {
+  return get_forward_fee(false, 1023, 1);
+}
+
+;; The TOS every reported transfer carries for its report: R sends it with
+;; transfer_delivered and it pays this actor's pre-accept part; on a refusal at
+;; R it returns inside the bounce and pays S's bounce handler, the forwarding of
+;; transfer_refused and this actor's pre-accept part, each at REPORT_MARGIN.
+int report_tos_amount() inline {
+  return REPORT_MARGIN * (gas_fee(PRE_ACCEPT_GAS) + gas_fee(S_BOUNCE_GAS) + max_fwd_fee())
+    + max_fwd_fee();
+}
+
+;; What a payout reserves for its outcome: the whole handler, the
+;; clear_refusal it may send and the forwarding of every send it may make (the
+;; log, clear_refusal and the change), at REPORT_MARGIN.
+int outcome_fee_lock() inline {
+  return REPORT_MARGIN * (gas_fee(OUTCOME_HANDLER_GAS) + gas_fee(CLEAR_REFUSAL_GAS)
+    + 4 * max_fwd_fee());
+}
+
+;; The value a payout's reported transfer carries beyond its lock: the report,
+;; this actor's send to S, S's compute, S's message to R with the wallet's
+;; StateInit, R's compute, bounce and action fine at REPORT_MARGIN (as the
+;; wallet's own reported_need), and the allowance for the bridge parameters.
+int transfer_budget(cell code) inline {
+  (int cells, int bits, _, int fits) = compute_data_size?(code, 8192);
+  if (~ fits) {
+    cells = 8192;
+    bits = 8192 * 1023;
+  }
+  return report_tos_amount()
+    + max_fwd_fee()
+    + gas_fee(S_TRANSFER_GAS)
+    + get_forward_fee(false, bits + 4 * 1023, cells + 4)
+    + REPORT_MARGIN * (gas_fee(R_GAS_LIMIT) + get_forward_fee(false, 32 + 256, 1)
+      + get_forward_fee(false, 0, 3))
+    + TOKEN_WALLET_ALLOWANCE;
+}
+
+;; RETURN_BUDGET: one funding return's transfer, its outcome lock and its log.
+int return_budget(cell code) inline {
+  return transfer_budget(code) + outcome_fee_lock() + max_fwd_fee();
+}
+
+;; ADMISSION_GAS_ALLOWANCE: the notification handler and its two sends.
+int admission_gas_allowance() inline {
+  return gas_fee(ADMISSION_GAS) + 2 * max_fwd_fee();
+}
+
+int min_funding_value(cell code) inline {
+  return admission_gas_allowance() + return_budget(code);
+}
+
+;; What a payout-creating op must attach: its own compute, the transfer and the
+;; outcome lock.
+int payout_funding(cell code) inline {
+  return PAYOUT_GAS_ALLOWANCE + return_budget(code);
+}
+
+;; What a funded rereport_refusal of a record whose payout is gone should
+;; carry: S's rereport, this actor's answer and S's clear, with their
+;; forwarding, at twice the current prices.
+int rereport_funding() inline {
+  return 2 * (gas_fee(S_REREPORT_GAS) + gas_fee(ABSENT_REPORT_GAS) + gas_fee(CLEAR_REFUSAL_GAS)
+    + 2 * max_fwd_fee());
+}
+
+;; ---- Sends ----------------------------------------------------------------------
+
+() send_value(slice destination, int amount, int mode) impure inline {
+  send_raw_message(begin_cell()
+    .store_uint(0x10, 6)
+    .store_slice(destination)
+    .store_coins(amount)
+    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+  .end_cell(), mode);
+}
+
+() send_body(slice destination, int amount, int bounceable, cell body, int mode) impure inline {
+  send_raw_message(begin_cell()
+    .store_uint(bounceable ? 0x18 : 0x10, 6)
+    .store_slice(destination)
+    .store_coins(amount)
+    .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    .store_ref(body)
+  .end_cell(), mode);
+}
+
+;; ext_out_msg_info$11 src:addr_none dest:addr_none, body by reference.
+() send_log(cell body, int mode) impure inline {
+  send_raw_message(begin_cell()
+    .store_uint(0xc, 4)
+    .store_uint(0, 2)
+    .store_uint(0, 64 + 32)
+    .store_uint(0, 1)
+    .store_uint(1, 1)
+    .store_ref(body)
+  .end_cell(), mode);
+}
+
+cell query_body(int op, int query_id) inline {
+  return begin_cell().store_uint(op, 32).store_uint(query_id, 64).end_cell();
+}
+
+;; A reported transfer of `amount` to `destination`: no forward amount and a
+;; 1-bit empty forward payload, so no notification reaches the recipient. R's
+;; excess goes to the requester, who funded it.
+cell reported_transfer_body(int payout_id, int amount, slice destination, slice response) inline {
+  return begin_cell()
+    .store_uint(op::reported_transfer, 32)
+    .store_uint(payout_id, 64)
+    .store_coins(amount)
+    .store_slice(destination)
+    .store_slice(response)
+    .store_coins(report_tos_amount())
+    .store_coins(0)
+    .store_uint(0, 1)
+  .end_cell();
+}
+
+() emit_funding(int query_id, slice from, int amount, int reason, int payout_id, int mode) impure inline {
+  send_log(begin_cell()
+    .store_uint(log::funding, 32)
+    .store_uint(query_id, 64)
+    .store_slice(from)
+    .store_coins(amount)
+    .store_uint(reason, 16)
+    .store_uint(payout_id, 64)
+  .end_cell(), mode);
+}
+
+() emit_outcome(int payout_id, int kind, int request_id, slice recipient, int amount, int outcome,
+                int mode) impure inline {
+  send_log(begin_cell()
+    .store_uint(log::outcome, 32)
+    .store_uint(payout_id, 64)
+    .store_uint(kind, 3)
+    .store_uint(request_id, 64)
+    .store_slice(recipient)
+    .store_coins(amount)
+    .store_uint(outcome, 3)
+  .end_cell(), mode);
+}
+
+;; ---- terms_hash / attestation domain --------------------------------------------
+
+;; The token terms preimage: the native terms with the asset in the root.
+cell token_terms_cell(int policy_version, int price, int fee, int bounty, int sla, int window,
+                      int meta, int proof, int has_att, int att_id, int asset_master,
+                      int asset_wallet_code_hash) inline {
+  cell tail = begin_cell()
+    .store_uint(meta, 256)
+    .store_uint(proof, 256)
+    .store_uint(has_att, 1)
+    .store_uint(has_att ? att_id : 0, 256)
+  .end_cell();
+  return begin_cell()
+    .store_uint(policy_version, 32)
+    .store_coins(price)
+    .store_coins(fee)
+    .store_coins(bounty)
+    .store_uint(sla, 32)
+    .store_uint(window, 32)
+    .store_uint(asset_master, 256)
+    .store_uint(asset_wallet_code_hash, 256)
+    .store_ref(tail)
+  .end_cell();
+}
+
+;; The terms of the current policy and route. The master's account id is read
+;; from a canonical route; a route that is not canonical yields id 0, and such
+;; a route admits nothing.
+cell current_terms() inline {
+  (int policy_version, int price, int fee, int bounty, int sla, int window, _, _, _, _, _,
+   int meta, int proof, int has_att, int att_id, _) = unpack_policy(policy_cell);
+  (slice master, int code_hash, _) = unpack_route(route_cell);
+  int master_id = 0;
+  if (canonical_basechain?(master)) {
+    (_, master_id) = parse_std_addr(master);
+  }
+  return token_terms_cell(policy_version, price, fee, bounty, sla, window, meta, proof, has_att,
+    att_id, master_id, code_hash);
+}
+
+int compute_response_domain_hash(slice caller, int request_id, int request_hash,
+                                 int response_hash, int terms_hash, int price,
+                                 int response_deadline, int refund_claim_deadline) inline {
+  cell tail = begin_cell()
+    .store_slice(caller)
+    .store_uint(terms_hash, 256)
+    .store_coins(price)
+    .store_uint(response_deadline, 64)
+    .store_uint(refund_claim_deadline, 64)
+  .end_cell();
+  return cell_hash(begin_signing_domain(domain::respond)
+    .store_uint(request_id, 64)
+    .store_uint(request_hash, 256)
+    .store_uint(response_hash, 256)
+    .store_ref(tail)
+  .end_cell());
+}
+
+;; ---- Request entries (the native layouts) ------------------------------------------
+
+cell pack_pending_request(slice caller, int price, int fee, int bounty, int response_deadline,
+                          int refund_claim_deadline, int policy_version, int request_hash,
+                          int terms_hash, int has_att, int att_id, cell att_key) inline {
+  return begin_cell()
+    .store_slice(caller)
+    .store_coins(price)
+    .store_coins(fee)
+    .store_coins(bounty)
+    .store_uint(response_deadline, 64)
+    .store_uint(refund_claim_deadline, 64)
+    .store_uint(policy_version, 32)
+    .store_ref(begin_cell()
+      .store_uint(request_hash, 256)
+      .store_uint(terms_hash, 256)
+      .store_uint(has_att, 1)
+      .store_uint(att_id, 256)
+      .store_maybe_ref(att_key)
+    .end_cell())
+  .end_cell();
+}
+
+(slice, int, int, int, int, int, int, int, int, int, int) unpack_pending_request(cell c) inline {
+  slice ps = c.begin_parse();
+  slice caller = ps~load_msg_addr();
+  int price = ps~load_coins();
+  int fee = ps~load_coins();
+  int bounty = ps~load_coins();
+  int response_deadline = ps~load_uint(64);
+  int refund_claim_deadline = ps~load_uint(64);
+  int policy_version = ps~load_uint(32);
+  slice cs = ps~load_ref().begin_parse();
+  ps.end_parse();
+  int request_hash = cs~load_uint(256);
+  int terms_hash = cs~load_uint(256);
+  int has_att = cs~load_uint(1);
+  int att_id = cs~load_uint(256);
+  cs~load_maybe_ref();
+  cs.end_parse();
+  return (caller, price, fee, bounty, response_deadline, refund_claim_deadline, policy_version,
+    request_hash, terms_hash, has_att, att_id);
+}
+
+cell pending_attestor_key(cell c) inline {
+  slice ps = c.begin_parse();
+  ps~load_msg_addr();
+  ps~load_coins(); ps~load_coins(); ps~load_coins();
+  ps~skip_bits(64 + 64 + 32);
+  slice cs = ps~load_ref().begin_parse();
+  cs~skip_bits(256 + 256 + 1 + 256);
+  return cs~load_maybe_ref();
+}
+
+cell pack_refund(slice caller, int price, int fee, int bounty, int refund_claim_deadline) inline {
+  return begin_cell()
+    .store_slice(caller)
+    .store_coins(price)
+    .store_coins(fee)
+    .store_coins(bounty)
+    .store_uint(refund_claim_deadline, 64)
+  .end_cell();
+}
+
+(slice, int, int, int, int) unpack_refund(cell c) inline {
+  slice rs = c.begin_parse();
+  slice caller = rs~load_msg_addr();
+  int price = rs~load_coins();
+  int fee = rs~load_coins();
+  int bounty = rs~load_coins();
+  int refund_claim_deadline = rs~load_uint(64);
+  rs.end_parse();
+  return (caller, price, fee, bounty, refund_claim_deadline);
+}
+
+;; The caller, price, storage fee and bounty of a pending or refund entry.
+(slice, int, int, int) entry_terms(int source, cell entry) inline {
+  if (source == source::pending) {
+    (slice caller, int price, int fee, int bounty, _, _, _, _, _, _, _) = unpack_pending_request(entry);
+    return (caller, price, fee, bounty);
+  }
+  (slice caller, int price, int fee, int bounty, _) = unpack_refund(entry);
+  return (caller, price, fee, bounty);
+}
+
+;; ---- Returned entries --------------------------------------------------------------
+
+cell pack_returned(slice caller, int amount, int paying, int return_deadline) inline {
+  return begin_cell()
+    .store_slice(caller)
+    .store_coins(amount)
+    .store_uint(paying, 64)
+    .store_uint(return_deadline, 64)
+  .end_cell();
+}
+
+(slice, int, int, int) unpack_returned(cell c) inline {
+  slice rs = c.begin_parse();
+  slice caller = rs~load_msg_addr();
+  int amount = rs~load_coins();
+  int paying = rs~load_uint(64);
+  int return_deadline = rs~load_uint(64);
+  rs.end_parse();
+  return (caller, amount, paying, return_deadline);
+}
+
+;; ---- Per-caller counters ---------------------------------------------------------------
+;; Keyed by slice_hash of the full address, workchain included.
+
+int caller_count(cell counts, slice caller) inline {
+  (slice val, int found) = counts.udict_get?(256, slice_hash(caller));
+  return found ? val~load_uint(32) : 0;
+}
+
+cell caller_incr(cell counts, slice caller) inline {
+  int count = caller_count(counts, caller);
+  return counts.udict_set_builder(256, slice_hash(caller), begin_cell().store_uint(count + 1, 32));
+}
+
+cell caller_decr(cell counts, slice caller) inline {
+  int count = caller_count(counts, caller);
+  if (count <= 1) {
+    (cell d, _) = counts.udict_delete?(256, slice_hash(caller));
+    return d;
+  }
+  return counts.udict_set_builder(256, slice_hash(caller), begin_cell().store_uint(count - 1, 32));
+}
+
+;; A returned entry for `caller`, keyed by the payout id whose refusal made it.
+() add_returned(int id, slice caller, int amount) impure inline {
+  returned~udict_set_ref(64, id, pack_returned(caller, amount, 0, now() + RETURN_WINDOW));
+  returned_liability = checked_add_amount(returned_liability, amount);
+  returned_count += 1;
+  caller_returned_counts = caller_incr(caller_returned_counts, caller);
+}
+
+;; ---- Payouts ------------------------------------------------------------------------
+
+(int, int, slice, slice, int, int, slice, slice, int, cell) unpack_payout(cell c) inline {
+  slice s = c.begin_parse();
+  int kind = s~load_uint(3);
+  int request_id = s~load_uint(64);
+  slice recipient = s~load_msg_addr();
+  slice requester = s~load_msg_addr();
+  int amount = s~load_coins();
+  int created_at = s~load_uint(32);
+  slice a = s~load_ref().begin_parse();
+  s.end_parse();
+  slice recipient_wallet = a~load_msg_addr();
+  slice own_wallet = a~load_msg_addr();
+  int lock = a~load_coins();
+  cell undo = a~load_ref();
+  a.end_parse();
+  return (kind, request_id, recipient, requester, amount, created_at, recipient_wallet, own_wallet,
+    lock, undo);
+}
+
+;; The stored payout `id`, read from the root and the payouts reference alone:
+;; what an outcome handler reads before it raises its gas limit.
+(cell, int) peek_payout(int id) inline {
+  slice ds = get_data().begin_parse();
+  slice ps = slice_ref_at(ds, 3).begin_parse();
+  cell stored = ps~load_dict();
+  return stored.udict_get_ref?(64, id);
+}
+
+cell undo_cell(int source, cell entry) inline {
+  builder b = begin_cell().store_uint(source, 2);
+  if (source != source::none) {
+    b = b.store_ref(entry);
+  }
+  return b.end_cell();
+}
+
+(int, cell) unpack_undo(cell c) inline {
+  slice s = c.begin_parse();
+  int source = s~load_uint(2);
+  cell entry = null();
+  if (source != source::none) {
+    entry = s~load_ref();
+  }
+  s.end_parse();
+  return (source, entry);
+}
+
+;; Records payout `kind` of `amount` to `recipient` under a fresh id, moving its
+;; amount into in_flight and reserving its outcome lock. Returns (id, lock).
+(int, int) create_payout(int kind, int request_id, slice recipient, slice requester, int amount,
+                         slice own_wallet, cell undo) impure inline {
+  (slice master, _, cell code) = unpack_route(route_cell);
+  int id = next_payout_id;
+  next_payout_id = id + 1;
+  int lock = outcome_fee_lock();
+  cell auth = begin_cell()
+    .store_slice(token_wallet_address(recipient, master, code))
+    .store_slice(own_wallet)
+    .store_coins(lock)
+    .store_ref(undo)
+  .end_cell();
+  payouts~udict_set_ref(64, id, begin_cell()
+    .store_uint(kind, 3)
+    .store_uint(request_id, 64)
+    .store_slice(recipient)
+    .store_slice(requester)
+    .store_coins(amount)
+    .store_uint(now(), 32)
+    .store_ref(auth)
+  .end_cell());
+  in_flight = checked_add_amount(in_flight, amount);
+  locked_outcome_fees = checked_add_amount(locked_outcome_fees, lock);
+  return (id, lock);
+}
+
+;; Sends payout `id`: everything above `retained` goes to the actor's wallet,
+;; which spends what it needs and passes the rest to R, whose excess returns to
+;; the requester. +16: an action-phase failure bounces the requester's message
+;; and the payout's creation rolls back with it.
+() send_payout(int id, int amount, slice recipient, slice requester, slice own_wallet,
+               int retained) impure inline {
+  raw_reserve(retained, 0);
+  send_body(own_wallet, 0, true, reported_transfer_body(id, amount, recipient, requester), 128 + 16);
+}
+
+;; Applies `outcome` to a payout's ledger and returns the cleanup bounty its
+;; requester is now owed in TOS. The payout itself is deleted by the caller.
+int apply_outcome(int id, int kind, int request_id, slice recipient, int amount, cell undo,
+                  int outcome) impure inline {
+  in_flight = checked_sub_amount(in_flight, amount);
+  int bounty_due = 0;
+  int restore = outcome == outcome::bounced;
+  int refused = (outcome == outcome::refused) | (outcome == outcome::rechecked);
+  if ((kind == kind::refund) | (kind == kind::sweep)) {
+    (int source, cell entry) = unpack_undo(undo);
+    (slice caller, int price, int fee, int bounty) = entry_terms(source, entry);
+    if (restore) {
+      ;; No token left S: the entry, its liability and its TOS side return to
+      ;; where they were.
+      if (source == source::pending) {
+        pending_requests~udict_set_ref(64, request_id, entry);
+        pending_liability = checked_add_amount(pending_liability, price);
+      } else {
+        refunds~udict_set_ref(64, request_id, entry);
+        refundable_liability = checked_add_amount(refundable_liability, price);
+      }
+      return 0;
+    }
+    ;; Delivered or refused at R: the request is settled on the TOS side and
+    ;; releases its capacity; only the principal's destination differs.
+    live_count -= 1;
+    caller_live_counts = caller_decr(caller_live_counts, caller);
+    if (source == source::pending) {
+      pending_count -= 1;
+    }
+    locked_storage_fees = checked_sub_amount(locked_storage_fees, fee);
+    withdrawable_tos_revenue = checked_add_amount(withdrawable_tos_revenue,
+      checked_sub_amount(fee, bounty));
+    bounty_due = bounty;
+    if (refused) {
+      add_returned(id, caller, price);
+    }
+    return bounty_due;
+  }
+  if (kind == kind::revenue) {
+    revenue_payouts_in_flight -= 1;
+    if (outcome != outcome::delivered) {
+      if (outcome != outcome::abandoned) {
+        withdrawable_token_revenue = checked_add_amount(withdrawable_token_revenue, amount);
+      }
+    }
+    return 0;
+  }
+  if (kind == kind::funding_return) {
+    if (outcome != outcome::delivered) {
+      add_returned(id, recipient, amount);
+    }
+    return 0;
+  }
+  if ((kind == kind::returned_claim) | (kind == kind::returned_sweep)) {
+    (cell entry, int found) = returned.udict_get_ref?(64, request_id);
+    if (found) {
+      (slice caller, int entry_amount, _, int return_deadline) = unpack_returned(entry);
+      if (outcome == outcome::delivered) {
+        (returned, _) = returned.udict_delete?(64, request_id);
+        returned_count -= 1;
+        caller_returned_counts = caller_decr(caller_returned_counts, caller);
+      } else {
+        returned_liability = checked_add_amount(returned_liability, amount);
+        if ((kind == kind::returned_sweep) & refused) {
+          return_deadline = now() + RETURN_WINDOW;
+        }
+        returned~udict_set_ref(64, request_id,
+          pack_returned(caller, entry_amount, 0, return_deadline));
+      }
+    }
+    return 0;
+  }
+  ;; kind::surplus: the amount is back with the surplus unless delivered.
+  return 0;
+}
+
+;; The end of every accepted outcome: the payout is gone and its lock released.
+;; `backing` is the balance before this message. The requester receives the
+;; bounty it is owed and every unspent part of its lock and of this message,
+;; except what `others` sends elsewhere. Every send ignores errors, so no
+;; failed send can roll the outcome back.
+() finish_outcome(int id, int kind, int request_id, slice recipient, slice requester, int amount,
+                  int lock, int bounty, int outcome, int backing, slice clear_at) impure inline {
+  (payouts, _) = payouts.udict_delete?(64, id);
+  locked_outcome_fees = checked_sub_amount(locked_outcome_fees, lock);
+  save_state();
+  emit_outcome(id, kind, request_id, recipient, amount, outcome, 1 + 2);
+  raw_reserve(max(backing - lock - bounty, 0), 2);
+  if (~ null?(clear_at)) {
+    send_body(clear_at, gas_fee(CLEAR_REFUSAL_GAS), false, query_body(op::clear_refusal, id), 1 + 2);
+  }
+  send_value(requester, 0, 128 + 2);
+}
+
+;; ---- recv_internal -----------------------------------------------------------------------
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
+  slice full = in_msg_full.begin_parse();
+  int flags = full~load_uint(4);
+  slice sender = full~load_msg_addr();
+
+  if (flags & 1) {
+    ;; A bounce returns only to the sender of the bounced message, and the
+    ;; network alone sets the flag: a bounce from this actor's wallet answers a
+    ;; message this actor sent it.
+    in_msg~skip_bits(32);
+    if (in_msg.slice_bits() < 32 + 64) {
+      return ();
+    }
+    int bounced_op = in_msg~load_uint(32);
+    int bounced_id = in_msg~load_uint(64);
+    if (bounced_op == op::reported_transfer) {
+      ;; S refused this actor's reported transfer: no token left S.
+      (cell stored, int found) = peek_payout(bounced_id);
+      if (~ found) {
+        return ();
+      }
+      (int kind, int request_id, slice recipient, slice requester, int amount, _, _,
+       slice own_wallet, int lock, cell undo) = unpack_payout(stored);
+      if (~ equal_slice_bits(sender, own_wallet)) {
+        return ();
+      }
+      if (in_msg~load_coins() != amount) {
+        return ();
+      }
+      set_gas_limit(OUTCOME_HANDLER_GAS);
+      int backing = get_balance().pair_first() - msg_value;
+      load_state();
+      ;; A funding return has no prior position: its bounce is a refusal.
+      int outcome = kind == kind::funding_return ? outcome::refused : outcome::bounced;
+      int bounty = apply_outcome(bounced_id, kind, request_id, recipient, amount, undo, outcome);
+      finish_outcome(bounced_id, kind, request_id, recipient, requester, amount, lock, bounty,
+        outcome::bounced, backing, null());
+      return ();
+    }
+    if (bounced_op == op::provide_balance) {
+      ;; The wallet could not answer: the slot is free again.
+      load_state();
+      (int q_active, int q_id, _, _, _, _, _, _, _) = unpack_query();
+      if (q_active & (q_id == bounced_id) & equal_slice_bits(sender, own_wallet_of(route_cell))) {
+        query_cell = empty_query();
+        save_state();
+      }
+      return ();
+    }
+    return ();
+  }
+
+  if (in_msg.slice_empty?()) {
+    return (); ;; a plain top-up
+  }
+  int op = in_msg~load_uint(32);
+  int query_id = in_msg~load_uint(64);
+
+  ;; ---- outcome inputs -------------------------------------------------------------------
+  if (op == op::transfer_delivered) {
+    (cell stored, int found) = peek_payout(query_id);
+    if (~ found) {
+      return ();
+    }
+    (int kind, int request_id, slice recipient, slice requester, int amount, _,
+     slice recipient_wallet, _, int lock, cell undo) = unpack_payout(stored);
+    int reported_amount = in_msg~load_coins();
+    slice reported_recipient = in_msg~load_msg_addr();
+    if ((~ equal_slice_bits(sender, recipient_wallet)) | (reported_amount != amount)
+        | (~ equal_slice_bits(reported_recipient, recipient))) {
+      return ();
+    }
+    set_gas_limit(OUTCOME_HANDLER_GAS);
+    int backing = get_balance().pair_first() - msg_value;
+    load_state();
+    (int q_active, int q_id, int q_purpose, int q_created_at, int q_floor, int q_delivered,
+     int q_target, int q_amount, slice q_requester) = unpack_query();
+    if (q_active & (query_id >= q_floor)) {
+      query_cell = pack_query(q_active, q_id, q_purpose, q_created_at, q_floor,
+        checked_add_amount(q_delivered, amount), q_target, q_amount, q_requester);
+    }
+    int bounty = apply_outcome(query_id, kind, request_id, recipient, amount, undo,
+      outcome::delivered);
+    finish_outcome(query_id, kind, request_id, recipient, requester, amount, lock, bounty,
+      outcome::delivered, backing, null());
+    return ();
+  }
+
+  if ((op == op::transfer_refused) | (op == op::transfer_rereported)) {
+    int reported_amount = in_msg~load_coins();
+    (cell stored, int found) = peek_payout(query_id);
+    if (~ found) {
+      ;; A stale record: clear it on this message's own value, after deriving
+      ;; this actor's wallet on that value too.
+      if (equal_slice_bits(sender, own_wallet_of(peek_route()))) {
+        send_body(sender, 0, false, query_body(op::clear_refusal, query_id), 64);
+      }
+      return ();
+    }
+    (int kind, int request_id, slice recipient, slice requester, int amount, _, _,
+     slice own_wallet, int lock, cell undo) = unpack_payout(stored);
+    if (~ equal_slice_bits(sender, own_wallet)) {
+      return ();
+    }
+    if (reported_amount != amount) {
+      ;; Query ids are never reused, so this cannot arise; keep both the payout
+      ;; and the record, and log it.
+      emit_outcome(query_id, kind, request_id, recipient, reported_amount, outcome::mismatch, 1);
+      return ();
+    }
+    set_gas_limit(OUTCOME_HANDLER_GAS);
+    int backing = get_balance().pair_first() - msg_value;
+    load_state();
+    int bounty = apply_outcome(query_id, kind, request_id, recipient, amount, undo,
+      outcome::refused);
+    finish_outcome(query_id, kind, request_id, recipient, requester, amount, lock, bounty,
+      outcome::refused, backing, own_wallet);
+    return ();
+  }
+
+  if (op == op::take_balance) {
+    int balance = in_msg~load_coins();
+    load_state();
+    (int q_active, int q_id, int q_purpose, _, _, int q_delivered, int q_target, int q_amount,
+     slice q_requester) = unpack_query();
+    if ((~ q_active) | (q_id != query_id)) {
+      return (); ;; superseded or unknown
+    }
+    slice own_wallet = own_wallet_of(route_cell);
+    if (~ equal_slice_bits(sender, own_wallet)) {
+      return ();
+    }
+    query_cell = empty_query();
+    int backing = get_balance().pair_first() - msg_value;
+    int others = pending_liability + refundable_liability + returned_liability
+      + withdrawable_token_revenue;
+    int result = err::surplus_insufficient;
+    int surplus = 0;
+    int payout_id = 0;
+    if (q_purpose == purpose::surplus) {
+      surplus = max(balance - q_delivered - others - in_flight, 0);
+      if ((q_amount > 0) & (q_amount <= surplus)) {
+        result = 0;
+        (payout_id, int lock) = create_payout(kind::surplus, 0, owner, q_requester, q_amount,
+          own_wallet, undo_cell(source::none, null()));
+        save_state();
+        send_log(begin_cell().store_uint(log::balance, 32).store_uint(query_id, 64)
+          .store_uint(q_purpose, 1).store_uint(q_target, 64).store_coins(balance)
+          .store_coins(surplus).store_uint(result, 16).store_uint(payout_id, 64).end_cell(), 1);
+        send_payout(payout_id, q_amount, owner, q_requester, own_wallet,
+          checked_add_amount(max(backing, 0), lock));
+        return ();
+      }
+    } else {
+      (cell stored, int found) = payouts.udict_get_ref?(64, q_target);
+      if (found) {
+        (int kind, int request_id, slice recipient, slice requester, int amount, _, _, _,
+         int lock, cell undo) = unpack_payout(stored);
+        surplus = max(balance - q_delivered - others - (in_flight - amount), 0);
+        if (surplus >= amount) {
+          result = 0;
+          payout_id = q_target;
+          ;; Resolved as refused at R. The payout's lock and the bounty it owes
+          ;; go to its requester; this message's change goes to the recheck's
+          ;; sender.
+          int bounty = apply_outcome(q_target, kind, request_id, recipient, amount, undo,
+            outcome::rechecked);
+          (payouts, _) = payouts.udict_delete?(64, q_target);
+          locked_outcome_fees = checked_sub_amount(locked_outcome_fees, lock);
+          save_state();
+          emit_outcome(q_target, kind, request_id, recipient, amount, outcome::rechecked, 1 + 2);
+          send_log(begin_cell().store_uint(log::balance, 32).store_uint(query_id, 64)
+            .store_uint(q_purpose, 1).store_uint(q_target, 64).store_coins(balance)
+            .store_coins(surplus).store_uint(result, 16).store_uint(payout_id, 64).end_cell(), 1 + 2);
+          raw_reserve(max(backing - lock - bounty, 0), 2);
+          send_value(requester, lock + bounty, 1 + 2);
+          send_value(q_requester, 0, 128 + 2);
+          return ();
+        }
+      }
+    }
+    save_state();
+    send_log(begin_cell().store_uint(log::balance, 32).store_uint(query_id, 64)
+      .store_uint(q_purpose, 1).store_uint(q_target, 64).store_coins(balance)
+      .store_coins(surplus).store_uint(result, 16).store_uint(payout_id, 64).end_cell(), 1 + 2);
+    raw_reserve(max(backing, 0), 2);
+    send_value(q_requester, 0, 128 + 2);
+    return ();
+  }
+
+  if (op == op::excesses) {
+    return (); ;; value only
+  }
+
+  ;; ---- funding ---------------------------------------------------------------------------
+  if (op == op::transfer_notification) {
+    int amount = in_msg~load_coins();
+    slice from = in_msg~load_msg_addr();
+    cell route = peek_route();
+    slice own_wallet = own_wallet_of(route);
+    if (~ equal_slice_bits(sender, own_wallet)) {
+      ;; No token reached this actor's wallet. Ask the sender to transfer the
+      ;; amount back, on this message's own value: a wallet this actor owns
+      ;; returns the tokens, anything else ignores it.
+      send_body(sender, 0, false, begin_cell()
+        .store_uint(op::transfer, 32)
+        .store_uint(query_id, 64)
+        .store_coins(amount)
+        .store_slice(from)
+        .store_slice(from)
+        .store_uint(0, 1)
+        .store_coins(0)
+        .store_uint(0, 1)
+      .end_cell(), 64);
+      return ();
+    }
+    load_state();
+    (slice master, int route_code_hash, cell code) = unpack_route(route_cell);
+    if (msg_value < min_funding_value(code)) {
+      ;; Underfunded: nothing is stored and the tokens are surplus.
+      emit_funding(query_id, from, amount, err::insufficient_execution_payment, 0, 1);
+      return ();
+    }
+
+    ;; Authenticated and funded: from here nothing throws.
+    int request_hash = 0;
+    int expected_terms_hash = 0;
+    int payload_ok = false;
+    try {
+      slice payload = in_msg;
+      if (payload~load_uint(1)) {
+        slice inner = payload~load_ref().begin_parse();
+        payload.end_parse();
+        payload = inner;
+      }
+      throw_unless(err::malformed_payload, payload~load_uint(32) == payload::token_call);
+      request_hash = payload~load_uint(256);
+      expected_terms_hash = payload~load_uint(256);
+      payload.end_parse();
+      payload_ok = true;
+    } catch (_, _) {
+      payload_ok = false;
+    }
+    int asset_status = 0;
+    int asset_wallet_code_hash = -1;
+    int asset_cap = 0;
+    try {
+      slice assets = config_param(84).begin_parse();
+      throw_unless(err::asset_not_recognized, assets~load_uint(8) == 0x01);
+      cell entries = assets~load_dict();
+      assets.end_parse();
+      throw_unless(err::asset_not_recognized, canonical_basechain?(master));
+      (_, int master_id) = parse_std_addr(master);
+      (slice record, int listed) = entries.udict_get?(256, master_id);
+      throw_unless(err::asset_not_recognized, listed);
+      throw_unless(err::asset_not_recognized, record~load_uint(8) == 0x01);
+      int status = record~load_uint(8);
+      record~skip_bits(8 + 256);
+      int wallet_code_hash = record~load_uint(256);
+      int cap = record~load_coins();
+      slice origin = record~load_ref().begin_parse();
+      record.end_parse();
+      int origin_kind = origin~load_uint(8);
+      origin~skip_bits(256 + 32 + 160);
+      origin.end_parse();
+      throw_unless(err::asset_not_recognized, (status >= 1) & (status <= 3));
+      throw_unless(err::asset_not_recognized, (origin_kind == 1) | (origin_kind == 2));
+      throw_unless(err::asset_not_recognized, cap > 0);
+      asset_status = status;
+      asset_wallet_code_hash = wallet_code_hash;
+      asset_cap = cap;
+    } catch (_, _) {
+      asset_status = 0;
+    }
+
+    (int policy_version, int price, int fee, int bounty, int sla, int window, int open,
+     int has_auth, slice auth, int rate, int max_tokens, int meta, int proof, int has_att,
+     int att_id, cell att_key) = unpack_policy(policy_cell);
+    int backing = max(get_balance().pair_first() - msg_value, 0);
+    int today = now() / 86400;
+    int day_calls = today == call_day ? calls_today : 0;
+    int liability = pending_liability + refundable_liability + returned_liability + in_flight;
+    cell terms = current_terms();
+    int terms_hash = cell_hash(terms);
+    ;; A key placed in the deploy data is checked as on the native rail; a key
+    ;; that does not parse is a refusal, not a throw.
+    int attestor_ok = false;
+    try {
+      if (has_att) {
+        attestor_ok = pq::key_id(pq::algorithm::mldsa44, att_key) == att_id;
+      } else {
+        attestor_ok = null?(att_key) & (att_id == 0);
+      }
+    } catch (_, _) {
+      attestor_ok = false;
+    }
+
+    int reason = 0;
+    if (~ payload_ok) {
+      reason = err::malformed_payload;
+    } elseif (active != 1) {
+      reason = err::inactive;
+    } elseif ((sla < MIN_RESPONSE_SLA) | (sla > MAX_RESPONSE_SLA)) {
+      reason = err::invalid_response_sla;
+    } elseif ((window < MIN_REFUND_CLAIM_WINDOW) | (window > MAX_REFUND_CLAIM_WINDOW)) {
+      reason = err::invalid_refund_claim_window;
+    } elseif ((bounty < MINIMUM_CLEANUP_BOUNTY) | (bounty > MAXIMUM_CLEANUP_BOUNTY)) {
+      reason = err::invalid_cleanup_bounty;
+    } elseif (fee < MINIMUM_STORAGE_FEE + bounty) {
+      reason = err::insufficient_storage_fee;
+    } elseif ((price <= 0) | (max_tokens <= 0)) {
+      reason = err::insufficient_payment;
+    } elseif (~ attestor_ok) {
+      reason = err::bad_attestor_key;
+    } elseif ((~ canonical_basechain?(master)) | (cell_hash(code) != route_code_hash)) {
+      reason = err::asset_route_invalid;
+    } elseif ((asset_status != 1) | (asset_wallet_code_hash != route_code_hash)) {
+      reason = err::asset_not_recognized;
+    } elseif (~ canonical_basechain?(from)) {
+      reason = err::invalid_destination;
+    } elseif ((open != 1) & (~ (has_auth & equal_slice_bits(from, auth)))) {
+      reason = err::not_authorized;
+    } elseif (amount != price) {
+      reason = err::insufficient_payment;
+    } elseif (msg_value < fee + min_funding_value(code)) {
+      reason = err::insufficient_payment;
+    } elseif (live_count >= MAX_LIVE_GLOBAL) {
+      reason = err::capacity_exceeded_global;
+    } elseif (caller_count(caller_live_counts, from) >= MAX_LIVE_PER_CALLER) {
+      reason = err::capacity_exceeded_caller;
+    } elseif (next_request_id >= (1 << 64) - 1) {
+      reason = err::request_id_overflow;
+    } elseif ((rate != 0) & (day_calls >= rate)) {
+      reason = err::rate_limited;
+    } elseif ((returned_count >= MAX_RETURNED_GLOBAL)
+              | (caller_count(caller_returned_counts, from) >= MAX_RETURNED_PER_CALLER)) {
+      reason = err::not_accepting_tokens;
+    } elseif (liability + price > min(max_tokens, asset_cap)) {
+      reason = err::exposure_cap;
+    } elseif (expected_terms_hash != terms_hash) {
+      reason = err::terms_mismatch;
+    } elseif (backing < locked_storage_fees + locked_outcome_fees + MINIMUM_OPERATING_RESERVE) {
+      reason = err::operating_reserve_unfunded;
+    } elseif ((pending_liability + price >= MAX_COINS) | (locked_storage_fees + fee >= MAX_COINS)
+              | (backing + fee >= MAX_COINS)) {
+      reason = err::amount_range;
+    }
+
+    if (reason == 0) {
+      int request_id = next_request_id;
+      int response_deadline = now() + sla;
+      int refund_claim_deadline = response_deadline + window;
+      pending_requests~udict_set_ref(64, request_id,
+        pack_pending_request(from, price, fee, bounty, response_deadline, refund_claim_deadline,
+          policy_version, request_hash, terms_hash, has_att, att_id, has_att ? att_key : null()));
+      caller_live_counts = caller_incr(caller_live_counts, from);
+      next_request_id = request_id + 1;
+      pending_count += 1;
+      live_count += 1;
+      call_day = today;
+      calls_today = day_calls + 1;
+      pending_liability += price;
+      locked_storage_fees += fee;
+      save_state();
+      raw_reserve(backing + fee, 0);
+      send_log(begin_cell()
+        .store_uint(log::request_snapshot, 32)
+        .store_uint(request_id, 64)
+        .store_slice(from)
+        .store_uint(request_hash, 256)
+        .store_uint(response_deadline, 64)
+        .store_uint(refund_claim_deadline, 64)
+        .store_ref(terms)
+      .end_cell(), 1);
+      send_value(from, 0, 128);
+      return ();
+    }
+
+    ;; Refused: the tokens go back to their sender as a funding return, paid
+    ;; from its RETURN_BUDGET. No cap applies to it.
+    if ((amount <= 0) | (next_payout_id >= (1 << 64) - 1)) {
+      ;; No token to return, or no payout id left: nothing is stored.
+      emit_funding(query_id, from, amount, reason, 0, 1);
+      return ();
+    }
+    (int payout_id, int lock) = create_payout(kind::funding_return, 0, from, from, amount,
+      own_wallet, undo_cell(source::none, null()));
+    save_state();
+    emit_funding(query_id, from, amount, reason, payout_id, 1);
+    send_payout(payout_id, amount, from, from, own_wallet, backing + lock);
+    return ();
+  }
+
+  ;; ---- the request lifecycle ----------------------------------------------------------------
+  load_state();
+
+  if (op == op::respond) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    int request_id = in_msg~load_uint(64);
+    (cell entry, int found) = pending_requests.udict_get_ref?(64, request_id);
+    throw_unless(err::request_not_pending, found);
+    (slice caller, int price, int fee, _, int response_deadline, int refund_claim_deadline, _,
+     int request_hash, int terms_hash, int req_has_att, _) = unpack_pending_request(entry);
+    throw_unless(err::response_window_closed, now() < response_deadline);
+    int response_hash = in_msg~load_uint(256);
+    if (req_has_att) {
+      cell signature = pq::stored_signature(pq::algorithm::mldsa44, in_msg~load_ref());
+      int domain_hash = compute_response_domain_hash(caller, request_id, request_hash,
+        response_hash, terms_hash, price, response_deadline, refund_claim_deadline);
+      (_, cell key) = pq::stored_key(pq::algorithm::mldsa44, pending_attestor_key(entry));
+      cell message = begin_cell().store_uint(domain_hash, 256).end_cell();
+      cell context = begin_cell().store_slice("TOS-SERVICE-ACTOR-RESPOND-V1").end_cell();
+      throw_unless(err::bad_response_signature,
+        pq_check_mldsa44(message, context, signature, key));
+    }
+    in_msg.end_parse();
+    (pending_requests, _) = pending_requests.udict_delete?(64, request_id);
+    caller_live_counts = caller_decr(caller_live_counts, caller);
+    pending_count -= 1;
+    live_count -= 1;
+    pending_liability = checked_sub_amount(pending_liability, price);
+    withdrawable_token_revenue = checked_add_amount(withdrawable_token_revenue, price);
+    locked_storage_fees = checked_sub_amount(locked_storage_fees, fee);
+    withdrawable_tos_revenue = checked_add_amount(withdrawable_tos_revenue, fee);
+    save_state();
+    return ();
+  }
+
+  if (op == op::expire) {
+    int request_id = in_msg~load_uint(64);
+    in_msg.end_parse();
+    (cell entry, int found) = pending_requests.udict_get_ref?(64, request_id);
+    throw_unless(err::request_not_pending, found);
+    (slice caller, int price, int fee, int bounty, int response_deadline, int refund_claim_deadline,
+     _, _, _, _, _) = unpack_pending_request(entry);
+    throw_unless(err::expire_too_early, response_deadline <= now());
+    throw_unless(err::expire_too_late, now() < refund_claim_deadline);
+    (pending_requests, _) = pending_requests.udict_delete?(64, request_id);
+    refunds~udict_set_ref(64, request_id, pack_refund(caller, price, fee, bounty,
+      refund_claim_deadline));
+    pending_count -= 1;
+    pending_liability = checked_sub_amount(pending_liability, price);
+    refundable_liability = checked_add_amount(refundable_liability, price);
+    save_state();
+    return ();
+  }
+
+  (slice master, _, cell code) = unpack_route(route_cell);
+
+  if (op == op::claim_refund) {
+    int request_id = in_msg~load_uint(64);
+    slice destination = in_msg~load_msg_addr();
+    in_msg.end_parse();
+    throw_unless(err::invalid_destination, canonical_basechain?(sender));
+    (cell entry, int found) = refunds.udict_get_ref?(64, request_id);
+    throw_unless(err::refund_not_found, found);
+    (slice caller, int price, _, _, int refund_claim_deadline) = unpack_refund(entry);
+    throw_unless(err::not_refund_caller, equal_slice_bits(sender, caller));
+    throw_unless(err::refund_claim_expired, now() < refund_claim_deadline);
+    throw_unless(err::invalid_destination, valid_destination?(destination));
+    throw_unless(err::insufficient_execution_payment, msg_value >= payout_funding(code));
+    int backing = get_balance().pair_first() - msg_value;
+    throw_unless(err::insufficient_balance, backing >= 0);
+    (refunds, _) = refunds.udict_delete?(64, request_id);
+    refundable_liability = checked_sub_amount(refundable_liability, price);
+    slice own_wallet = token_wallet_address(my_address(), master, code);
+    (int payout_id, int lock) = create_payout(kind::refund, request_id, destination, sender, price,
+      own_wallet, undo_cell(source::refunds, entry));
+    save_state();
+    send_payout(payout_id, price, destination, sender, own_wallet, checked_add_amount(backing, lock));
+    return ();
+  }
+
+  if (op == op::sweep_expired_request) {
+    int request_id = in_msg~load_uint(64);
+    in_msg.end_parse();
+    (cell pending_entry, int in_pending) = pending_requests.udict_get_ref?(64, request_id);
+    (cell refund_entry, int in_refunds) = refunds.udict_get_ref?(64, request_id);
+    throw_unless(err::request_not_live, in_pending | in_refunds);
+    int source = in_pending ? source::pending : source::refunds;
+    cell entry = in_pending ? pending_entry : refund_entry;
+    (slice caller, int price, _, _) = entry_terms(source, entry);
+    int refund_claim_deadline = 0;
+    if (in_pending) {
+      (_, _, _, _, _, int deadline, _, _, _, _, _) = unpack_pending_request(entry);
+      refund_claim_deadline = deadline;
+    } else {
+      (_, _, _, _, int deadline) = unpack_refund(entry);
+      refund_claim_deadline = deadline;
+    }
+    throw_unless(err::sweep_too_early, now() >= refund_claim_deadline);
+    throw_unless(err::insufficient_execution_payment, msg_value >= payout_funding(code));
+    int backing = get_balance().pair_first() - msg_value;
+    throw_unless(err::insufficient_balance, backing >= 0);
+    if (in_pending) {
+      (pending_requests, _) = pending_requests.udict_delete?(64, request_id);
+      pending_liability = checked_sub_amount(pending_liability, price);
+    } else {
+      (refunds, _) = refunds.udict_delete?(64, request_id);
+      refundable_liability = checked_sub_amount(refundable_liability, price);
+    }
+    slice own_wallet = token_wallet_address(my_address(), master, code);
+    (int payout_id, int lock) = create_payout(kind::sweep, request_id, caller, sender, price,
+      own_wallet, undo_cell(source, entry));
+    save_state();
+    send_payout(payout_id, price, caller, sender, own_wallet, checked_add_amount(backing, lock));
+    return ();
+  }
+
+  if (op == op::claim_returned) {
+    int id = in_msg~load_uint(64);
+    slice destination = in_msg~load_msg_addr();
+    in_msg.end_parse();
+    throw_unless(err::invalid_destination, canonical_basechain?(sender));
+    (cell entry, int found) = returned.udict_get_ref?(64, id);
+    throw_unless(err::returned_not_found, found);
+    (slice caller, int amount, int paying, int return_deadline) = unpack_returned(entry);
+    throw_unless(err::not_refund_caller, equal_slice_bits(sender, caller));
+    throw_unless(err::payout_in_flight, paying == 0);
+    throw_unless(err::invalid_destination, valid_destination?(destination));
+    throw_unless(err::insufficient_execution_payment, msg_value >= payout_funding(code));
+    int backing = get_balance().pair_first() - msg_value;
+    throw_unless(err::insufficient_balance, backing >= 0);
+    returned_liability = checked_sub_amount(returned_liability, amount);
+    slice own_wallet = token_wallet_address(my_address(), master, code);
+    (int payout_id, int lock) = create_payout(kind::returned_claim, id, destination, sender, amount,
+      own_wallet, undo_cell(source::none, null()));
+    returned~udict_set_ref(64, id, pack_returned(caller, amount, payout_id, return_deadline));
+    save_state();
+    send_payout(payout_id, amount, destination, sender, own_wallet,
+      checked_add_amount(backing, lock));
+    return ();
+  }
+
+  if (op == op::sweep_returned) {
+    int id = in_msg~load_uint(64);
+    in_msg.end_parse();
+    (cell entry, int found) = returned.udict_get_ref?(64, id);
+    throw_unless(err::returned_not_found, found);
+    (slice caller, int amount, int paying, int return_deadline) = unpack_returned(entry);
+    throw_unless(err::sweep_too_early, now() >= return_deadline);
+    throw_unless(err::payout_in_flight, paying == 0);
+    throw_unless(err::insufficient_execution_payment, msg_value >= payout_funding(code));
+    int backing = get_balance().pair_first() - msg_value;
+    throw_unless(err::insufficient_balance, backing >= 0);
+    returned_liability = checked_sub_amount(returned_liability, amount);
+    slice own_wallet = token_wallet_address(my_address(), master, code);
+    (int payout_id, int lock) = create_payout(kind::returned_sweep, id, caller, sender, amount,
+      own_wallet, undo_cell(source::none, null()));
+    returned~udict_set_ref(64, id, pack_returned(caller, amount, payout_id, return_deadline));
+    save_state();
+    send_payout(payout_id, amount, caller, sender, own_wallet, checked_add_amount(backing, lock));
+    return ();
+  }
+
+  if (op == op::recheck_payout) {
+    int id = in_msg~load_uint(64);
+    in_msg.end_parse();
+    (cell stored, int found) = payouts.udict_get_ref?(64, id);
+    throw_unless(err::payout_not_found, found);
+    (int kind, _, _, _, _, int created_at, _, _, _, _) = unpack_payout(stored);
+    throw_unless(err::recheck_not_allowed, (kind != kind::revenue) & (kind != kind::surplus));
+    throw_unless(err::recheck_too_early, now() >= created_at + PAYOUT_RECHECK_AGE);
+    (int q_active, _, _, int q_created_at, _, _, _, _, _) = unpack_query();
+    throw_if(err::balance_query_busy, q_active & (now() < q_created_at + RECHECK_QUERY_TTL));
+    throw_unless(err::insufficient_execution_payment, msg_value >= PAYOUT_GAS_ALLOWANCE);
+    throw_unless(err::request_id_overflow, next_payout_id < (1 << 64) - 1);
+    int q_id = next_payout_id;
+    next_payout_id = q_id + 1;
+    query_cell = pack_query(1, q_id, purpose::recheck, now(), q_id, 0, id, 0, sender);
+    save_state();
+    send_body(token_wallet_address(my_address(), master, code), 0, true,
+      query_body(op::provide_balance, q_id), 64 + 16);
+    return ();
+  }
+
+  ;; ---- owner operations --------------------------------------------------------------------
+  throw_unless(err::unknown_op, (op == op::update_policy) | (op == op::rotate_attestor_key)
+    | (op == op::revoke_attestor) | (op == op::withdraw_revenue) | (op == op::recover_surplus)
+    | (op == op::abandon_payout));
+  throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+  (int policy_version, int price, int fee, int bounty, int sla, int window, int open,
+   int has_auth, slice auth, int rate, int max_tokens, int meta, int proof, int has_att,
+   int att_id, cell att_key) = unpack_policy(policy_cell);
+
+  if (op == op::update_policy) {
+    int new_price = in_msg~load_coins();
+    int new_fee = in_msg~load_coins();
+    int new_bounty = in_msg~load_coins();
+    int new_sla = in_msg~load_uint(32);
+    int new_window = in_msg~load_uint(32);
+    int new_active = in_msg~load_uint(1);
+    int new_open = in_msg~load_uint(1);
+    int new_has_auth = in_msg~load_uint(1);
+    slice new_auth = in_msg~load_msg_addr();
+    int new_rate = in_msg~load_uint(32);
+    int new_max_tokens = in_msg~load_coins();
+    slice meta_s = in_msg~load_ref().begin_parse();
+    int new_meta = meta_s~load_uint(256);
+    int new_proof = meta_s~load_uint(256);
+    meta_s.end_parse();
+    in_msg.end_parse();
+    throw_unless(err::invalid_response_sla, (new_sla >= MIN_RESPONSE_SLA) & (new_sla <= MAX_RESPONSE_SLA));
+    throw_unless(err::invalid_refund_claim_window,
+      (new_window >= MIN_REFUND_CLAIM_WINDOW) & (new_window <= MAX_REFUND_CLAIM_WINDOW));
+    throw_unless(err::invalid_cleanup_bounty,
+      (new_bounty >= MINIMUM_CLEANUP_BOUNTY) & (new_bounty <= MAXIMUM_CLEANUP_BOUNTY));
+    throw_unless(err::insufficient_storage_fee,
+      new_fee >= checked_add_amount(MINIMUM_STORAGE_FEE, new_bounty));
+    throw_unless(err::insufficient_payment, new_price > 0);
+    throw_unless(err::exposure_cap, new_max_tokens > 0);
+    active = new_active;
+    policy_cell = pack_policy(policy_version + 1, new_price, new_fee, new_bounty, new_sla,
+      new_window, new_open, new_has_auth, new_auth, new_rate, new_max_tokens, new_meta, new_proof,
+      has_att, att_id, att_key);
+    save_state();
+    return ();
+  }
+
+  if (op == op::rotate_attestor_key) {
+    cell new_key = in_msg~load_ref();
+    in_msg.end_parse();
+    int new_id = pq::key_id(pq::algorithm::mldsa44, new_key);
+    policy_cell = pack_policy(policy_version, price, fee, bounty, sla, window, open, has_auth,
+      auth, rate, max_tokens, meta, proof, 1, new_id, new_key);
+    save_state();
+    return ();
+  }
+
+  if (op == op::revoke_attestor) {
+    in_msg.end_parse();
+    policy_cell = pack_policy(policy_version, price, fee, bounty, sla, window, open, has_auth,
+      auth, rate, max_tokens, meta, proof, 0, 0, null());
+    save_state();
+    return ();
+  }
+
+  if (op == op::withdraw_revenue) {
+    int token_amount = in_msg~load_coins();
+    int tos_amount = in_msg~load_coins();
+    in_msg.end_parse();
+    ;; The TOS part as on the native rail: what live entries and outcome locks
+    ;; need, and the operating reserve, are never the owner's.
+    int backing = get_balance().pair_first() - msg_value;
+    throw_unless(err::insufficient_revenue, backing >= 0);
+    int remaining = backing;
+    throw_unless(err::insufficient_revenue, remaining >= locked_storage_fees);
+    remaining = checked_sub_amount(remaining, locked_storage_fees);
+    throw_unless(err::insufficient_revenue, remaining >= locked_outcome_fees);
+    remaining = checked_sub_amount(remaining, locked_outcome_fees);
+    throw_unless(err::insufficient_revenue, remaining >= MINIMUM_OPERATING_RESERVE);
+    remaining = checked_sub_amount(remaining, MINIMUM_OPERATING_RESERVE);
+    throw_unless(err::insufficient_revenue, tos_amount <= min(withdrawable_tos_revenue, remaining));
+    throw_unless(err::insufficient_revenue, token_amount <= withdrawable_token_revenue);
+    if (token_amount > 0) {
+      throw_unless(err::payout_in_flight, revenue_payouts_in_flight < MAX_REVENUE_PAYOUTS);
+      throw_unless(err::invalid_destination, canonical_basechain?(owner));
+      throw_unless(err::insufficient_execution_payment, msg_value >= payout_funding(code));
+    } else {
+      throw_unless(err::insufficient_execution_payment, msg_value >= PAYOUT_GAS_ALLOWANCE);
+    }
+    withdrawable_tos_revenue = checked_sub_amount(withdrawable_tos_revenue, tos_amount);
+    int retained = checked_sub_amount(backing, tos_amount);
+    if (token_amount > 0) {
+      withdrawable_token_revenue = checked_sub_amount(withdrawable_token_revenue, token_amount);
+      revenue_payouts_in_flight += 1;
+      slice own_wallet = token_wallet_address(my_address(), master, code);
+      (int payout_id, int lock) = create_payout(kind::revenue, 0, owner, sender, token_amount,
+        own_wallet, undo_cell(source::none, null()));
+      save_state();
+      raw_reserve(checked_add_amount(retained, lock), 0);
+      if (tos_amount > 0) {
+        send_value(owner, tos_amount, 1);
+      }
+      send_body(own_wallet, 0, true,
+        reported_transfer_body(payout_id, token_amount, owner, sender), 128 + 16);
+      return ();
+    }
+    save_state();
+    raw_reserve(retained, 0);
+    if (tos_amount > 0) {
+      send_value(owner, tos_amount, 1);
+    }
+    send_value(sender, 0, 128);
+    return ();
+  }
+
+  if (op == op::recover_surplus) {
+    int amount = in_msg~load_coins();
+    in_msg.end_parse();
+    throw_unless(err::surplus_insufficient, amount > 0);
+    throw_unless(err::invalid_destination, canonical_basechain?(owner));
+    (int q_active, _, _, int q_created_at, _, _, _, _, _) = unpack_query();
+    throw_if(err::balance_query_busy, q_active & (now() < q_created_at + RECHECK_QUERY_TTL));
+    throw_unless(err::insufficient_execution_payment,
+      msg_value >= PAYOUT_GAS_ALLOWANCE + payout_funding(code));
+    throw_unless(err::request_id_overflow, next_payout_id < (1 << 64) - 2);
+    int q_id = next_payout_id;
+    next_payout_id = q_id + 1;
+    query_cell = pack_query(1, q_id, purpose::surplus, now(), q_id, 0, 0, amount, sender);
+    save_state();
+    send_body(token_wallet_address(my_address(), master, code), 0, true,
+      query_body(op::provide_balance, q_id), 64 + 16);
+    return ();
+  }
+
+  if (op == op::abandon_payout) {
+    int id = in_msg~load_uint(64);
+    in_msg.end_parse();
+    (cell stored, int found) = payouts.udict_get_ref?(64, id);
+    throw_unless(err::payout_not_found, found);
+    (int kind, int request_id, slice recipient, _, int amount, int created_at, _, _, int lock,
+     cell undo) = unpack_payout(stored);
+    throw_unless(err::recheck_not_allowed, (kind == kind::revenue) | (kind == kind::surplus));
+    throw_unless(err::abandon_too_early, now() >= created_at + PAYOUT_ABANDON_AGE);
+    (int q_active, _, _, int q_created_at, _, _, _, _, _) = unpack_query();
+    throw_if(err::balance_query_busy, q_active & (now() < q_created_at + RECHECK_QUERY_TTL));
+    query_cell = empty_query();
+    int backing = get_balance().pair_first() - msg_value;
+    throw_unless(err::insufficient_balance, backing >= 0);
+    apply_outcome(id, kind, request_id, recipient, amount, undo, outcome::abandoned);
+    (payouts, _) = payouts.udict_delete?(64, id);
+    locked_outcome_fees = checked_sub_amount(locked_outcome_fees, lock);
+    save_state();
+    emit_outcome(id, kind, request_id, recipient, amount, outcome::abandoned, 1);
+    raw_reserve(max(backing - lock, 0), 0);
+    send_value(sender, 0, 128);
+    return ();
+  }
+
+  throw(err::unknown_op);
+}
+
+;; ---- getters ---------------------------------------------------------------------------------
+
+(slice, int, int, int, int, int, int, int, int, int, slice, int, int, int, int, int, int, int, int,
+ int, int) get_service_data() method_id {
+  load_state();
+  (int policy_version, int price, int fee, int bounty, int sla, int window, int open,
+   int has_auth, slice auth, int rate, int max_tokens, int meta, int proof, int has_att,
+   int att_id, _) = unpack_policy(policy_cell);
+  return (owner, active, policy_version, price, fee, bounty, sla, window, open, has_auth, auth,
+    rate, meta, proof, has_att, att_id, max_tokens, next_request_id, pending_count, live_count,
+    next_payout_id);
+}
+
+(int, int, int, int, int, int, int) get_native_ledger() method_id {
+  load_state();
+  return (withdrawable_tos_revenue, locked_storage_fees, locked_outcome_fees, call_day,
+    calls_today, revenue_payouts_in_flight, returned_count);
+}
+
+(int, int, int, int, int) get_token_ledger() method_id {
+  load_state();
+  return (pending_liability, refundable_liability, returned_liability, in_flight,
+    withdrawable_token_revenue);
+}
+
+(int, int, int, int, int, int, int, int, slice) get_balance_query() method_id {
+  load_state();
+  return unpack_query();
+}
+
+(slice, int, cell) get_asset_route() method_id {
+  load_state();
+  return unpack_route(route_cell);
+}
+
+slice get_own_wallet() method_id {
+  load_state();
+  return own_wallet_of(route_cell);
+}
+
+int get_terms_hash() method_id {
+  load_state();
+  return cell_hash(current_terms());
+}
+
+cell get_terms() method_id {
+  load_state();
+  return current_terms();
+}
+
+;; The TOS values tooling attaches, at current prices: a call's minimum
+;; forward value without the storage fee, its parts, a payout op's minimum,
+;; and a funded re-report of an absent payout.
+(int, int, int, int, int, int) get_funding_prices() method_id {
+  load_state();
+  (_, _, cell code) = unpack_route(route_cell);
+  return (min_funding_value(code), admission_gas_allowance(), return_budget(code),
+    report_tos_amount(), outcome_fee_lock(), payout_funding(code));
+}
+
+int get_rereport_funding() method_id {
+  return rereport_funding();
+}
+
+(int, slice, int, int, int, int, int, int, int, int, int, int) get_request(int request_id) method_id {
+  load_state();
+  (cell entry, int found) = pending_requests.udict_get_ref?(64, request_id);
+  if (~ found) {
+    return (0, null(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  }
+  (slice caller, int price, int fee, int bounty, int response_deadline, int refund_claim_deadline,
+   int policy_version, int request_hash, int terms_hash, int has_att, int att_id)
+    = unpack_pending_request(entry);
+  return (1, caller, price, fee, bounty, response_deadline, refund_claim_deadline, policy_version,
+    request_hash, terms_hash, has_att, att_id);
+}
+
+(int, slice, int, int, int, int) get_refund(int request_id) method_id {
+  load_state();
+  (cell entry, int found) = refunds.udict_get_ref?(64, request_id);
+  if (~ found) {
+    return (0, null(), 0, 0, 0, 0);
+  }
+  (slice caller, int price, int fee, int bounty, int refund_claim_deadline) = unpack_refund(entry);
+  return (1, caller, price, fee, bounty, refund_claim_deadline);
+}
+
+(int, int, int, slice, slice, int, int, slice, slice, int) get_payout(int id) method_id {
+  load_state();
+  (cell stored, int found) = payouts.udict_get_ref?(64, id);
+  if (~ found) {
+    return (0, 0, 0, null(), null(), 0, 0, null(), null(), 0);
+  }
+  (int kind, int request_id, slice recipient, slice requester, int amount, int created_at,
+   slice recipient_wallet, slice own_wallet, int lock, _) = unpack_payout(stored);
+  return (1, kind, request_id, recipient, requester, amount, created_at, recipient_wallet,
+    own_wallet, lock);
+}
+
+(int, slice, int, int, int) get_returned(int id) method_id {
+  load_state();
+  (cell entry, int found) = returned.udict_get_ref?(64, id);
+  if (~ found) {
+    return (0, null(), 0, 0, 0);
+  }
+  (slice caller, int amount, int paying, int return_deadline) = unpack_returned(entry);
+  return (1, caller, amount, paying, return_deadline);
+}
+
+int get_caller_live_count(slice caller) method_id {
+  load_state();
+  return caller_count(caller_live_counts, caller);
+}
+
+int get_caller_returned_count(slice caller) method_id {
+  load_state();
+  return caller_count(caller_returned_counts, caller);
+}
+
+cell get_attestor_key() method_id {
+  load_state();
+  (_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, cell att_key) = unpack_policy(policy_cell);
+  return att_key;
+}
+
+cell get_request_attestor_key(int request_id) method_id {
+  load_state();
+  (cell entry, int found) = pending_requests.udict_get_ref?(64, request_id);
+  throw_unless(err::request_not_pending, found);
+  return pending_attestor_key(entry);
+}
+
+int get_pending_count() method_id {
+  load_state();
+  return pending_count;
+}
+
+int get_live_count() method_id {
+  load_state();
+  return live_count;
+}

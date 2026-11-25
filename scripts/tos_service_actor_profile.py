@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Service Actor build profiles: the release build and the test-only build.
+"""Service Actor build profiles: each rail's release build and its test-only build.
 
-Both profiles compile crypto/smartcont/service-actor-code.fc. The release
-profile compiles that file as it is. The test profile compiles a derived copy
-in which only the constants listed in TEST_OVERRIDES take other values; every
-other byte of the source and of the files it includes is unchanged. The test
-profile exists so that test networks can exercise the timeout-refund path in
-minutes instead of hours. Its code hash differs from the release code hash, so
-nothing that pins the release hash accepts a test-profile actor.
+Two rails exist: the native rail (crypto/smartcont/service-actor-code.fc) and
+the token rail (crypto/smartcont/service-actor-token-code.fc). Each has a
+release profile, which compiles its source as it is, and a test profile, which
+compiles a derived copy in which only the constants listed in TEST_OVERRIDES
+take other values; every other byte of the source and of the files it includes
+is unchanged. The test profiles exist so that test networks can exercise the
+timeout-refund path in minutes instead of hours. A test code hash differs from
+its release code hash, so nothing that pins a release hash accepts a
+test-profile actor.
 
 Usage:
     tos_service_actor_profile.py manifest <profile>
@@ -25,30 +27,72 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SOURCE = "crypto/smartcont/service-actor-code.fc"
+TOKEN_SOURCE = "crypto/smartcont/service-actor-token-code.fc"
 RELEASE = "release"
 TEST = "test"
+TOKEN = "token"
+TOKEN_TEST = "token-test"
 
 # The only constants the test profile may change, and their test values. Each
 # replaces a lower bound with a smaller one; no upper bound, fee or capacity
 # constant is ever overridden.
 TEST_OVERRIDES = {"MIN_RESPONSE_SLA": 600, "MIN_REFUND_CLAIM_WINDOW": 600}
 
+NATIVE_SDK = "tosctl/src/node-control/contracts/src/service_actor.rs"
+TOKEN_SDK = "tosctl/src/node-control/contracts/src/service_actor_token.rs"
+
+# "release" names the profile a test profile is the test build of; a release
+# profile names none.
 PROFILES = {
     RELEASE: {
+        "contract": "tos-service-actor-v1",
+        "source": SOURCE,
+        "sdk": NATIVE_SDK,
         "manifest": "crypto/smartcont/tos-service-actor-v1.release.json",
         "artifact_base64": "crypto/smartcont/tos-service-actor-v1.boc.base64",
         "sdk_constant": "SERVICE_ACTOR_CODE_B64",
         "default_output": "crypto/smartcont/artifacts/tos-service-actor-v1.boc",
         "overrides": {},
+        "release": None,
     },
     TEST: {
+        "contract": "tos-service-actor-v1",
+        "source": SOURCE,
+        "sdk": NATIVE_SDK,
         "manifest": "crypto/smartcont/tos-service-actor-v1-test.release.json",
         "artifact_base64": "crypto/smartcont/tos-service-actor-v1-test.boc.base64",
         "sdk_constant": "SERVICE_ACTOR_TEST_PROFILE_CODE_B64",
         "default_output": "crypto/smartcont/artifacts/tos-service-actor-v1-test.boc",
         "overrides": TEST_OVERRIDES,
+        "release": RELEASE,
+    },
+    TOKEN: {
+        "contract": "tos-service-actor-token-v1",
+        "source": TOKEN_SOURCE,
+        "sdk": TOKEN_SDK,
+        "manifest": "crypto/smartcont/tos-service-actor-token-v1.release.json",
+        "artifact_base64": "crypto/smartcont/tos-service-actor-token-v1.boc.base64",
+        "sdk_constant": "SERVICE_ACTOR_TOKEN_CODE_B64",
+        "default_output": "crypto/smartcont/artifacts/tos-service-actor-token-v1.boc",
+        "overrides": {},
+        "release": None,
+    },
+    TOKEN_TEST: {
+        "contract": "tos-service-actor-token-v1",
+        "source": TOKEN_SOURCE,
+        "sdk": TOKEN_SDK,
+        "manifest": "crypto/smartcont/tos-service-actor-token-v1-test.release.json",
+        "artifact_base64": "crypto/smartcont/tos-service-actor-token-v1-test.boc.base64",
+        "sdk_constant": "SERVICE_ACTOR_TOKEN_TEST_PROFILE_CODE_B64",
+        "default_output": "crypto/smartcont/artifacts/tos-service-actor-token-v1-test.boc",
+        "overrides": TEST_OVERRIDES,
+        "release": TOKEN,
     },
 }
+
+# Each test profile and the release profile it derives from.
+TEST_PAIRS = tuple((selected["release"], name) for name, selected in PROFILES.items()
+                   if selected["release"] is not None)
 
 INCLUDE = re.compile(r'^\s*#include\s+"([^"]+)"\s*;', re.MULTILINE)
 
@@ -112,8 +156,9 @@ def source_for(name: str, work: Path, root: Path = REPO) -> Path:
     so every #include resolves as it does in the checkout) and rewrites only
     the overridden constants in the copied main file.
     """
-    overrides = profile(name)["overrides"]
-    original = (root / SOURCE).resolve()
+    selected = profile(name)
+    overrides = selected["overrides"]
+    original = (root / selected["source"]).resolve()
     if not overrides:
         return original
     root = root.resolve()
@@ -121,7 +166,7 @@ def source_for(name: str, work: Path, root: Path = REPO) -> Path:
         target = work / path.relative_to(root)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target)
-    derived = work / SOURCE
+    derived = work / selected["source"]
     derived.write_text(apply_overrides(original.read_text(), overrides))
     return derived
 

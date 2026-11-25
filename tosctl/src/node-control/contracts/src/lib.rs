@@ -48,6 +48,7 @@ pub mod proven_transactions;
 pub mod provider;
 pub mod relayer_bond;
 pub mod service_actor;
+pub mod service_actor_token;
 pub mod settlement_assets;
 pub mod shielded_pool;
 pub mod smart_contract;
