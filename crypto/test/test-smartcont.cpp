@@ -2012,16 +2012,7 @@ class MapDns {
   }
   using CombinedActions = tos::ManualDns::CombinedActions<Action>;
   void update_combined(td::Span<Action> actions) {
-    LOG(ERROR) << "BEGIN";
-    LOG(ERROR) << td::format::as_array(actions);
     auto combined_actions = tos::ManualDns::combine_actions(actions);
-    for (auto& c : combined_actions) {
-      LOG(ERROR) << c.name << ":" << c.category.to_hex();
-      if (c.actions) {
-        LOG(ERROR) << td::format::as_array(c.actions.value());
-      }
-    }
-    LOG(ERROR) << "END";
     for (auto& combined_action : combined_actions) {
       do_update(combined_action);
     }
@@ -2088,7 +2079,6 @@ class MapDns {
   void do_update(const CombinedActions& actions) {
     if (actions.name.empty()) {
       entries_.clear();
-      LOG(ERROR) << "CLEAR";
       if (!actions.actions) {
         return;
       }
@@ -2106,7 +2096,6 @@ class MapDns {
     }
     if (actions.category.is_zero()) {
       entries_.erase(actions.name);
-      LOG(ERROR) << "CLEAR " << actions.name;
       if (!actions.actions) {
         return;
       }
@@ -2184,22 +2173,22 @@ class CheckedDns {
     return update(td::span_one(action));
   }
 
+  // The stress loop resolves 100,000 names, so a resolve logs nothing unless the
+  // implementations disagree; the failure names the query and both answers.
   std::vector<Entry> resolve(td::Slice name, td::Bits256 category) {
-    LOG(ERROR) << "RESOLVE: " << name << " " << category.to_hex();
     auto res = map_dns_.resolve(name, category);
-    LOG(ERROR) << td::format::as_array(res);
 
     if (dns_.not_null()) {
       auto other_res = dns_->resolve(name, category).move_as_ok();
 
       std::sort(other_res.begin(), other_res.end());
       if (res.size() != other_res.size()) {
-        LOG(ERROR) << td::format::as_array(res);
+        LOG(ERROR) << "RESOLVE: " << name << " " << category.to_hex() << " expected " << td::format::as_array(res);
         LOG(FATAL) << td::format::as_array(other_res);
       }
       for (size_t i = 0; i < res.size(); i++) {
         if (!(res[i] == other_res[i])) {
-          LOG(ERROR) << td::format::as_array(res);
+          LOG(ERROR) << "RESOLVE: " << name << " " << category.to_hex() << " expected " << td::format::as_array(res);
           LOG(FATAL) << td::format::as_array(other_res);
         }
       }
@@ -2209,12 +2198,12 @@ class CheckedDns {
 
       std::sort(other_res.begin(), other_res.end());
       if (res.size() != other_res.size()) {
-        LOG(ERROR) << td::format::as_array(res);
+        LOG(ERROR) << "RESOLVE: " << name << " " << category.to_hex() << " expected " << td::format::as_array(res);
         LOG(FATAL) << td::format::as_array(other_res);
       }
       for (size_t i = 0; i < res.size(); i++) {
         if (!(res[i] == other_res[i])) {
-          LOG(ERROR) << td::format::as_array(res);
+          LOG(ERROR) << "RESOLVE: " << name << " " << category.to_hex() << " expected " << td::format::as_array(res);
           LOG(FATAL) << td::format::as_array(other_res);
         }
       }
