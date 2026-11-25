@@ -35,3 +35,7 @@ mod world;
 
 #[path = "service_actor_token/lifecycle.rs"]
 mod lifecycle;
+#[path = "service_actor_token/funding.rs"]
+mod funding;
+#[path = "service_actor_token/payouts.rs"]
+mod payouts;

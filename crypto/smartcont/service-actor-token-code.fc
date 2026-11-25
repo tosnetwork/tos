@@ -1215,7 +1215,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     load_state();
     (int q_active, int q_id, int q_purpose, _, _, int q_delivered, int q_target, int q_amount,
      slice q_requester) = unpack_query();
-    if ((~ q_active) | (q_id != query_id)) {
+    if ((q_active != 1) | (q_id != query_id)) {
       return (); ;; superseded or unknown
     }
     slice own_wallet = own_wallet_of(route_cell);
@@ -1410,7 +1410,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
       reason = err::asset_not_recognized;
     } elseif (~ canonical_basechain?(from)) {
       reason = err::invalid_destination;
-    } elseif ((open != 1) & (~ (has_auth & equal_slice_bits(from, auth)))) {
+    } elseif ((open != 1) & (~ ((has_auth == 1) & equal_slice_bits(from, auth)))) {
       reason = err::not_authorized;
     } elseif (amount != price) {
       reason = err::insufficient_payment;

@@ -717,3 +717,263 @@ pub fn assert_refused(tx: &chain_block::Transaction, code: i32) {
 pub fn treasury(net: &mut Net, name: &str, tos: u64) -> Treasury {
     net.bc.treasury(name, tos * TOS).expect("a treasury")
 }
+
+// ---- the actor's state, as a deployer or a long history could leave it ----------------
+
+/// The actor's data, split into the parts its layout names.
+pub struct ActorData {
+    pub owner: MsgAddressInt,
+    pub active: bool,
+    pub next_request_id: u64,
+    pub pending_count: u32,
+    pub live_count: u32,
+    pub next_payout_id: u64,
+    pub policy: Cell,
+    /// withdrawable_tos_revenue, locked_storage_fees, locked_outcome_fees
+    pub tos: [u128; 3],
+    pub call_day: u32,
+    pub calls_today: u32,
+    pub revenue_payouts_in_flight: u8,
+    pub returned_count: u32,
+    /// pending, refundable, returned, in_flight, token revenue
+    pub token: [u128; 5],
+    pub query: Cell,
+    pub route: Cell,
+    /// pending_requests, refunds, caller_live_counts
+    pub requests: [Option<Cell>; 3],
+    /// payouts, returned, caller_returned_counts
+    pub payout_dicts: [Option<Cell>; 3],
+}
+
+fn dict_of(s: &mut SliceData) -> Option<Cell> {
+    if s.get_next_bit().unwrap() { Some(s.checked_drain_reference().unwrap()) } else { None }
+}
+
+fn put_dict(b: &mut chain_block::BuilderData, d: &Option<Cell>) {
+    match d {
+        Some(c) => {
+            b.append_bit_one().unwrap();
+            b.checked_append_reference(c.clone()).unwrap();
+        }
+        None => {
+            b.append_bit_zero().unwrap();
+        }
+    }
+}
+
+impl ActorData {
+    pub fn parse(data: &Cell) -> Self {
+        let mut s = SliceData::load_cell(data.clone()).unwrap();
+        let owner = MsgAddressInt::construct_from(&mut s).unwrap();
+        let active = s.get_next_bit().unwrap();
+        let next_request_id = s.get_next_u64().unwrap();
+        let pending_count = s.get_next_u32().unwrap();
+        let live_count = s.get_next_u32().unwrap();
+        let next_payout_id = s.get_next_u64().unwrap();
+        let policy = s.checked_drain_reference().unwrap();
+        let mut a = SliceData::load_cell(s.checked_drain_reference().unwrap()).unwrap();
+        let mut r = SliceData::load_cell(s.checked_drain_reference().unwrap()).unwrap();
+        let mut p = SliceData::load_cell(s.checked_drain_reference().unwrap()).unwrap();
+        let c = |s: &mut SliceData| Coins::construct_from(s).unwrap().as_u128();
+        let tos = [c(&mut a), c(&mut a), c(&mut a)];
+        let call_day = a.get_next_u32().unwrap();
+        let calls_today = a.get_next_u32().unwrap();
+        let revenue_payouts_in_flight = a.get_next_byte().unwrap();
+        let returned_count = a.get_next_u32().unwrap();
+        let mut t = SliceData::load_cell(a.checked_drain_reference().unwrap()).unwrap();
+        let token = [c(&mut t), c(&mut t), c(&mut t), c(&mut t), c(&mut t)];
+        let query = a.checked_drain_reference().unwrap();
+        let route = a.checked_drain_reference().unwrap();
+        let requests = [dict_of(&mut r), dict_of(&mut r), dict_of(&mut r)];
+        let payout_dicts = [dict_of(&mut p), dict_of(&mut p), dict_of(&mut p)];
+        Self {
+            owner,
+            active,
+            next_request_id,
+            pending_count,
+            live_count,
+            next_payout_id,
+            policy,
+            tos,
+            call_day,
+            calls_today,
+            revenue_payouts_in_flight,
+            returned_count,
+            token,
+            query,
+            route,
+            requests,
+            payout_dicts,
+        }
+    }
+
+    pub fn build(&self) -> Cell {
+        let token = cell(|b| {
+            for v in self.token {
+                coins(b, v);
+            }
+        });
+        let accounting = cell(|b| {
+            for v in self.tos {
+                coins(b, v);
+            }
+            b.append_u32(self.call_day).unwrap();
+            b.append_u32(self.calls_today).unwrap();
+            b.append_u8(self.revenue_payouts_in_flight).unwrap();
+            b.append_u32(self.returned_count).unwrap();
+            b.checked_append_reference(token).unwrap();
+            b.checked_append_reference(self.query.clone()).unwrap();
+            b.checked_append_reference(self.route.clone()).unwrap();
+        });
+        let requests = cell(|b| self.requests.iter().for_each(|d| put_dict(b, d)));
+        let payouts = cell(|b| self.payout_dicts.iter().for_each(|d| put_dict(b, d)));
+        cell(|b| {
+            self.owner.write_to(b).unwrap();
+            if self.active {
+                b.append_bit_one().unwrap();
+            } else {
+                b.append_bit_zero().unwrap();
+            }
+            b.append_u64(self.next_request_id).unwrap();
+            b.append_u32(self.pending_count).unwrap();
+            b.append_u32(self.live_count).unwrap();
+            b.append_u64(self.next_payout_id).unwrap();
+            b.checked_append_reference(self.policy.clone()).unwrap();
+            b.checked_append_reference(accounting).unwrap();
+            b.checked_append_reference(requests).unwrap();
+            b.checked_append_reference(payouts).unwrap();
+        })
+    }
+}
+
+/// The key the actor's per-caller counters use: the hash of the address's bits.
+pub fn caller_key(caller: &MsgAddressInt) -> [u8; 32] {
+    cell(|b| caller.write_to(b).unwrap()).repr_hash().inner()
+}
+
+/// A per-caller counter dictionary with `caller` at `count`.
+pub fn counter_dict(existing: &Option<Cell>, caller: &MsgAddressInt, count: u32) -> Option<Cell> {
+    use chain_block::{HashmapE, HashmapType};
+    let mut d = match existing {
+        Some(c) => HashmapE::with_hashmap(256, Some(c.clone())),
+        None => HashmapE::with_bit_len(256),
+    };
+    let key = SliceData::from_raw(caller_key(caller).to_vec(), 256);
+    let value = SliceData::load_cell(cell(|b| {
+        b.append_u32(count).unwrap();
+    }))
+    .unwrap();
+    d.set(key, &value).unwrap();
+    d.data().cloned()
+}
+
+impl World {
+    pub fn actor_data(&self) -> ActorData {
+        ActorData::parse(&self.net.bc.get_account(&self.actor).and_then(|a| a.get_data()).unwrap())
+    }
+
+    /// Rewrites the actor's data as `f` says, and its usage with it.
+    pub fn patch(&mut self, f: impl FnOnce(&mut ActorData)) {
+        let mut data = self.actor_data();
+        f(&mut data);
+        let mut account = self.net.bc.get_account(&self.actor).expect("deployed").clone();
+        assert!(account.set_data(data.build()), "the data is replaced");
+        let min = self
+            .net
+            .bc
+            .config_params()
+            .size_limits_config()
+            .expect("limits")
+            .acc_state_cells_for_storage_dict;
+        account.update_storage_stat(min).expect("the usage is recomputed");
+        self.net.bc.set_account(self.actor.clone(), account);
+    }
+
+    fn is_s_to_r(&self, m: &Message) -> bool {
+        body_op(m) == Some(OP_INTERNAL_TRANSFER_REPORTED)
+            && m.src_ref() == Some(&self.wallet())
+            && !m.int_header().is_some_and(|h| h.bounced)
+    }
+
+    fn is_reported_from_actor(&self, m: &Message) -> bool {
+        body_op(m) == Some(OP_REPORTED_TRANSFER)
+            && m.dst_ref() == Some(&self.wallet())
+            && !m.int_header().is_some_and(|h| h.bounced)
+    }
+
+    /// Delivers `msg`, then refuses the actor's next reported transfer at R:
+    /// ConfigParam 79 is taken away while S's message is in flight, so R throws
+    /// and bounces. With `drop_report` the refusal report is lost.
+    pub fn refusing_at_r(&mut self, msg: Message, drop_report: bool) -> usize {
+        let start = self.net.delivered.len();
+        self.execute(msg);
+        self.deliver_until(|m| {
+            body_op(m) == Some(OP_INTERNAL_TRANSFER_REPORTED) && !m.int_header().is_some_and(|h| h.bounced)
+        });
+        self.net.remove_config();
+        self.deliver_one();
+        self.net.configure();
+        if drop_report {
+            let actor = self.actor.clone();
+            self.intercept(|m| is_to(m, &actor) && body_op(m) == Some(OP_TRANSFER_REFUSED));
+        }
+        self.settle();
+        start
+    }
+
+    /// Delivers `msg`, then makes S refuse the actor's next reported transfer:
+    /// without ConfigParam 79 the wallet throws at dispatch and the message
+    /// bounces back to the actor.
+    pub fn bouncing_at_s(&mut self, msg: Message) -> usize {
+        let start = self.net.delivered.len();
+        self.execute(msg);
+        let wallet = self.wallet();
+        self.deliver_until(|m| {
+            body_op(m) == Some(OP_REPORTED_TRANSFER) && m.dst_ref() == Some(&wallet)
+        });
+        self.net.remove_config();
+        self.deliver_one();
+        self.net.configure();
+        self.settle();
+        start
+    }
+
+    /// Delivers `msg` and everything after it except the delivery report of the
+    /// actor's next payout, which is lost.
+    pub fn losing_delivery_report(&mut self, msg: Message) -> usize {
+        let start = self.net.delivered.len();
+        self.execute(msg);
+        let actor = self.actor.clone();
+        self.intercept(|m| is_to(m, &actor) && body_op(m) == Some(OP_TRANSFER_DELIVERED));
+        self.settle();
+        start
+    }
+
+    pub fn op_message(&self, from: &MsgAddressInt, body: Cell, value: u64) -> Message {
+        MessageBuilder::internal(from, &self.actor, value).bounce(true).body(body).build()
+    }
+
+    /// The actor's wallet holds `others` refusal records under unrelated query
+    /// ids (the deepest shape around `key`), as dropped reports would leave.
+    pub fn fill_refusals(&mut self, others: u64, key: u64) {
+        use chain_block::{BuilderData, HashmapE, HashmapType};
+        let actor = self.actor.clone();
+        self.net.patch_wallet(&actor, |w| {
+            let mut d = HashmapE::with_bit_len(64);
+            let value = SliceData::load_cell(cell(|b| coins(b, 1))).unwrap();
+            for i in 0..others {
+                let mut k = BuilderData::new();
+                k.append_u64(key ^ (1u64 << i)).unwrap();
+                d.set(SliceData::load_builder(k).unwrap(), &value).unwrap();
+            }
+            w.refusals = d.data().cloned();
+            w.refusals_count = others as u16;
+        });
+        let wallet = account_hash(&self.wallet());
+        self.net.model.refusal_records.retain(|(w, _), _| *w != wallet);
+    }
+
+    pub fn refusals(&self) -> i128 {
+        self.net.refusals_count(&self.actor)
+    }
+}
