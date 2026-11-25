@@ -1,0 +1,19 @@
+{
+  "schema": "tos.contract.release.v1",
+  "protocol": "tos_service_v1",
+  "contract": "tos-service-actor-token-v1",
+  "source": "crypto/smartcont/service-actor-token-code.fc",
+  "stdlib": "crypto/smartcont/stdlib.fc",
+  "build_script": "scripts/build-tos-service-actor-v1.sh",
+  "tos_commit": "6d59d09a82795436fedea6a114f4701c928db9bf",
+  "compiler": {
+    "name": "FunC",
+    "semantic_version": "v0.4.6",
+    "source_commit": "392bc162e095cc34292eb9ea0709273407e06ca7",
+    "arguments": ["-W", "<output.boc>", "-A", "-P", "-o", "<temporary.fif>"]
+  },
+  "code_hash": "tvm-cell-sha256:4e797ecffa62614831f53f03dbf94d851b6e6418fa3e84d05af8ba575df7085a",
+  "boc_sha256": "sha256:125aece02726d617df07a61f9cd46f0a27d87b6add4964bab2fc35075b4ebf64",
+  "boc_bytes": 14317,
+  "artifact_base64": "crypto/smartcont/tos-service-actor-token-v1.boc.base64"
+}

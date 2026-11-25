@@ -5,10 +5,10 @@ scripts/test-tos-service-actor-v1.sh builds the contract twice and then runs
 
     tos_service_actor_release.py <first.boc> <build-output.txt> <func-binary> [profile]
 
-once per profile (release, the default, and the test-only build), which
+once per profile (each rail's release build, and its test-only build), which
 requires: the rebuilt BOC equals the profile's committed base64 artifact and
-its SDK constant (SERVICE_ACTOR_CODE_B64, or
-SERVICE_ACTOR_TEST_PROFILE_CODE_B64) byte for byte; every manifest field equals
+its SDK constant (named by the profile, in the rail's SDK module) byte for
+byte; every manifest field equals
 what the build reported (code hash, BOC SHA-256 and size, compiler arguments)
 or what the compiler reports about itself (semantic version); and, when the
 manifest's tos_commit is in local history, that the contract source and every
@@ -17,11 +17,11 @@ file it includes are unchanged since that commit.
 compiler.source_commit is recorded provenance: only its format is checked, as
 nothing in a built executable proves which commit produced it.
 
-The release manifest must carry no profile fields at all. The test manifest
-must declare itself test-only, list exactly the overrides
+A release manifest must carry no profile fields at all. A test manifest must
+declare itself test-only, list exactly the overrides
 tos_service_actor_profile.py applies, and pin a code hash and BOC that differ
-from the release pins; its check also requires the committed release artifact
-to still match the release manifest byte for byte.
+from its release's pins; its check also requires the committed release
+artifact to still match the release manifest byte for byte.
 
 Standard library only.
 """
@@ -51,6 +51,19 @@ EXPECTED_FIELDS = {
     "stdlib": "crypto/smartcont/stdlib.fc",
     "build_script": "scripts/build-tos-service-actor-v1.sh",
 }
+
+
+def expected_fields(name: str) -> dict:
+    """The fixed manifest fields of a profile: its rail's contract and source."""
+    selected = profiles.PROFILES[name]
+    return {
+        **EXPECTED_FIELDS,
+        "contract": selected["contract"],
+        "source": selected["source"],
+        "artifact_base64": selected["artifact_base64"],
+    }
+
+
 PROFILE_FIELDS = ("profile", "test_only", "notice", "constant_overrides", "release_manifest")
 TEST_NOTICE = "TEST NETWORKS ONLY"
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -80,7 +93,8 @@ def check_profile_fields(manifest: dict, name: str, root: Path) -> None:
     """The release manifest carries no profile fields; the test manifest
     labels itself test-only, lists exactly the overrides the build applies
     and pins code that differs from a release whose artifact is unchanged."""
-    if name == profiles.RELEASE:
+    release_name = profiles.PROFILES[name]["release"]
+    if release_name is None:
         present = [key for key in PROFILE_FIELDS if key in manifest]
         require(not present, f"the release manifest must not carry profile fields: {present}")
         return
@@ -94,7 +108,7 @@ def check_profile_fields(manifest: dict, name: str, root: Path) -> None:
         manifest.get("constant_overrides") == profiles.PROFILES[name]["overrides"],
         "manifest constant_overrides differ from the overrides the build applies",
     )
-    release_path = profiles.PROFILES[profiles.RELEASE]["manifest"]
+    release_path = profiles.PROFILES[release_name]["manifest"]
     require(
         manifest.get("release_manifest") == release_path,
         f"manifest release_manifest must be {release_path!r}",
@@ -108,9 +122,7 @@ def check_profile_fields(manifest: dict, name: str, root: Path) -> None:
         manifest.get("boc_sha256") != release.get("boc_sha256"),
         "the test BOC equals the release BOC",
     )
-    release_artifact = decode_base64_file(
-        root / profiles.PROFILES[profiles.RELEASE]["artifact_base64"]
-    )
+    release_artifact = decode_base64_file(root / profiles.PROFILES[release_name]["artifact_base64"])
     require(
         "sha256:" + hashlib.sha256(release_artifact).hexdigest() == release.get("boc_sha256")
         and len(release_artifact) == release.get("boc_bytes"),
@@ -191,7 +203,7 @@ def check_release(
     except profiles.ProfileError as error:
         raise ReleaseError(str(error)) from error
     manifest = json.loads((root / selected["manifest"]).read_text())
-    expected = {**EXPECTED_FIELDS, "artifact_base64": selected["artifact_base64"]}
+    expected = expected_fields(name)
     for key, value in expected.items():
         require(manifest.get(key) == value, f"manifest {key} must be {value!r}")
     check_profile_fields(manifest, name, root)
@@ -232,7 +244,7 @@ def check_release(
     require(frozen == built, "frozen artifact differs from the rebuild")
     constant = selected["sdk_constant"]
     require(
-        sdk_code(root / SDK.relative_to(REPO), constant) == built,
+        sdk_code(root / selected["sdk"], constant) == built,
         f"SDK {constant} differs from the rebuild",
     )
 

@@ -1,0 +1,27 @@
+{
+  "schema": "tos.contract.release.v1",
+  "protocol": "tos_service_v1",
+  "contract": "tos-service-actor-token-v1",
+  "profile": "token-test",
+  "test_only": true,
+  "notice": "TEST NETWORKS ONLY. This build lowers the minimum response SLA and refund claim window to 600 seconds so test networks can exercise the timeout-refund path in minutes. It is not a release of the token-rail Service Actor, has its own code hash, and must never be deployed or pinned on a production network.",
+  "constant_overrides": {
+    "MIN_RESPONSE_SLA": 600,
+    "MIN_REFUND_CLAIM_WINDOW": 600
+  },
+  "release_manifest": "crypto/smartcont/tos-service-actor-token-v1.release.json",
+  "source": "crypto/smartcont/service-actor-token-code.fc",
+  "stdlib": "crypto/smartcont/stdlib.fc",
+  "build_script": "scripts/build-tos-service-actor-v1.sh",
+  "tos_commit": "6d59d09a82795436fedea6a114f4701c928db9bf",
+  "compiler": {
+    "name": "FunC",
+    "semantic_version": "v0.4.6",
+    "source_commit": "392bc162e095cc34292eb9ea0709273407e06ca7",
+    "arguments": ["-W", "<output.boc>", "-A", "-P", "-o", "<temporary.fif>"]
+  },
+  "code_hash": "tvm-cell-sha256:edf727b8bb61786e33e3e00dc57fa1db41f8eeb6cbddc0382b3e8daf227e4c89",
+  "boc_sha256": "sha256:0482be914785ec7a1367137b3bb5fced63c944520af5b6fd57211fe0bd353bfe",
+  "boc_bytes": 14317,
+  "artifact_base64": "crypto/smartcont/tos-service-actor-token-v1-test.boc.base64"
+}

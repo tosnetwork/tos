@@ -36,9 +36,11 @@ sys.path.insert(0, str(ROOT / "test/auth-extensions"))
 from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
 
 DEFAULT_CONFIG = ROOT / "tosctl/src/executor/real_boc/default_config.boc"
-MAX_TRACE_RECORDS = 10_000
+# Sized for the largest pinned population, the token-rail Service Actor suite
+# (about 15,500 records, 460 MB), with room to grow.
+MAX_TRACE_RECORDS = 20_000
 MAX_TRACE_FILE = 16 * 1024 * 1024
-MAX_TRACE_BYTES = 256 * 1024 * 1024
+MAX_TRACE_BYTES = 512 * 1024 * 1024
 
 
 def trace_population(directory: Path, expected: int | None = None) -> list[Path]:
@@ -203,7 +205,9 @@ def outgoing(tx: Cell) -> list[dict]:
             read_int_address(m)
             destination = m.uint(2)
             assert destination in (0, 1), "an external or absent destination"
-            topic = None
+            # An absent destination is recorded as the empty topic, as the
+            # sandbox recorder writes it (token_bridge/harness.rs).
+            topic = ""
             if destination == 1:
                 length = m.uint(9)
                 topic = f"{m.uint(length):0{length // 4}x}"

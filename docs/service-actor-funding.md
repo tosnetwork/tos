@@ -272,3 +272,107 @@ mutation, source discovery and Python evidence), `rust-workspace-tests-compile`
 merge gates. The local result table is not a statement that these checks have
 completed on a subsequently published commit. Live Service Actor CLI, wallet,
 RPC and finality rehearsal was not run locally.
+
+## Token rail
+
+The token-rail actor (`crypto/smartcont/service-actor-token-code.fc`, release
+`tos-service-actor-token-v1`) keeps the native ledger above for storage fees,
+TOS revenue and the operating reserve, and adds a token ledger in the asset's
+atomic units: pending, refundable, returned, in flight and token revenue. Its
+wallet must hold at least their sum; the rest is surplus. Token principal is
+never counted as TOS backing.
+
+A call is funded by a token transfer to the actor whose `forward_tos_amount`
+is at least `storage_fee` plus `MIN_FUNDING_VALUE`. A payout op attaches at
+least `PAYOUT_GAS_ALLOWANCE` plus `RETURN_BUDGET`. Every value is priced at run
+time from the basechain's gas and forwarding prices, and the getter
+`get_funding_prices` returns them, in this order: `MIN_FUNDING_VALUE`,
+`ADMISSION_GAS_ALLOWANCE`, `RETURN_BUDGET`, `report_tos_amount`,
+`outcome_fee_lock` and the payout op minimum.
+
+The token wallet's own value check also prices the bridge parameter's
+`wallet_gas_consumption` and `wallet_min_tos_for_storage`. The actor reads them
+at run time from the asset's own bridge parameter, which its route names (79,
+81, 82 or 83, checked by the SDK at deploy), or from the negative slot the
+bridge falls back to. A vote that raises them therefore raises the actor's
+budgets with it and never makes a payout bounce. When neither parses, the
+reserve is priced at 0.3 TOS. This is a bridge parameter,
+not recognition, so no payout reads ConfigParam 84.
+
+A payout reserves its `outcome_fee_lock` from the requester's value. Everything
+above the actor's backing and that lock goes to the actor's wallet with the
+reported transfer. What the wallets do not spend returns to the requester as
+the recipient wallet's excess. On a refusal or a bounce, it returns with the
+outcome's change instead.
+
+### Gas
+
+Each constant is at least twice the most either engine measured at capacity,
+with every dictionary at its deepest shape
+(`tests/service_actor_token/gas.rs`). The native engine replays every measured
+transaction and reports the same gas.
+
+| Constant | Value | Most measured | Bounds |
+| --- | --- | --- | --- |
+| `PRE_ACCEPT_GAS` | 24,000 | 10,026 | an outcome handler up to its `set_gas_limit` |
+| `OUTCOME_HANDLER_GAS` | 300,000 | 117,865 | a whole outcome handler (a refund or sweep refused at R) |
+| `ADMISSION_GAS` | 300,000 | 146,463 | the notification handler, with a 16-entry ConfigParam 84 whose last entry is the actor's master |
+| `ABSENT_REPORT_GAS` | 20,000 | 8,178 | the answer to a report of an absent payout |
+
+A re-reporter sends `rereport_refusal` to the actor's wallet with at least
+`get_rereport_funding()`. That is twice, at current prices, the cost of three
+legs and two forwardings:
+
+- S's re-report (`S_REREPORT_GAS`, 19,042);
+- the actor's absent-payout answer (`ABSENT_REPORT_GAS`);
+- S's `clear_refusal` (`CLEAR_REFUSAL_GAS`, 52,000).
+
+### State bound
+
+A basechain account holds at most ConfigParam 43's `max_acc_state_cells`
+(65,536 at genesis). A state over it fails the action phase, and a failed
+notification leaves its tokens unattributed. Every structure that grows is
+therefore capped, and the caps keep the worst state at 80% of the limit
+(52,428 cells).
+
+| Part | Cells each | Count | Cells |
+| --- | --- | --- | --- |
+| base: code, policy, attestor key, route | | | 360 |
+| live entry being swept, with its caller's counter | 9 | `MAX_LIVE_GLOBAL` = 1,500 | 13,500 |
+| returned entry being paid, with its caller's counter | 10 | 1,500 + 1,500 + 512 | 35,120 |
+| funding return in flight | 5 | `MAX_RETURNS_IN_FLIGHT` = 512 | 2,560 |
+| owner payout in flight | 5 | 4 revenue + 4 surplus | 40 |
+| attestor key named by pending requests | 15 | `MAX_LIVE_ATTESTOR_KEYS` = 4 | 60 |
+| one notification in flight | | | 10 |
+| total | | | 51,650 |
+
+The returned count is `MAX_RETURNED_GLOBAL` plus every live entry and funding
+return, because a payout refused in flight still creates its returned entry.
+That over-counts, since a live entry refused in flight stops being live.
+
+Each dictionary entry adds at most two cells, a leaf and a fork, whatever the
+dictionary's shape. `tests/service_actor_token/capacity.rs` builds this worst
+state with every cell distinct and counts it: 47,046 cells. The same file shows
+three things:
+- a further funding is refused (1907) and returned;
+- with ConfigParam 43 lowered below the bound, the same funding fails;
+- the genesis limit is read from `gen-zerostate.fif`.
+
+At `MAX_RETURNS_IN_FLIGHT` unresolved funding returns, a further refused funding
+makes no return. Its SAF1 names it with payout id 0, and its tokens are surplus.
+Only a flood of refused fundings faster than their returns resolve reaches this.
+A notification cannot bounce and a return needs state, so no finite cap avoids
+it.
+
+Honest buyers stay clear of it. They read `get_accepting_tokens` at finalized
+state before they fund, and the SDK's `funding_transfer` refuses while it is
+false. The getter turns false 64 entries (`ACCEPTING_HEADROOM`) below each cap:
+448 funding returns in flight, 1,436 live entries or 1,436 returned entries.
+That leaves room for fundings already sent: below the caps they are admitted,
+or refused and returned. T14 alarms on funding returns in flight near the cap.
+
+Each attestor key a pending request names is stored once, in a dictionary
+keyed by key id with the number of requests naming it, and is released when
+the last of them leaves the pending store. At most `MAX_LIVE_ATTESTOR_KEYS`
+(4) distinct keys are named at once, and `rotate_attestor_key` is refused
+(1944) while 4 are.

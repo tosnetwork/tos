@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Rebuild Service Actor; check or explicitly update the SDK's frozen bytecode.
 
-Both build profiles are checked: the release build and the test-only build
-(see scripts/tos_service_actor_profile.py). Each has two frozen copies: an SDK
-constant (SERVICE_ACTOR_CODE_B64 or SERVICE_ACTOR_TEST_PROFILE_CODE_B64,
-checked by root cell hash) and the artifact named by its manifest (checked
-byte for byte). --write refreshes all four; the manifests are refreshed by
-hand, and scripts/test-tos-service-actor-v1.sh refuses any drift between them.
+Every build profile is checked: the native and token rails' release builds and
+their test-only builds (see scripts/tos_service_actor_profile.py). Each has two
+frozen copies: an SDK constant (named by the profile, in its rail's SDK module,
+checked by root cell hash) and the artifact named by its manifest (checked byte
+for byte). --write refreshes all of them; the manifests are refreshed by hand,
+and scripts/test-tos-service-actor-v1.sh refuses any drift between them.
 """
 
 import argparse
@@ -25,8 +25,12 @@ import tos_service_actor_profile as profiles  # noqa: E402
 FUNC = Path(os.environ.get("FUNC_PATH", ROOT / "build/crypto/func"))
 FIFT = Path(os.environ.get("FIFT_PATH", ROOT / "build/crypto/fift"))
 STDLIB = ROOT / "crypto/smartcont/stdlib.fc"
-RUST = ROOT / "tosctl/src/node-control/contracts/src/service_actor.rs"
-LABELS = {profiles.RELEASE: "release", profiles.TEST: "test-profile"}
+LABELS = {
+    profiles.RELEASE: "release",
+    profiles.TEST: "test-profile",
+    profiles.TOKEN: "token release",
+    profiles.TOKEN_TEST: "token test-profile",
+}
 
 
 def encode_artifact(boc: bytes) -> str:
@@ -74,7 +78,10 @@ def main() -> None:
     for tool in (FUNC, FIFT):
         if not tool.is_file():
             raise SystemExit(f"missing compiler tool: {tool} (set FUNC_PATH/FIFT_PATH to override)")
-    rust_source = RUST.read_text()
+    sources = {
+        selected["sdk"]: (ROOT / selected["sdk"]).read_text()
+        for selected in profiles.PROFILES.values()
+    }
     env = os.environ.copy()
     env["FIFTPATH"] = str(ROOT / "crypto/fift/lib")
 
@@ -84,7 +91,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="service-actor-bytecode-") as raw_tmp:
         tmp = Path(raw_tmp)
         for name, selected in profiles.PROFILES.items():
-            match = constant_pattern(selected["sdk_constant"]).search(rust_source)
+            match = constant_pattern(selected["sdk_constant"]).search(sources[selected["sdk"]])
             if not match:
                 raise SystemExit(f"{selected['sdk_constant']} was not found in Rust source")
             embedded[name] = base64.b64decode(match.group(1), validate=True)
@@ -93,20 +100,26 @@ def main() -> None:
                 # The embedded copy is about to be replaced and need not parse.
                 hashes[name] = root_hashes([boc], tmp, env)
                 continue
+            if not embedded[name]:
+                raise SystemExit(f"Service Actor {LABELS[name]} bytecode is not embedded")
             embedded_boc = tmp / f"{name}-embedded.boc"
             embedded_boc.write_bytes(embedded[name])
             hashes[name] = root_hashes([boc, embedded_boc], tmp, env)
 
     if args.write:
         for name, selected in profiles.PROFILES.items():
-            match = constant_pattern(selected["sdk_constant"]).search(rust_source)
+            text = sources[selected["sdk"]]
+            match = constant_pattern(selected["sdk_constant"]).search(text)
             encoded = base64.b64encode(generated[name]).decode("ascii")
-            rust_source = rust_source[: match.start(1)] + encoded + rust_source[match.end(1) :]
+            sources[selected["sdk"]] = text[: match.start(1)] + encoded + text[match.end(1) :]
             (ROOT / selected["artifact_base64"]).write_text(encode_artifact(generated[name]))
-        RUST.write_text(rust_source)
+        for path, text in sources.items():
+            (ROOT / path).write_text(text)
         print(
             f"Service Actor bytecode updated (repr_hash={hashes[profiles.RELEASE][0]}, "
-            f"test_profile_repr_hash={hashes[profiles.TEST][0]})"
+            f"test_profile_repr_hash={hashes[profiles.TEST][0]}, "
+            f"token_repr_hash={hashes[profiles.TOKEN][0]}, "
+            f"token_test_profile_repr_hash={hashes[profiles.TOKEN_TEST][0]})"
         )
         return
 
@@ -129,8 +142,17 @@ def main() -> None:
                 f"Service Actor {label} artifact is stale: the frozen artifact differs from the "
                 f"rebuild (generated {len(generated[name])} bytes, frozen {len(frozen)} bytes)"
             )
-    if hashes[profiles.RELEASE][0] == hashes[profiles.TEST][0]:
-        raise SystemExit("Service Actor test-profile bytecode equals the release bytecode")
+    for release_name, test_name in profiles.TEST_PAIRS:
+        if hashes[release_name][0] == hashes[test_name][0]:
+            raise SystemExit(
+                f"Service Actor {LABELS[test_name]} bytecode equals the {LABELS[release_name]} "
+                "bytecode"
+            )
+    print(
+        f"Service Actor token test-profile bytecode synchronized "
+        f"(repr_hash={hashes[profiles.TOKEN_TEST][0]})"
+    )
+    print(f"Service Actor token bytecode synchronized (repr_hash={hashes[profiles.TOKEN][0]})")
     # The release line comes last and keeps its format: callers read it.
     print(
         f"Service Actor test-profile bytecode synchronized (repr_hash={hashes[profiles.TEST][0]})"
