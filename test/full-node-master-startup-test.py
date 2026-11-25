@@ -36,6 +36,8 @@ MASTER_REFUSAL = "refusing to start the full-node master"
 SLAVE_REFUSAL = "refusing to start the full-node slave"
 REFUSAL_TIMEOUT_S = 30.0
 SURVIVAL_S = 6.0
+# Lines of a crash's stack trace reported, from the signal handler's first line on.
+STACK_TRACE_LINES = 120
 # Lines that name why an engine stopped: a failed check, a fatal log line or a signal.
 CRASH_MARKERS = re.compile(r"Check .* failed|\[ 0\]|FATAL|Signal: \d+|terminate called|Assertion")
 
@@ -162,10 +164,18 @@ class Node:
         if code is not None:
             # The cause of an early exit is usually printed well before the end of the log,
             # which shutdown and stack traces fill; name it first.
-            causes = [line for line in output.splitlines() if CRASH_MARKERS.search(line)][:10]
+            lines = output.splitlines()
+            causes = [line for line in lines if CRASH_MARKERS.search(line)][:10]
+            # A crash's stack trace names the faulting function in its first frames,
+            # which the end of the log no longer holds once shutdown output follows.
+            trace: list[str] = []
+            starts = [i for i, line in enumerate(lines) if "Stack Backtrace" in line]
+            if starts:
+                trace = lines[starts[0] : starts[0] + STACK_TRACE_LINES]
+            stack = "\n".join(trace)
             fail(
                 f"{case}: the engine exited {code} within {SURVIVAL_S} s; "
-                f"first fatal lines: {causes!r}; end of log: {output[-2000:]}"
+                f"first fatal lines: {causes!r}; stack trace:\n{stack}\nend of log: {output[-2000:]}"
             )
         print(f"FULL_NODE_MASTER_STARTUP {case}=started")
 
