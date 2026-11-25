@@ -39,9 +39,21 @@ jobs:
         persist-credentials: false
 
     # The runner image ships Chocolatey, Strawberry Perl and the Visual Studio
-    # LLVM toolset; ninja and NASM come from Chocolatey.
+    # LLVM toolset; ninja and NASM come from Chocolatey. The community feed
+    # can fail for a while, and Chocolatey then installs nothing without
+    # failing the job, so retry and stop here when NASM is still missing
+    # rather than in the build.
     - name: Install build tools
-      run: choco install -y --no-progress ninja nasm
+      shell: pwsh
+      run: |
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+          choco install -y --no-progress ninja nasm
+          if (Test-Path "C:\Program Files\NASM\nasm.exe") { exit 0 }
+          Write-Host "NASM is not installed after attempt $attempt"
+          if ($attempt -lt 3) { Start-Sleep -Seconds (60 * $attempt) }
+        }
+        Write-Error "NASM could not be installed from Chocolatey after 3 attempts"
+        exit 1
 
     # Packaged in the same step, because dumpbin, which checks every file's
     # DLLs, comes from the Visual Studio environment vcvars64 sets.
