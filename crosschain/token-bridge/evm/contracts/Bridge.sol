@@ -70,7 +70,14 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
     //
     // - total: the bridge's balance of the token after a lock may not exceed
     //   it. That balance is the exposure: it backs the wrapped supply and the
-    //   open locks, and unlocks and refunds lower it.
+    //   open locks, and unlocks and refunds lower it. Measuring it by the
+    //   balance has two consequences. A direct transfer to the bridge fills
+    //   the room left and blocks locks until the oracles vote a higher cap;
+    //   it costs the sender those tokens, which stay as unswept extra
+    //   backing. An issuer burn or freeze of the bridge's balance lowers the
+    //   balance without lowering the wrapped supply, so the total cap then
+    //   undercounts exposure; the control for that is the disable-token vote.
+    //   Payouts (unlock, refundLock) never read the caps.
     // - perLock: one lock may not receive more.
     // - hourly, daily: the sum received by the locks of one fixed UTC hour
     //   (block.timestamp / 1 hours) or one fixed UTC day (/ 1 days) may not
@@ -195,7 +202,7 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
         lockNonce = n + 1;
         uint256 received = newBalance - oldBalance;
         _consumeLockCap(token, received, newBalance);
-        locks[n] =LockRecord(msg.sender, token, received, generation, LOCK_OPEN);
+        locks[n] = LockRecord(msg.sender, token, received, generation, LOCK_OPEN);
 
         emit Lock(
             msg.sender,

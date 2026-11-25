@@ -25,6 +25,22 @@ async function main() {
   const bridge = await ethers.getContractAt("Bridge", bridgeAddress);
   const token = await ethers.getContractAt("TestToken", tokenAddress);
 
+  // A token without lock caps cannot be locked: the oracles must first vote
+  // its caps (voteForLockCap). Refuse before spending gas on an approval.
+  const capState = await bridge.getLockCapState(tokenAddress);
+  if (capState.cap.total.isZero()) {
+    throw new Error(
+      `token ${tokenAddress} has no lock caps on bridge ${bridgeAddress}; ` +
+      "the oracles must vote its caps (voteForLockCap) before the first lock"
+    );
+  }
+  if (amount.gt(capState.available)) {
+    throw new Error(
+      `lock of ${amount.toString()} exceeds the ${capState.available.toString()} ` +
+      "the token's lock caps allow now (getLockCapState)"
+    );
+  }
+
   console.log(await token.balanceOf(owner.address));
   console.log(`approve ${formatEther(amount)} tokens to bridge`);
   let tx = await token.approve(bridge.address, amount);
