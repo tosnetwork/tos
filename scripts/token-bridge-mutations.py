@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -938,7 +939,7 @@ MUTATIONS = [
     ),
     M(
         "E07",
-        'a token without caps can be locked',
+        'an uncapped token is refused without its own error message (an error-message pin: the per-lock cap still refuses it)',
         f"{SOL}/Bridge.sol",
         '        require(lockCaps[token].total != 0, "lock: token has no lock cap");\n',
         '',
@@ -1042,8 +1043,48 @@ MUTATIONS = [
         f"{SOL}/SignatureChecker.sol",
         'abi.encode(0xCA95, address(this), block.chainid, token, total, perLock, hourly, daily, nonce)',
         'abi.encode(0xCA95, address(this), block.chainid, total, perLock, hourly, daily, nonce)',
-        'refuses a cap vote with too few',
-        "failing",
+        'refuses a cap vote signed for another token',
+        "expected a refusal: Wrong signature",
+        evm=True,
+    ),
+    M(
+        "E18",
+        'an unlock reads the lock caps',
+        f"{SOL}/Bridge.sol",
+        '        IERC20(data.token).safeTransfer(data.receiver, data.amount);\n',
+        '        require(lockCaps[data.token].total != 0, "payout reads the caps");\n        IERC20(data.token).safeTransfer(data.receiver, data.amount);\n',
+        'pays out by unlock and refundLock after the caps are voted to zero',
+        'payout reads the caps',
+        evm=True,
+    ),
+    M(
+        "E19",
+        'a refund is held to the total cap',
+        f"{SOL}/Bridge.sol",
+        '        IERC20(record.token).safeTransfer(record.locker, record.amount);\n',
+        '        require(IERC20(record.token).balanceOf(address(this)) <= lockCaps[record.token].total, "payout reads the caps");\n        IERC20(record.token).safeTransfer(record.locker, record.amount);\n',
+        'pays out by unlock and refundLock after the total cap is voted below the balance',
+        'payout reads the caps',
+        evm=True,
+    ),
+    M(
+        "E20",
+        'partly zero caps are accepted',
+        f"{SOL}/Bridge.sol",
+        '            require(total != 0 && perLock != 0, "Lock cap is partly zero");\n',
+        '',
+        'refuses partly zero, unordered',
+        'expected a refusal: Lock cap is partly zero',
+        evm=True,
+    ),
+    M(
+        "E21",
+        'caps can be voted for the zero token',
+        f"{SOL}/Bridge.sol",
+        '        require(token != address(0), "Lock cap names no token");\n',
+        '',
+        'refuses partly zero, unordered',
+        'expected a refusal: Lock cap names no token',
         evm=True,
     ),
 ]
@@ -1129,7 +1170,11 @@ def run_hardhat(root: Path, title: str) -> tuple[int, str]:
     p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=900)
     out = p.stdout + p.stderr
     # red only when the named test is among the failures
-    failed = p.returncode != 0 and any(title in line for line in out.splitlines() if ")" in line)
+    # A mocha failure line is "  <n>) <title>"; a passing line ("✔ <title> (12ms)")
+    # also holds a ")" and must never count.
+    failed = p.returncode != 0 and any(
+        title in line for line in out.splitlines() if re.match(r"^\s*\d+\) ", line)
+    )
     return (1 if failed else 0), out
 
 

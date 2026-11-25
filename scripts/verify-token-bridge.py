@@ -448,6 +448,33 @@ def verify_mandatory_logs(settlement: Path) -> None:
         raise AssertionError("settlement.fc: send_settlement must send in mode 1, never +2")
 
 
+def solidity_function_body(text: str, name: str) -> str:
+    """The text of `function name(...)` up to its closing brace."""
+    start = text.find(f"function {name}(")
+    if start < 0:
+        raise AssertionError(f"Bridge.sol: function {name} is missing")
+    open_brace = text.index("{", start)
+    depth = 0
+    for i in range(open_brace, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_brace : i + 1]
+    raise AssertionError(f"Bridge.sol: function {name} is not closed")
+
+
+def verify_payouts_ignore_lock_caps(bridge: Path) -> None:
+    """Caps bound new locks only: a payout of a lock already taken never reads them."""
+    text = bridge.read_text(encoding="utf-8")
+    for name in ("unlock", "refundLock"):
+        body = solidity_function_body(text, name)
+        for term in ("lockCaps", "lockUsage", "_consumeLockCap", "_currentLockUsage"):
+            if term in body:
+                raise AssertionError(f"Bridge.sol: {name} must not read the lock caps ({term})")
+
+
 def verify_evm_sources() -> None:
     c = PROJECT / "evm/contracts"
     require_text(
@@ -479,8 +506,13 @@ def verify_evm_sources() -> None:
             'require(hourUsed <= cap.hourly, "lock: over the hourly cap")',
             'require(dayUsed <= cap.daily, "lock: over the daily cap")',
             'require(nonce > lastLockCapNonce[token], "Stale lock cap nonce")',
+            'require(token != address(0), "Lock cap names no token")',
+            'require(total != 0 && perLock != 0, "Lock cap is partly zero")',
+            'require(perLock <= hourly && hourly <= daily, "Lock caps are not ordered")',
+            'require(total <= 2 ** 120 - 1 && daily <= 2 ** 120 - 1, "Lock cap over the supply bound")',
         ],
     )
+    verify_payouts_ignore_lock_caps(c / "Bridge.sol")
     require_text(
         c / "SignatureChecker.sol",
         [

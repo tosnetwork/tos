@@ -11,6 +11,7 @@ import {
   prepareSwapData,
   signLockCap,
   signNewGeneration,
+  signRefundLock,
   signSwapData,
   signUpdateLockStatus,
 } from "./utils/utils";
@@ -100,6 +101,10 @@ describe("Bridge lock caps", () => {
   beforeEach(async () => {
     [owner] = await ethers.getSigners();
     nonces.clear();
+    // Start every test ten seconds into a fresh hour, so that no test
+    // depends on the wall-clock hour: each one that does not travel in time
+    // itself runs inside one hour bucket and one day bucket.
+    await time.increaseTo((await nextBoundary(HOUR)) + 10);
     const Bridge = await ethers.getContractFactory("Bridge");
     bridge = (await Bridge.deploy(oracles.map((o) => o.address), [])) as Bridge;
     await bridge.deployed();
@@ -307,6 +312,55 @@ describe("Bridge lock caps", () => {
     // nothing reached the other token
     expect((await bridge.lockCaps(other.address)).total).to.equal(0);
     await rejects(bridge.lock(other.address, 1, TOS_ADDRESS_HASH), "lock: token has no lock cap");
+  });
+
+  it("refuses a cap vote signed for another token", async () => {
+    // The oracles sign the digest the bridge itself computes, as they do in
+    // production, so this test holds the token's place in that digest.
+    const a = await deployToken("TestToken");
+    const b = await deployToken("TestToken");
+    const c = caps(1000, 100, 300, 500);
+    const digest = await bridge.getNewLockCapId(a.address, c.total, c.perLock, c.hourly, c.daily, 1);
+    const signatures = oracles
+      .map((o) => ({ signer: o.address, signature: o.sign(digest).signature }))
+      .sort((x, y) => (BigInt(x.signer) < BigInt(y.signer) ? -1 : 1));
+    await rejects(bridge.voteForLockCap(b.address, c.total, c.perLock, c.hourly, c.daily, 1, signatures),
+      "Wrong signature");
+    expect((await bridge.lockCaps(b.address)).total).to.equal(0);
+    // the same signatures are valid for the token they name
+    await bridge.voteForLockCap(a.address, c.total, c.perLock, c.hourly, c.daily, 1, signatures);
+    expect((await bridge.lockCaps(a.address)).total).to.equal(1000);
+  });
+
+  // Caps bound new locks only. Payouts of locks already taken never read
+  // them: an unlock of a recorded burn and the refund of a cancelled lock
+  // must go through whatever the caps say now.
+  async function payoutsSurvive(after: Caps) {
+    const t = await deployToken("TestToken");
+    await setCaps(t.address, caps(1000, 100, 300, 500));
+    await lock(t, 100);
+    await lock(t, 100);
+    await lock(t, 100);
+    await setCaps(t.address, after);
+    await rejects(bridge.lock(t.address, 1, TOS_ADDRESS_HASH), after.total.isZero()
+      ? "lock: token has no lock cap" : "lock: over the token cap");
+    const before = await t.balanceOf(owner.address);
+    await unlock(t, 60);
+    const record = await bridge.locks(1);
+    await expect(bridge.refundLock(1, signRefundLock(1, record.generation, record.locker, record.token,
+      record.amount, oracles, bridge.address)))
+      .to.emit(bridge, "LockRefunded").withArgs(1, owner.address, t.address, 100);
+    expect(await t.balanceOf(owner.address)).to.equal(before.add(160));
+    expect(await t.balanceOf(bridge.address)).to.equal(140);
+    expect((await bridge.locks(1)).status).to.equal(2);
+  }
+
+  it("pays out by unlock and refundLock after the caps are voted to zero", async () => {
+    await payoutsSurvive(caps(0, 0, 0, 0));
+  });
+
+  it("pays out by unlock and refundLock after the total cap is voted below the balance", async () => {
+    await payoutsSurvive(caps(200, 100, 300, 500));
   });
 
   it("refuses partly zero, unordered, oversized and token-less caps", async () => {
