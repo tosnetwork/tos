@@ -12,7 +12,7 @@ The TOS token bridge carries ERC-20 tokens from external EVM chains onto TOS as 
 - `token-minter.fc`: reserves supply and a credit number before a swap is consumed, opens holders' wallets, counts supply once per confirmed credit, admits burns, and strands a deleted wallet's obligations under the owner-approved scope.
 - `token-wallet.fc`: TOS Token V1-style transfers; credits once per credit number; holds burned tokens until the burn is admitted and decided.
 - `settlement.fc`: the settlement protocol's shared parts: channels, windows, descriptors, funding and logs (`SETTLEMENT-PROTOCOL.md`).
-- `multisig.fc`: threshold oracle voting for TOS-side mint/governance messages; each signed query carries the deployment's `wallet_id` and the network's global id (ConfigParam 19), so queries cannot cross deployments or networks.
+- `multisig.fc`: threshold oracle voting for TOS-side mint/governance messages; each signed query carries the deployment's `wallet_id` and the network's global id (ConfigParam 19), so queries cannot cross deployments or networks, and may only send a bounded, bounceable vote to a masterchain bridge listed in the multisig's StateInit.
 - `votes-collector.fc`: collects EVM-compatible oracle signatures for burn/unlock.
 - Shared configuration, message, opcode, error, utility, and Fift deployment sources.
 

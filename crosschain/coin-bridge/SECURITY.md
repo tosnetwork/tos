@@ -27,7 +27,16 @@ A source fork does **not** inherit an upstream deployment's audit, operational c
 - A fee vote cannot install a network fee below the fixed 0.1 swap receipt plus headroom (exit code 392), so no configuration makes swaps drain the bridge balance backing `total_locked`.
 - Bridge migration conserves locked funds: the migrating bridge zeroes `total_locked` when the transfer leaves, the receiving bridge credits `total_locked` on the `0xf00d` transfer (so the funds are locked, not sweepable by a reward vote), and a rejected transfer bounces back and is re-credited on the old bridge.
 - The TOS multisig requires `k` of `n` oracle signatures, deduplicates signers via a signature bitmask, and tracks pending queries by expiring query IDs.
+- The multisig can only vote. A quorum query may send nothing but an internal, bounceable message, in send mode 0 to 3, of at most `MAX_VOTE_VALUE` (10 TOS) with no extra currencies and no StateInit, to a masterchain bridge listed in the multisig's own StateInit (exit codes 46 to 50, one per rule, each checked once, when the query is proposed). The list is fixed with the address and never read from ConfigParam, so a missing or changed configuration cannot widen it, and an empty list builds no multisig (51). A compromised quorum can still vote against the bridges it lists, but cannot pay out the multisig's balance, deploy contracts, or reach any other account.
+- The reward vote (operation 5) pays the address it names, a non-zero basechain or masterchain account (exit code 308), never the multisig, and keeps `total_locked` plus 100 TOS in the bridge.
+- `lock_until` in the multisig's data is inert (always 0, read by nothing); activation is gated by the validators' ConfigParam vote that names the multisig.
 - Every signed multisig query names both the deployment (`wallet_id`, exit code 42 on mismatch) and the network it was signed for (a 32-bit signed global id compared against ConfigParam 19 via `GLOBALID`, exit code 44 on mismatch), so a query signed on one TOS network cannot be replayed on another that shares the same StateInit, addresses, and oracle keys.
+
+## Hard deployment constraints
+
+### The oracle multisig lists every bridge it must vote to
+
+The allowlist is part of the multisig's StateInit, so it is chosen once, with the address. List the bridge ConfigParam 71 or 72 names. To migrate, the multisig ConfigParam names as the oracle account must list both the old bridge, which receives the migration vote, and the new one; since the list cannot grow, that means building a multisig for the pair with `new-multisig.fif` and naming it in the same configuration change that names the new bridge. Verify `get_allowed_bridges` from independent nodes before the parameter vote.
 
 ## Mandatory pre-mainnet work
 

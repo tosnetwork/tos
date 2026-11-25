@@ -24,8 +24,7 @@ contract Bridge is SignatureChecker, BridgeInterface, WrappedTOS {
     }
     
     function generalVote(bytes32 digest, Signature[] memory signatures) internal {
-      // NOTE: In practice, the number of oracles should be chosen to be divisible by 3.
-      // Note that in other cases minimum consensus is `floor( 2 * oracles_count / 3 )`. For example, with 4 oracles only 2 signatures required.
+      // The quorum is ceil(2n/3) at every set size: with 4 oracles, 3 must sign.
       // Ceiling, not floor: a floor threshold is satisfied by half the set at
       // sizes that are not multiples of three (4 members would need only 2).
       require(signatures.length >= (2 * oraclesSet.length + 2) / 3, "Not enough signatures");

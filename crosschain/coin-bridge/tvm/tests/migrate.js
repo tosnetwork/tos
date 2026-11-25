@@ -14,7 +14,13 @@ const makeStorage = (totalLocked) => {
 }
 const bridgeAddress = "0x13dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8";
 const multisigAddress = "0x23dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8";
+const rewardAddress = "0:73dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8";
 const lockedAmount = 10.2374e9;
+// This file drives one bridge account. The same migration voted through a
+// real multisig from an old bridge the configuration no longer names, with
+// the 0xf00d transfer delivered to the new bridge, is executed end to end by
+// coin_migrate_vote_to_the_old_bridge_completes_the_f00d_loop in
+// tosctl/src/node-control/contracts/tests/bridge_multisig_sandbox.rs.
 funcer({},{
     'path': './func/',
     'fc': [
@@ -135,6 +141,7 @@ funcer({},{
             "body": [
                 "uint32", 4, // execute_voting
                 "uint8", 5, // get reward
+                "Address", rewardAddress,
             ],
             "new_data": makeStorage(lockedAmount),
             "out_msgs": [
@@ -145,7 +152,7 @@ funcer({},{
                 },
                 {
                     "type": "Internal",
-                    "to": `-1:${multisigAddress.slice(2)}`,
+                    "to": rewardAddress,
                     "amount": 0,
                     "sendMode": 128,
                     "body": [

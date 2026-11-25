@@ -23,6 +23,7 @@ A source fork does **not** inherit an upstream deployment's audit, operational c
 - Oracle signatures must meet the upstream quorum formula, be authorized, and be strictly sorted (preventing duplicates).
 - EVM vote digests include `address(this)` and `block.chainid`.
 - Every signed TOS multisig query names both the deployment (`wallet_id`, exit code 42 on mismatch) and the network it was signed for (a 32-bit signed global id compared against ConfigParam 19 via `GLOBALID`, exit code 44 on mismatch), so a query signed on one TOS network cannot be replayed on another that shares the same StateInit, addresses, and oracle keys.
+- The oracle multisig can only vote. A quorum query may send nothing but an internal, bounceable message, in send mode 0 to 3, of at most `MAX_VOTE_VALUE` (10 TOS) with no extra currencies and no StateInit, to a masterchain bridge listed in the multisig's own StateInit (exit codes 46 to 50, one per rule, each checked once, when the query is proposed). The list is fixed with the address and never read from ConfigParam, so a missing or changed configuration cannot widen it, and an empty list builds no multisig (51). A compromised quorum can still vote against the bridges it lists, but cannot pay out the multisig's balance, deploy contracts, or reach any other account. `lock_until` in its data is inert (always 0, read by nothing); activation is gated by the validators' ConfigParam vote that names the multisig.
 - Completed EVM votes cannot be replayed, and an uncompleted governance vote cannot be held back and used later: rotations are bound to the set they replace, and lock/disable nonces must strictly increase.
 - Oracle-set updates reject zero and duplicate members.
 - A swap payment and a burn require the configured mint and burn fees exactly.
@@ -36,6 +37,10 @@ These are not future work. A deployment that violates one of them is misconfigur
 ### The bridge is listed in ConfigParam 31, and minters are monitored
 
 The bridge must be listed in ConfigParam 31 on every network before activation. A listed bridge pays no storage and is exempt from the account size limit, so the chain never freezes or deletes it for debt. Unlisted, a storage-price rise can freeze it (the sandbox shows both: `t_y7_t_z5_a_listed_bridge_is_exempt_from_rent_and_an_unlisted_one_is_not`). Each minter has a reserve target and an alert threshold, and is topped up with plain non-bounceable messages; a frozen minter is restored from its frozen state. Both are operational obligations of the bridge operator.
+
+### The oracle multisig lists every bridge it must vote to
+
+The allowlist is part of the multisig's StateInit, so it is chosen once, with the address. List the bridge the network's ConfigParam names, and keep a replaced bridge listed while it still has locks to cancel or supply to serve (`SETTLEMENT-PROTOCOL.md` section 4): its votes go to its own address, not to the one the configuration names. Because the list cannot grow, replacing a bridge means building a multisig for the old and the new bridge with `new-multisig.fif` and naming it in the same configuration change that names the new bridge. Verify `get_allowed_bridges` from independent nodes before the parameter vote.
 
 ### Each TOS bridge serves exactly one EVM bridge and one source generation
 

@@ -327,7 +327,8 @@ so a bridge replaced through ConfigParam 79 does not inherit any tokens.
 - The old family's `burn` reads the current ConfigParam 79, but only for its
   admission policy: suspension and fee.
 - Operators keep the old bridge funded and observed by oracles while the old
-  family has supply.
+  family has supply, and listed in the allowlist of the oracle multisig the
+  configuration names, so votes such as `cancel_lock` still reach it.
 - A burn of either family is authenticated against its own pinned bridge.
 
 ## 5. Durable records
