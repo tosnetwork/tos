@@ -800,8 +800,8 @@ fn t_r6_a_price_rise_within_the_report_margin_is_absorbed() {
 /// T-R6: the same rise with nothing in ConfigParam 79 to absorb it: no storage
 /// reserve, no bridge gas and no report value, at exactly the need and to a
 /// fresh R. R's compute, its bounce and its action fine are priced with
-/// REPORT_MARGIN, so up to that factor every transfer still ends, delivered or
-/// refused, and no token is lost.
+/// REPORT_MARGIN, so below that factor R is funded and every transfer is
+/// delivered, and no token is lost.
 #[test]
 fn t_r6_a_rise_within_the_margin_ends_every_transfer_without_a_reserve() {
     let mut net = minted();
@@ -814,12 +814,9 @@ fn t_r6_a_rise_within_the_margin_ends_every_transfer_without_a_reserve() {
         let r = Reported { report_tos_amount: 0, ..Reported::to(&fresh, 101 + i as u64, 10) };
         let start = with_prices_raised(&mut net, &p, &r, factor);
         let delivered = sent_to(&net, start, &p, OP_TRANSFER_DELIVERED).len();
-        let refused = net.refusal(&p, r.query_id) >= 0;
-        assert_eq!(
-            usize::from(refused) + delivered,
-            1,
-            "at {factor} times the prices the transfer ends once"
-        );
+        assert_eq!(delivered, 1, "R is funded at {factor} times the prices and delivers");
+        assert_eq!(net.refusal(&p, r.query_id), -1, "nothing refused at {factor} times");
+        assert_eq!(net.tokens(&fresh), 10, "the tokens moved once");
     }
     assert_every_reported_transfer_ended(&net);
 }

@@ -1817,7 +1817,9 @@ Measured by `reported::t_r11_gas_per_leg_is_within_its_constants`.
   difference: with both at 0 and no report value, a rise of 7 to 9 times
   between the legs lost the tokens (S debited, R never credited, no
   outcome). With the margin, T-R6 runs that case at 7, 8 and 9 times with no
-  reserve, no bridge gas and no report value, and every transfer ends.
+  reserve, no bridge gas and no report value, and R is funded and delivers
+  every transfer. Without the margin R would refuse them early (715) instead:
+  no token lost, but no delivery either.
 - **Where the guarantee stops.** It holds for gas and forwarding prices that
   rise by less than `REPORT_MARGIN` between S's leg and R's (the design's
   bound B2). Past it, the outcome depends on ConfigParam 79 and on how far

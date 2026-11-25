@@ -742,7 +742,7 @@ MUTATIONS = [
         "const int REPORT_MARGIN = 10;",
         "const int REPORT_MARGIN = 1;",
         "t_r6_a_rise_within_the_margin_ends_every_transfer_without_a_reserve",
-        "I1:",
+        "and delivers",
     ),
     M(
         "M72",
