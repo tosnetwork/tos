@@ -77,6 +77,8 @@ forms rather than a rejection.
 
 The ConfigParam must contain the TOS bridge address, oracle multisig address/map, state flags, fee schedule, and external chain bridge address. No slot is enabled or populated by this directory.
 
+The oracle multisig address is checked before the parameter vote by recomputing it: `new-multisig.fif`, run with the reviewed wallet id, `k`, owner keys and bridge list, prints the address of the StateInit `create_init_state` builds (no pending queries), and it must equal the one the parameter names; the deployed account must also return the reviewed list from `get_allowed_bridges` and nothing from `get_messages_unsigned`. The allowlist alone does not prove the account clean (`SECURITY.md`).
+
 Tron is not an EVM chain, but its virtual machine is close enough for this contract plane: addresses are 20 bytes inside the VM, so the 160-bit destination field needs no change, and `ecrecover` is available for the counterparty half. Its `CHAINID` differs — it yields the last four bytes of the genesis block id rather than a registered chain id — so the chain id above is that value for Tron mainnet and must be confirmed against the target network before the slot is populated. The counterparty contracts have not been deployed or exercised on Tron; treat the slot as unproven configuration.
 
 ## Build and test the TVM contracts

@@ -40,7 +40,7 @@ def reward_controls(prefix: str, network: str) -> list:
             code,
             "throw_unless(308, reward_address_ok?(reward_address));\n",
             "",
-            "coin_get_reward_refuses_",
+            "coin_get_reward_refuses_a_",
             "exit code 308",
             target="bridge_multisig_sandbox",
         ),
@@ -54,11 +54,21 @@ def reward_controls(prefix: str, network: str) -> list:
             "panicked",
             target="bridge_multisig_sandbox",
         ),
+        runner.Mutation(
+            f"{prefix}3",
+            "get_reward ignores data after the reward address",
+            code,
+            "voting_data.end_parse();\n",
+            "",
+            "coin_get_reward_refuses_trailing",
+            "expected exit code 9",
+            target="bridge_multisig_sandbox",
+        ),
     ]
 
 
 MUTATIONS = [
-    # The Ethereum multisig: E01 to E05, the BSC multisig: B01 to B05.
+    # The Ethereum multisig: E01 to E06, the BSC multisig: B01 to B06.
     *runner.multisig_controls("E", f"{TVM}/ethereum/multisig-code.fc"),
     *runner.multisig_controls("B", f"{TVM}/bsc/multisig-code.fc"),
     # Operation 5 on each network's bridge.

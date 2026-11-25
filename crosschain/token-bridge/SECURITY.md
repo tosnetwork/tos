@@ -40,7 +40,21 @@ The bridge must be listed in ConfigParam 31 on every network before activation. 
 
 ### The oracle multisig lists every bridge it must vote to
 
-The allowlist is part of the multisig's StateInit, so it is chosen once, with the address. List the bridge the network's ConfigParam names, and keep a replaced bridge listed while it still has locks to cancel or supply to serve (`SETTLEMENT-PROTOCOL.md` section 4): its votes go to its own address, not to the one the configuration names. Because the list cannot grow, replacing a bridge means building a multisig for the old and the new bridge with `new-multisig.fif` and naming it in the same configuration change that names the new bridge. Verify `get_allowed_bridges` from independent nodes before the parameter vote.
+The allowlist is part of the multisig's StateInit, so it is chosen once, with the address. List the bridge the network's ConfigParam names, and keep a replaced bridge listed while it still has locks to cancel or supply to serve (`SETTLEMENT-PROTOCOL.md` section 4): its votes go to its own address, not to the one the configuration names. Because the list cannot grow, replacing a bridge means building a multisig for the old and the new bridge with `new-multisig.fif` and naming it in the same configuration change that names the new bridge.
+
+### The oracle multisig is verified by its address, not by its allowlist
+
+`get_allowed_bridges` alone proves nothing. A hand-built StateInit with this code, these owners and this allowlist can also start with a pending query that never passed the guards, for instance a mode-128 transfer anywhere, already approved by `k - 1` owners; one more approval executes it. Only the address commits to the whole initial state. Before the parameter vote that names a multisig:
+
+1. Run `new-multisig.fif` with the reviewed wallet id, `k`, owner keys and bridge list, for workchain -1. It builds the StateInit from this build's code and the data `create_init_state` returns (no pending queries, `last_cleaned` 0, `lock_until` 0) and prints its address.
+2. Compare that address, byte for byte, with the oracle account the proposed ConfigParam names. Any difference is another contract: do not vote for it.
+3. From at least two independent nodes, check that the deployed account runs this build's code, that `get_allowed_bridges` returns the reviewed list and that `get_messages_unsigned` is empty.
+
+`bridge_multisig_sandbox` (`a_preseeded_pending_query_is_caught_by_the_deployment_check`) executes such a planted transfer on one approval while the allowlist looks right, and shows both the address and `get_messages_unsigned` exposing it.
+
+### Fund the oracle multisig for gas only
+
+The multisig's balance cannot be withdrawn. Coins leave it only as the value of its votes, at most `MAX_VOTE_VALUE` each and only to listed bridges (which keep what a vote does not spend or return it to the multisig), and as the change it returns to whoever relays a query. Fund it with what its queries need for gas and nothing more.
 
 ### Each TOS bridge serves exactly one EVM bridge and one source generation
 

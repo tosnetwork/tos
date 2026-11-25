@@ -90,8 +90,11 @@ MULTISIG_SCRIPT = [
 
 def require_multisig_never_reads_config(path: Path) -> None:
     """The multisig's allowlist is its own: a missing or changed ConfigParam cannot widen it."""
+    # A source check only; scripts/build-token-bridge.sh also refuses any
+    # configuration instruction in the compiled multisig.
     text = path.read_text(encoding="utf-8")
-    if "config_param" in text:
+    includes = re.findall(r'#include\s+"([^"]+)"', text)
+    if "config_param" in text or any("config" in name for name in includes):
         raise AssertionError(f"{path.relative_to(REPO_ROOT)} must not read ConfigParam")
     script = (path.parent / "new-multisig.fif").read_text(encoding="utf-8")
     if "spend-delay" in script:

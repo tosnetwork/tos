@@ -63,34 +63,46 @@ M = Mutation
 # guard tests.
 MULTISIG_GUARDS = [
     (
-        "the destination allowlist",
+        "does not check the destination allowlist",
         "  throw_unless(46, allowed_bridge?(dest, allowed));\n",
+        "",
         "guard_destination_",
         "expected exit code 46",
     ),
     (
-        "the bounce flag",
+        "does not check the bounce flag",
         "  throw_unless(47, (flags & 11) == 2);\n",
+        "",
         "guard_non_bounceable_",
         "expected exit code 47",
     ),
     (
-        "the send mode",
+        "does not check the send mode",
         "  throw_unless(48, mode < 4);\n",
+        "",
         "guard_send_mode_",
         "expected exit code 48",
     ),
     (
-        "the value bound",
+        "does not check the value bound",
         "  throw_unless(49, (value <= MAX_VOTE_VALUE) & (extra == 0));\n",
+        "",
         "guard_value_",
         "expected exit code 49",
     ),
     (
-        "the StateInit refusal",
+        "does not check the StateInit refusal",
         "  throw_if(50, rest~load_uint(1));\n",
+        "",
         "guard_state_init_",
         "expected exit code 50",
+    ),
+    (
+        "checks only the bounce bit, not the message kind or the bounced bit",
+        "  throw_unless(47, (flags & 11) == 2);\n",
+        "  throw_unless(47, (flags & 2) == 2);\n",
+        "guard_non_bounceable_",
+        "expected exit code 47",
     ),
 ]
 
@@ -99,16 +111,16 @@ def multisig_controls(prefix: str, file: str) -> list[Mutation]:
     return [
         Mutation(
             f"{prefix}{i:02d}",
-            f"the multisig does not check {what}",
+            f"the multisig {what}",
             file,
             old,
-            "",
+            new,
             test,
             reason,
             target="bridge_multisig_sandbox",
             exclusive="guard_",
         )
-        for i, (what, old, test, reason) in enumerate(MULTISIG_GUARDS, 1)
+        for i, (what, old, new, test, reason) in enumerate(MULTISIG_GUARDS, 1)
     ]
 
 
@@ -465,7 +477,7 @@ MUTATIONS = [
         "deep::every_minter_step",
         "over its declared",
     ),
-    # The oracle multisig: S01 to S05.
+    # The oracle multisig: S01 to S06.
     *multisig_controls("S", f"{C}/multisig.fc"),
     # EVM
     M(

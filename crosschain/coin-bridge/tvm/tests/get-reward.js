@@ -84,5 +84,17 @@ funcer({}, {
             ],
             "exit_code": 308,
         })),
+        { // nothing may follow the reward address (end_parse, exit code 9)
+            "sender": `-1:${MULTISIG}`,
+            "amount": 0.1*1e9,
+            "contract_balance": 11*1e9,
+            "body": [
+                "uint32", 4, // execute_voting
+                "uint8", 5, // get reward
+                "Address", REWARD_BASECHAIN,
+                "uint8", 1,
+            ],
+            "exit_code": 9,
+        },
     ]
 });

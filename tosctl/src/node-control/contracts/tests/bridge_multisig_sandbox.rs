@@ -137,14 +137,22 @@ impl Multisig {
 /// A quorum query that violates one guard is refused with that guard's exit
 /// code, before anything is recorded or sent.
 fn assert_refused(variant: &Variant, mode: u8, vote: &Vote, code: i32, what: &str) {
+    assert_refused_with(variant, mode, vote, &[code], what);
+}
+
+/// The same, for a message the VM itself may refuse to parse before the
+/// guard is reached: any of `codes`.
+fn assert_refused_with(variant: &Variant, mode: u8, vote: &Vote, codes: &[i32], what: &str) {
     let mut multisig = Multisig::for_guards(variant);
     let before = multisig.data_hash();
     let (id, tx, outs) = multisig.propose(mode, vote);
     let (aborted, exit) = outcome(&tx);
+    let expected: Vec<String> = codes.iter().map(i32::to_string).collect();
     assert!(
-        aborted && exit == Some(code),
-        "{}: {what}: expected exit code {code}, got {exit:?}",
-        variant.name
+        aborted && exit.is_some_and(|e| codes.contains(&e)),
+        "{}: {what}: expected exit code {}, got {exit:?}",
+        variant.name,
+        expected.join(" or ")
     );
     assert_eq!(multisig.data_hash(), before, "{}: {what}: the query was recorded", variant.name);
     assert!(
@@ -171,6 +179,39 @@ fn guard_destination_outside_the_allowlist_is_refused() {
         assert_refused(&variant, 1, &vote, ERR_DESTINATION, "a listed hash on the basechain");
         let vote = Vote::to(&masterchain([0xc3; 32]));
         assert_refused(&variant, 1, &vote, ERR_DESTINATION, "an unlisted bridge");
+        // A listed hash on the masterchain, spelled any way but addr_std
+        // without anycast.
+        let vote = Vote::raw_destination(|b| {
+            b.append_bits(0b10, 2).unwrap(); // addr_std
+            b.append_bit_one().unwrap(); // anycast
+            b.append_bits(1, 5).unwrap(); // depth 1
+            b.append_bit_one().unwrap(); // rewrite_pfx
+            b.append_bits(0xff, 8).unwrap(); // workchain -1
+            b.append_raw(&BRIDGE_A, 256).unwrap();
+        });
+        // At the current global version the VM itself refuses anycast and
+        // addr_var addresses in LDMSGADDR (exit code 9); a version that
+        // parsed them would meet the guard instead.
+        let codes = [ERR_DESTINATION, 9];
+        assert_refused_with(&variant, 1, &vote, &codes, "an anycast address");
+        let vote = Vote::raw_destination(|b| {
+            b.append_bits(0b11, 2).unwrap(); // addr_var
+            b.append_bit_zero().unwrap(); // no anycast
+            b.append_bits(256, 9).unwrap(); // addr_len
+            b.append_i32(-1).unwrap();
+            b.append_raw(&BRIDGE_A, 256).unwrap();
+        });
+        assert_refused_with(&variant, 1, &vote, &codes, "an addr_var address");
+        // Exactly as long as addr_std on the masterchain, so only its kind differs.
+        let vote = Vote::raw_destination(|b| {
+            b.append_bits(0b11, 2).unwrap(); // addr_var
+            b.append_bit_zero().unwrap(); // no anycast
+            b.append_bits(223, 9).unwrap(); // addr_len
+            b.append_i32(-1).unwrap();
+            b.append_raw(&BRIDGE_A, 223).unwrap();
+        });
+        let what = "an addr_var of addr_std's length";
+        assert_refused_with(&variant, 1, &vote, &codes, what);
     }
 }
 
@@ -179,6 +220,22 @@ fn guard_non_bounceable_vote_is_refused() {
     for variant in variants() {
         let vote = Vote { bounce: false, ..Vote::to(&masterchain(BRIDGE_A)) };
         assert_refused(&variant, 1, &vote, ERR_NOT_BOUNCEABLE, "a non-bounceable vote");
+        let vote = Vote { bounced: true, ..Vote::to(&masterchain(BRIDGE_A)) };
+        assert_refused(&variant, 1, &vote, ERR_NOT_BOUNCEABLE, "a message marked bounced");
+        // ext_out_msg_info$11 with a standard source: its first four bits
+        // carry a set third bit, where an internal message's bounce flag is.
+        let src = masterchain(BRIDGE_A);
+        let raw = cell(|b| {
+            b.append_bits(0b11, 2).unwrap(); // ext_out_msg_info
+            src.write_to(b).unwrap();
+            b.append_bits(0, 2).unwrap(); // dest: addr_none
+            b.append_u64(0).unwrap();
+            b.append_u32(0).unwrap();
+            b.append_bit_zero().unwrap(); // no StateInit
+            b.append_bit_zero().unwrap(); // body in place, empty
+        });
+        let vote = Vote { raw: Some(raw), ..Vote::to(&src) };
+        assert_refused(&variant, 1, &vote, ERR_NOT_BOUNCEABLE, "an external message");
     }
 }
 
@@ -321,6 +378,82 @@ fn create_init_state_fixes_the_allowlist_and_refuses_an_empty_one() {
             "{name}: get_allowed_bridges"
         );
         assert_eq!(multisig.get("get_lock_timeout", vec![]).int_at(0), 0, "{name}");
+    }
+}
+
+/// What the deployment check in SECURITY.md is for. A hand-built StateInit
+/// can start with a pending query that never passed check_proposed_query: a
+/// mode-128 transfer anywhere, already approved by k - 1 owners. One more
+/// approval executes it, and get_allowed_bridges still shows the honest
+/// list. The address gives it away, since it is not the one
+/// create_init_state (and new-multisig.fif) compute for the same owners and
+/// bridges, and get_messages_unsigned shows the pending query.
+#[test]
+fn a_preseeded_pending_query_is_caught_by_the_deployment_check() {
+    let keys = owner_keys();
+    let owners = public_keys(&keys);
+    let thief = masterchain([0xdd; 32]);
+    for variant in variants() {
+        let name = variant.name;
+        let code = code_of(&variant);
+        let mut bc = chain();
+        let id = query_id(bc.now(), 99);
+        let theft = Vote { bounce: false, ..Vote::to(&thief) }.cell();
+        let mut pending = chain_block::HashmapE::with_bit_len(64);
+        let key =
+            SliceData::load_builder(BuilderData::with_raw(id.to_be_bytes().to_vec(), 64).unwrap())
+                .unwrap();
+        let entry = cell(|b| {
+            b.append_bit_one().unwrap(); // not yet executed
+            b.append_u8(0).unwrap(); // created by owner 0
+            b.append_u8(1).unwrap(); // one approval: k - 1
+            b.append_bits(0b01, 2).unwrap(); // owner 0's bit, n = 2
+            b.append_u8(128).unwrap(); // the whole balance
+            b.checked_append_reference(theft.clone()).unwrap();
+        });
+        pending.set(key, &SliceData::load_cell(entry).unwrap()).unwrap();
+        let pending = chain_block::HashmapType::data(&pending).cloned();
+        // Owner 0 is counted as the creator of one pending query, as the
+        // contract itself would have counted it.
+        let owner_set = owner_dict_with_floods(&owners, &[1, 0]);
+        let data = wallet_data_with_pending(&owner_set, 2, 2, &[BRIDGE_A], pending);
+        let rigged = StateInit::with_code_and_data(code.clone(), data);
+        let address = address_of(&rigged, -1);
+        let funder = bc.treasury("rigged-funder", 10_000 * TOS).expect("funder");
+        let deploy = MessageBuilder::internal(funder.address(), &address, 1_000 * TOS)
+            .bounce(false)
+            .state_init(rigged)
+            .build();
+        bc.send_message(deploy).expect("deploy").expect_success();
+        let relayer = bc.treasury("rigged-relayer", 1_000 * TOS).expect("relayer");
+        let multisig = Multisig { bc, address, relayer, keys: owner_keys(), next_query: 1 };
+
+        // What the check compares.
+        let honest = address_of(&state_init(&code, &owners, 2, &[BRIDGE_A]), -1);
+        assert_ne!(multisig.address, honest, "{name}: the rigged StateInit has another address");
+        let listed = multisig.get("get_allowed_bridges", vec![]);
+        assert_eq!(
+            Some(listed.cell_at(0).repr_hash()),
+            allowlist(&[BRIDGE_A]).map(|c| c.repr_hash()),
+            "{name}: the allowlist alone looks honest"
+        );
+        let unsigned = multisig.get("get_messages_unsigned", vec![]);
+        unsigned.expect_success();
+        assert!(
+            !matches!(unsigned.stack.first(), Some(StackItem::None) | None),
+            "{name}: get_messages_unsigned shows the pending query"
+        );
+
+        // Why it matters: one approval sends the planted message.
+        let mut multisig = multisig;
+        let body = root_query(&keys[1], 1, id, 128, theft);
+        let relay = MessageBuilder::internal(multisig.relayer.address(), &multisig.address, TOS)
+            .bounce(true)
+            .body(body)
+            .build();
+        let (_, tx, outs) = multisig.bc.execute_one(relay).expect("the executor runs");
+        succeeded(&tx, &format!("{name}: the planted query executes"));
+        assert!(outs.iter().any(|m| m.dst_ref() == Some(&thief)), "{name}: and pays out");
     }
 }
 
@@ -762,6 +895,28 @@ fn coin_get_reward_refuses_a_reward_address_it_cannot_pay() {
             assert!(after + u128::from(TOS / 10) >= before, "{network}: no sweep: {after}");
             assert_eq!(total_locked(&net.multisig.bc, &net.old) as u128, locked, "{network}");
         }
+    }
+}
+
+/// Nothing may follow the reward address in the vote: end_parse refuses it
+/// (exit code 9) and nothing is paid.
+#[test]
+fn coin_get_reward_refuses_trailing_vote_data() {
+    for network in NETWORKS {
+        let mut net = coin_net(network, u128::from(50 * TOS), 140 * TOS);
+        let reward = basechain([0x77; 32]);
+        let body = coin_vote(5, |b| {
+            reward.write_to(b).unwrap();
+            b.append_u8(1).unwrap();
+        });
+        let vote = Vote { body: Some(body), ..Vote::to(&net.old) };
+        let (_, relay) = net.multisig.query(1, &vote);
+        let result = net.multisig.bc.send_message(relay).expect("the cascade runs");
+        let txs = result.transactions_for(&net.old);
+        assert!(!txs.is_empty(), "{network}: the vote reached the bridge");
+        let (aborted, exit) = outcome(txs[0]);
+        assert!(aborted && exit == Some(9), "{network}: expected exit code 9, got {exit:?}");
+        assert!(result.transactions_for(&reward).is_empty(), "{network}: nothing was paid");
     }
 }
 

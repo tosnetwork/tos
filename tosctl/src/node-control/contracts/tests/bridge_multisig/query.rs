@@ -149,14 +149,50 @@ pub fn allowlist(bridges: &[[u8; 32]]) -> Option<Cell> {
 /// wallet_id n k last_cleaned owners pending lock_until allowed, as the bridge
 /// multisigs store it.
 pub fn wallet_data(owners: &[[u8; 32]], k: u8, allowed: &[[u8; 32]]) -> Cell {
+    wallet_data_with_pending(&owner_dict(owners), owners.len() as u8, k, allowed, None)
+}
+
+/// The owner set with each owner's count of pending queries it created.
+pub fn owner_dict_with_floods(keys: &[[u8; 32]], floods: &[u8]) -> Cell {
+    let mut dict = chain_block::HashmapE::with_bit_len(8);
+    for (index, (key, flood)) in keys.iter().zip(floods).enumerate() {
+        let index =
+            SliceData::load_builder(BuilderData::with_raw(vec![index as u8], 8).unwrap()).unwrap();
+        let value = SliceData::load_cell(cell(|b| {
+            b.append_u256(key).unwrap();
+            b.append_u8(*flood).unwrap();
+        }))
+        .unwrap();
+        dict.set(index, &value).unwrap();
+    }
+    chain_block::HashmapType::data(&dict).cloned().expect("non-empty owner set")
+}
+
+/// The data with a given owner dictionary and pending-query dictionary, as
+/// only a hand-built StateInit can start with.
+pub fn wallet_data_with_pending(
+    owners: &Cell,
+    n: u8,
+    k: u8,
+    allowed: &[[u8; 32]],
+    pending: Option<Cell>,
+) -> Cell {
     cell(|b| {
         b.append_u32(WALLET_ID).unwrap();
-        b.append_u8(owners.len() as u8).unwrap();
+        b.append_u8(n).unwrap();
         b.append_u8(k).unwrap();
         b.append_u64(0).unwrap();
         b.append_bit_one().unwrap();
-        b.checked_append_reference(owner_dict(owners)).unwrap();
-        b.append_bit_zero().unwrap();
+        b.checked_append_reference(owners.clone()).unwrap();
+        match pending {
+            Some(dict) => {
+                b.append_bit_one().unwrap();
+                b.checked_append_reference(dict).unwrap();
+            }
+            None => {
+                b.append_bit_zero().unwrap();
+            }
+        }
         b.append_u32(0).unwrap();
         match allowlist(allowed) {
             Some(dict) => {
@@ -190,6 +226,11 @@ pub struct Vote {
     pub extra_currency: bool,
     pub state_init: Option<StateInit>,
     pub body: Option<Cell>,
+    /// The bounced flag, which only the network sets on a real bounce.
+    pub bounced: bool,
+    /// A message cell built bit by bit, for layouts the typed header cannot
+    /// express; it replaces every field above.
+    pub raw: Option<Cell>,
 }
 
 impl Vote {
@@ -201,7 +242,28 @@ impl Vote {
             extra_currency: false,
             state_init: None,
             body: None,
+            bounced: false,
+            raw: None,
         }
+    }
+
+    /// An internal, bounceable message of one TOS whose destination field is
+    /// `dest`, written as given, followed by an otherwise ordinary header.
+    pub fn raw_destination(dest: impl FnOnce(&mut BuilderData)) -> Self {
+        let raw = cell(|b| {
+            b.append_bits(0b0110, 4).unwrap(); // int_msg_info, ihr disabled, bounce
+            b.append_bits(0, 2).unwrap(); // src: addr_none
+            dest(b);
+            coins(b, u128::from(TOS));
+            b.append_bit_zero().unwrap(); // no extra currencies
+            coins(b, 0); // ihr_fee
+            coins(b, 0); // fwd_fee
+            b.append_u64(0).unwrap();
+            b.append_u32(0).unwrap();
+            b.append_bit_zero().unwrap(); // no StateInit
+            b.append_bit_zero().unwrap(); // body in place, empty
+        });
+        Vote { raw: Some(raw), ..Vote::to(&masterchain([0; 32])) }
     }
 
     pub fn message(&self) -> Message {
@@ -211,6 +273,7 @@ impl Vote {
         }
         let header = InternalMessageHeader {
             bounce: self.bounce,
+            bounced: self.bounced,
             dst: self.dest.clone(),
             value,
             ..Default::default()
@@ -226,12 +289,34 @@ impl Vote {
     }
 
     pub fn cell(&self) -> Cell {
+        if let Some(raw) = &self.raw {
+            return raw.clone();
+        }
         self.message().serialize().expect("a message cell")
     }
 }
 
 /// A query both owners sign (owner 0 as root, owner 1 as co-signer), so it
 /// reaches k = 2 in one message.
+/// A query owner `index` signs alone, as root, with no co-signatures.
+pub fn root_query(key: &SigningKey, index: u8, query_id: u64, mode: u8, msg: Cell) -> Cell {
+    let signed = cell(|b| {
+        b.append_u8(index).unwrap();
+        b.append_bit_zero().unwrap();
+        b.append_u32(WALLET_ID).unwrap();
+        b.append_i32(SANDBOX_GLOBAL_ID).unwrap();
+        b.append_u64(query_id).unwrap();
+        b.append_u8(mode).unwrap();
+        b.checked_append_reference(msg).unwrap();
+    });
+    let signature = key.sign(signed.repr_hash().as_slice()).to_bytes();
+    let signed = SliceData::load_cell(signed).unwrap();
+    cell(|b| {
+        b.append_raw(&signature, 512).unwrap();
+        b.append_builder(&signed.as_builder().unwrap()).unwrap();
+    })
+}
+
 pub fn quorum_query(keys: &[SigningKey; 2], query_id: u64, mode: u8, msg: Cell) -> Cell {
     let rest = cell(|b| {
         b.append_u32(WALLET_ID).unwrap();

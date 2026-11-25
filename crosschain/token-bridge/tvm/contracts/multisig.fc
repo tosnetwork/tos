@@ -117,18 +117,18 @@ _ unpack_owner_info(slice cs) inline_ref {
   return (cnt, cnt_bits);
 }
 
-;; The send mode, the message, and the header fields the guards read: the
-;; four flag bits, the destination, the value, and the rest of the header
+;; The send mode, the message, and the fields of an internal message's header
+;; the guards read: the destination, the value, and the rest of the header
 ;; from the extra-currency bit on.
-(int, cell, int, slice, int, slice) parse_msg(slice in_msg) inline_ref {
+(int, cell, slice, int, slice) parse_msg(slice in_msg) inline_ref {
   int mode = in_msg~load_uint(8);
   var msg = in_msg~load_ref();
   var msg' = msg.begin_parse();
-  int flags = msg'~load_uint(4); ;; int_msg_info$0 ihr_disabled bounce bounced
+  msg'~skip_bits(4); ;; int_msg_info$0 ihr_disabled bounce bounced
   msg'~load_msg_addr(); ;; src
   slice dest = msg'~load_msg_addr();
   int value = msg'~load_coins();
-  return (mode, msg, flags, dest, value, msg');
+  return (mode, msg, dest, value, msg');
 }
 
 ;; True only for addr_std$10, no anycast, workchain -1, hash in the allowlist.
@@ -146,14 +146,19 @@ int allowed_bridge?(slice dest, cell allowed) inline {
   return listed;
 }
 
-;; The only place a query's message is inspected: a pending query is
-;; approved only with a byte-identical copy (exit code 36), so what executes
-;; is always what passed here.
+;; The only place a query's message is inspected. In a multisig built by
+;; create_init_state, which starts with no pending queries, a pending query
+;; is approved only with a byte-identical copy (exit code 36), so what
+;; executes is always what passed here. A hand-built StateInit can hold
+;; pending queries that never did; it has another address, which is why a
+;; deployment is checked against the address new-multisig.fif computes.
 () check_proposed_query(slice in_msg, cell allowed) impure inline {
   throw_unless(43, (slice_refs(in_msg) == 1) & (slice_bits(in_msg) == 8));
-  (int mode, _, int flags, slice dest, int value, slice rest) = parse_msg(in_msg);
-  throw_unless(46, allowed_bridge?(dest, allowed));
+  ;; The flags first: any other kind of message has another header layout.
+  int flags = in_msg.preload_ref().begin_parse().preload_uint(4);
   throw_unless(47, (flags & 11) == 2);
+  (int mode, _, slice dest, int value, slice rest) = parse_msg(in_msg);
+  throw_unless(46, allowed_bridge?(dest, allowed));
   throw_unless(48, mode < 4);
   int extra = rest~load_uint(1);
   throw_unless(49, (value <= MAX_VOTE_VALUE) & (extra == 0));
@@ -196,7 +201,7 @@ int allowed_bridge?(slice dest, cell allowed) inline {
 
 (cell, cell) update_pending_queries(cell pending_queries, cell owner_infos, slice msg, int query_id, int creator_i, int cnt, int cnt_bits, int n, int k) impure inline_ref {
   if (cnt >= k) {
-    (int mode, cell msg', _, _, _, _) = parse_msg(msg);
+    (int mode, cell msg', _, _, _) = parse_msg(msg);
     send_raw_message(msg', mode);
     pending_queries~udict_set_builder(64, query_id, begin_cell().store_int(0, 1));
     owner_infos~dec_flood(creator_i);

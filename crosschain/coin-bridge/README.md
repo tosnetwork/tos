@@ -31,6 +31,8 @@ No production oracle daemon ships with this directory; oracle operation remains 
 
 No slot is enabled or populated by this directory.
 
+The oracle multisig address is checked before the parameter vote by recomputing it: `new-multisig.fif`, run with the reviewed wallet id, `k`, owner keys and bridge list, prints the address of the StateInit `create_init_state` builds (no pending queries), and it must equal the one the parameter names; the deployed account must also return the reviewed list from `get_allowed_bridges` and nothing from `get_messages_unsigned`. The allowlist alone does not prove the account clean (`SECURITY.md`).
+
 ## Build and test the TVM contracts
 
 With `func`/`fift` built (`cmake --build build --target func fift`):
