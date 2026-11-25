@@ -317,9 +317,14 @@ def verify_reported_transfers(contracts: Path) -> None:
     recv = bodies["recv_internal"]
     branch = recv.split("if (op == op::internal_transfer_reported) {", 1)
     if len(branch) != 2 or not re.match(
-        r"\s*(;;[^\n]*\n\s*)*set_gas_limit\(R_GAS_LIMIT\);", branch[1]
+        r"\s*(;;[^\n]*\n\s*)*throw_unless\(error::reported_underfunded, "
+        r"msg_value >= get_compute_fee\(false, R_GAS_LIMIT\)\);\s*set_gas_limit\(R_GAS_LIMIT\);",
+        branch[1],
     ):
-        raise AssertionError("token-wallet.fc: R must cap its gas first in its branch")
+        raise AssertionError(
+            "token-wallet.fc: R must require the message to pay for R_GAS_LIMIT,"
+            " then cap its gas, first in its branch"
+        )
     if recv.index("op == op::internal_transfer_reported") > recv.index("get_token_bridge_config()"):
         raise AssertionError("token-wallet.fc: R must cap its gas before reading the configuration")
     if recv.index("set_gas_limit(S_BOUNCE_GAS);") > recv.index("load_data();"):

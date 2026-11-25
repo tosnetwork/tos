@@ -129,9 +129,9 @@ const int HOLDER_LIMIT = 1000;       ;; holders one minter serves
 ;; Worst-case state sizes, measured by the sandbox's T-G test on the compiled
 ;; contracts with every window full, every record at its largest, an old life
 ;; held in full and no cell shared between records:
-;;   wallet 206 cells, REFUSALS_LIMIT recorded refusals included; bridge 929
+;;   wallet 207 cells, REFUSALS_LIMIT recorded refusals included; bridge 930
 ;;   cells at 8 channels (58 per channel), under the 2048-cell non-special
-;;   masterchain limit; minter 378 cells plus 63 per holder, 63378 at 1000
+;;   masterchain limit; minter 379 cells plus 63 per holder, 63379 at 1000
 ;;   holders, under the 65536-cell basechain limit.
 ;; Measured with the reported-transfer wallet by the sandbox test
 ;; t_g_worst_case_cells_fit_the_declared_bound_and_the_account_limit, which
@@ -156,7 +156,7 @@ const int WALLET_STEP_GAS = 40000;
 ;; 256 bits. The sandbox measures every step on that shape (token_bridge/deep.rs).
 const int MINTER_STEP_GAS = 300000;
 ;; The dearest bridge step is an advance of a mint, which prices the recipient
-;; wallet's StateInit: 71202 gas in the sandbox suite with the reported-transfer
+;; wallet's StateInit: 71352 gas in the sandbox suite with the reported-transfer
 ;; wallet code.
 const int BRIDGE_STEP_GAS = 80000;
 ;; An oracle vote at the bridge: a swap vote that deploys a minter computes

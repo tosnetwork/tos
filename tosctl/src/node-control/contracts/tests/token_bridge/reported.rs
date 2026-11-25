@@ -828,7 +828,7 @@ fn t_r6_a_rise_within_the_margin_ends_every_transfer_without_a_reserve() {
 /// value. R spends at most half of R_GAS_LIMIT, so at 11 times the prices it
 /// still delivers and the tokens are conserved. The guarantee stops at the
 /// margin: SETTLEMENT-PROTOCOL.md section 20.7 records where, measured, a
-/// transfer stops ending (30 times the prices without a reserve).
+/// transfer stops ending (50 times the prices without a reserve).
 #[test]
 fn t_r6_just_beyond_the_margin_without_a_reserve_it_still_delivers() {
     let mut net = minted();
@@ -1422,6 +1422,78 @@ fn t_r15_the_refusal_limit_bounds_the_records_and_loses_no_token() {
     assert_eq!(net.refusal(&p, 204), 25, "a refusal after clearing is recorded");
     assert_eq!(net.refusals_count(&p), limit, "and counted");
     assert_eq!(net.tokens(&p), 1_000, "no token is lost");
+    assert_every_reported_transfer_ended(&net);
+}
+
+/// T-R16: R raises its gas limit, which SETGASLIMIT may fund from R's own
+/// balance, only for a message that pays for R_GAS_LIMIT itself. Forged and
+/// underfunded internal_transfer_reported messages sent straight to R, over and
+/// over, bounceable or not, each pay for their own refusal: R's balance never
+/// falls by more than the storage it owes. A genuine transfer at exactly the
+/// need still goes through.
+#[test]
+fn t_r16_forged_messages_cannot_spend_the_recipients_balance() {
+    let mut net = minted();
+    let p = net.user(0);
+    let q = net.user(1);
+    let stranger = net.stranger.address().clone();
+    // R exists and holds its reserve
+    succeeded(&send_funded(&mut net, &p, &Reported::to(&q, 121, 10)));
+    let r_wallet = net.wallet_of(&q);
+    // a well-formed body naming P as its sender
+    let r = Reported::to(&q, 122, 10);
+    let need = net.reported_need(&p, &r);
+    let msg = net.reported_message(&p, &p, &r, need + 1);
+    succeeded(&net.send_one(msg));
+    let genuine = net.take(|m| body_op(m) == Some(OP_INTERNAL_TRANSFER_REPORTED));
+    net.model.held += 10;
+    let body = settlement_body(&genuine).into_cell().unwrap();
+    let cap = gas_fee(&net, declared_u64("R_GAS_LIMIT"));
+    let start_balance = net.balance(&r_wallet);
+    // Values from a few gas units' worth up to past R_GAS_LIMIT: in steps of
+    // ten gas units around the point where R checks the value, so a message
+    // that buys gas up to anywhere between raising the limit and refusing is
+    // among them, and then coarser.
+    let mut values: Vec<u128> = (300..4_000).step_by(10).map(|g| gas_fee(&net, g)).collect();
+    values.extend([gas_fee(&net, 5_000), cap / 2, cap - 1, cap, 2 * cap]);
+    for value in values {
+        for bounce in [false, true] {
+            let before = net.balance(&r_wallet);
+            let forged = MessageBuilder::internal(&stranger, &r_wallet, value as u64)
+                .bounce(bounce)
+                .body(body.clone())
+                .build();
+            let tx = net.send(forged);
+            let o = outcome(&tx);
+            let after = net.balance(&r_wallet);
+            assert!(
+                after + o.storage_fees >= before,
+                "R's balance paid for a forged message of {value}: {before} -> {after}"
+            );
+            assert!(o.aborted, "a forged message is refused");
+            // below the cap the message runs out of its own gas or is refused
+            // before R raises its limit; above it, R refuses the sender
+            if value < cap {
+                assert!(
+                    o.exit_code == Some(err("reported_underfunded"))
+                        || o.exit_code == Some(-14)
+                        || o.exit_code.is_none(),
+                    "refused on its own value at {value}: {:?}",
+                    o.exit_code
+                );
+            } else {
+                assert_eq!(o.exit_code, Some(err("unauthorized_incoming_transfer")), "at {value}");
+            }
+        }
+    }
+    assert!(net.balance(&r_wallet) + 1 >= start_balance, "R's balance is not drained");
+    assert_eq!(net.tokens(&q), 10, "nothing was credited");
+    // the genuine transfer, at exactly the need, still goes through
+    net.model.held -= 10;
+    net.send(genuine);
+    assert_eq!(net.tokens(&q), 20, "the genuine transfer is delivered");
+    succeeded(&send_funded(&mut net, &p, &Reported::to(&q, 123, 5)));
+    assert_eq!(net.tokens(&q), 25);
     assert_every_reported_transfer_ended(&net);
 }
 

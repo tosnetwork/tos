@@ -780,6 +780,26 @@ MUTATIONS = [
         "t_r7_",
         "the refusal is reported again",
     ),
+    M(
+        "M76",
+        "R raises its gas limit before checking that the message pays for it",
+        f"{C}/token-wallet.fc",
+        "    throw_unless(error::reported_underfunded, msg_value >= get_compute_fee(false, R_GAS_LIMIT));\n"
+        "    set_gas_limit(R_GAS_LIMIT);\n",
+        "    set_gas_limit(R_GAS_LIMIT);\n"
+        "    throw_unless(error::reported_underfunded, msg_value >= get_compute_fee(false, R_GAS_LIMIT));\n",
+        "t_r16_",
+        "R's balance paid for a forged message",
+    ),
+    M(
+        "M77",
+        "R raises its gas limit for any message",
+        f"{C}/token-wallet.fc",
+        "    throw_unless(error::reported_underfunded, msg_value >= get_compute_fee(false, R_GAS_LIMIT));\n",
+        "",
+        "t_r16_",
+        "R's balance paid for a forged message",
+    ),
     # EVM
     M(
         "E01",

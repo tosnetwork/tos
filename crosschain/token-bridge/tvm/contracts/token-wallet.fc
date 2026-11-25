@@ -925,7 +925,13 @@ int advance_need(int kind) inline {
   int flags = cs~load_uint(4);
   if (flags & 1 ? reported_bounce?(in_msg_body) : false) {
     ;; R refused a reported transfer: the gas limit is raised before anything
-    ;; else is spent. S has committed a transaction, so its life is fixed.
+    ;; else is spent, from S's own balance where the bounce is short. That is
+    ;; safe only because nobody else can reach this branch: the bounced flag
+    ;; is set by the network alone (the action phase clears it on every
+    ;; outbound message), and a bounce returns to the sender of the bounced
+    ;; message, so a bounced internal_transfer_reported here is S's own send
+    ;; coming back, once. A message without the flag never takes this branch,
+    ;; whatever its body. S has committed a transaction, so its life is fixed.
     set_gas_limit(S_BOUNCE_GAS);
     load_data();
     on_reported_bounce(in_msg_body);
@@ -956,8 +962,15 @@ int advance_need(int kind) inline {
   int op = in_msg_body~load_op();
 
   if (op == op::internal_transfer_reported) {
-    ;; R: the handling is capped before anything else is spent. S's value
-    ;; check guarantees the message buys this much gas, so this only caps it.
+    ;; R: SETGASLIMIT raises the limit up to what R's own balance can buy, so
+    ;; it is called only for a message that pays for R_GAS_LIMIT itself. Until
+    ;; then the default limit, bought by the message alone, applies: a forged
+    ;; or underfunded message pays for its own refusal and never spends R's
+    ;; TOS. S's value check prices R_GAS_LIMIT at REPORT_MARGIN times, so a
+    ;; genuine message passes for any price rise below the margin; past it,
+    ;; R refuses here and the bounce goes back to S. For a message that passes,
+    ;; the call only caps the gas.
+    throw_unless(error::reported_underfunded, msg_value >= get_compute_fee(false, R_GAS_LIMIT));
     set_gas_limit(R_GAS_LIMIT);
     receive_reported_tokens(in_msg_body, sender_address, my_balance, msg_value, fwd_fee);
     return ();
