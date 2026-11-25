@@ -14,6 +14,7 @@ use super::output_format::OutputFormat;
 use super::prediction_cmd::PredictionCmd;
 use super::proof_attestation_cmd::ProofAttestationCmd;
 use super::service_actor_cmd::ServiceActorCmd;
+use super::service_actor_token_cmd::ServiceActorTokenCmd;
 use super::utils::{
     DEPLOY_TIMEOUT, SEND_TIMEOUT, calculate_wallet_address, get_wallet_config, load_config_vault,
     load_config_vault_rpc_client, load_config_vault_rpc_client_fd, make_wallet, save_config,
@@ -128,6 +129,8 @@ pub enum AgentAction {
     NativeRegistry(NativeRegistryCmd),
     /// Service Actor operations
     Service(ServiceActorCmd),
+    /// Token-rail Service Actor operations (calls funded by a token transfer)
+    ServiceToken(ServiceActorTokenCmd),
     /// Dispute case operations
     Dispute(DisputeCmd),
     /// Proof Attestation (ed25519 signature adapter) operations
@@ -1662,6 +1665,7 @@ impl AgentCmd {
             AgentAction::Registry(cmd) => cmd.run(&self.config).await,
             AgentAction::NativeRegistry(cmd) => cmd.run(&self.config).await,
             AgentAction::Service(cmd) => cmd.run(&self.config).await,
+            AgentAction::ServiceToken(cmd) => cmd.run(&self.config).await,
             AgentAction::Dispute(cmd) => cmd.run(&self.config).await,
             AgentAction::Attestation(cmd) => cmd.run(&self.config).await,
             AgentAction::Prediction(cmd) => cmd.run(&self.config).await,

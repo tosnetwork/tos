@@ -1,0 +1,73 @@
+{
+  "state": {
+    "actor": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+    "code_profile": "release",
+    "read_at": {
+      "seqno": 4242,
+      "root_hash": "abababababababababababababababababababababababababababababababab"
+    },
+    "balance": "5000000000",
+    "get_service_data": {
+      "owner": "0:0101010101010101010101010101010101010101010101010101010101010101",
+      "active": true,
+      "open_access": true,
+      "authorized_caller": null,
+      "price_per_call": "2500000",
+      "storage_fee": "200000000",
+      "max_token_liability": "1329227995784915872903807060280344575"
+    },
+    "get_terms_hash": "632baf94f8fd2ba1da749e5cedf7b0f75ae1090485660ddd6bed5e0ec7142ded",
+    "get_token_ledger": [
+      "2500000",
+      "2500000",
+      "1000000",
+      "500000",
+      "10000000"
+    ],
+    "get_native_ledger": {
+      "withdrawable_revenue": "800000000",
+      "locked_storage_fees": "400000000",
+      "locked_outcome_fees": "300000000",
+      "revenue_payouts_in_flight": 1,
+      "surplus_payouts_in_flight": 0
+    },
+    "get_funding_prices": [
+      "1300000000",
+      "300000000",
+      "1000000000",
+      "60000000",
+      "150000000",
+      "1200000000"
+    ],
+    "get_accepting_tokens": true,
+    "get_attestor_key_count": 0,
+    "get_asset_route": {
+      "master": "0:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "wallet_code_boc": "te6ccgEBAQEAJAAARGJyaWRnZSB0b2tlbiB3YWxsZXQgY29kZSAoZml4dHVyZSk="
+    },
+    "get_own_wallet": "0:0c6e7f3e5974a3fe5ede451fef4e040297bd04e5454b20d891f3063fcb0e0810"
+  },
+  "reads": {
+    "config_param_84_entry": {
+      "status": 1,
+      "decimals": 6,
+      "wallet_code_hash": "b4822ceac952f2c0290b78ff58b0e6e62966e23b9322559e76c10667e0799427",
+      "max_liability_per_actor": "1000000000000",
+      "source_chain_id": 1
+    },
+    "config_param_79_prices": {
+      "wallet_gas_consumption": "15000000",
+      "wallet_min_tos_for_storage": "10000000"
+    },
+    "sender_token_wallet_balance": "100000000"
+  },
+  "sender": "0:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+  "query_id": 9,
+  "operation": "call",
+  "arguments": {
+    "request_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+    "expected_terms_hash": "632baf94f8fd2ba1da749e5cedf7b0f75ae1090485660ddd6bed5e0ec7142ded",
+    "forward_tos_nanotos": null,
+    "wallet_value_nanotos": null
+  }
+}

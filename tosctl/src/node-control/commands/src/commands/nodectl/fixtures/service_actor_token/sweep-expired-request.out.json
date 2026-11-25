@@ -1,0 +1,22 @@
+{
+  "version": "tosctl.service-actor-token.prepared-message.v1",
+  "operation": "sweep-expired-request",
+  "rail": "tos.service.service-actor-token.v1",
+  "code_profile": "release",
+  "actor": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "read_at": {
+    "seqno": 4242,
+    "root_hash": "abababababababababababababababababababababababababababababababab"
+  },
+  "sender": "0:d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
+  "destination": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "value_nanotos": "2400000000",
+  "bounce": true,
+  "body_boc": "te6ccgEBAQEAFgAAKFNUQwUAAAAAAAAAAwAAAAAAAAAF",
+  "body_hash": "ff65764931ff8419e0ca949ca074d106a49c256d3bc2217e1450f3ce017ccc9c",
+  "details": {
+    "payout_funding": "1200000000",
+    "query_id": "3",
+    "request_id": "5"
+  }
+}

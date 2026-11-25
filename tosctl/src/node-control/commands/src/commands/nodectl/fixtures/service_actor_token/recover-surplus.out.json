@@ -1,0 +1,23 @@
+{
+  "version": "tosctl.service-actor-token.prepared-message.v1",
+  "operation": "recover-surplus",
+  "rail": "tos.service.service-actor-token.v1",
+  "code_profile": "release",
+  "actor": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "read_at": {
+    "seqno": 4242,
+    "root_hash": "abababababababababababababababababababababababababababababababab"
+  },
+  "sender": "0:0101010101010101010101010101010101010101010101010101010101010101",
+  "destination": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "value_nanotos": "2800000000",
+  "bounce": true,
+  "body_boc": "te6ccgEBAQEAEgAAH1NUQwsAAAAAAAAAAzLcbAg=",
+  "body_hash": "d18d5627c9bdc7485ee8966bc39a93c073e3312628da3df0644a76c7ef32860d",
+  "details": {
+    "minimum_value": "1400000000",
+    "query_id": "3",
+    "surplus_at_read": "3500000",
+    "token_amount": "3000000"
+  }
+}

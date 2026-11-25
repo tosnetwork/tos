@@ -1,0 +1,23 @@
+{
+  "version": "tosctl.service-actor-token.prepared-message.v1",
+  "operation": "update-policy",
+  "rail": "tos.service.service-actor-token.v1",
+  "code_profile": "release",
+  "actor": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "read_at": {
+    "seqno": 4242,
+    "root_hash": "abababababababababababababababababababababababababababababababab"
+  },
+  "sender": "0:0101010101010101010101010101010101010101010101010101010101010101",
+  "destination": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "value_nanotos": "10000000",
+  "bounce": true,
+  "body_boc": "te6ccgEBAgEAkAABlVNUQwYAAAAAAAAAAzLcbAQO5rKAQF9eEAAAAcIAAADhCwAsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLAAAABkQC+vCAgEAgGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=",
+  "body_hash": "3349c2a0688e6cc2aefae3ffb2459e0715934a1e69a58a53252764d51fa932b3",
+  "details": {
+    "active": "true",
+    "max_token_liability": "50000000",
+    "price_per_call": "3000000",
+    "query_id": "3"
+  }
+}

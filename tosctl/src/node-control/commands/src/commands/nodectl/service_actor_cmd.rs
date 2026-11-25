@@ -1535,7 +1535,7 @@ fn wallet_message_line(signed: &SignedWalletMessage) -> String {
 /// Signs one wallet message, prints its `wallet_message_line`, then
 /// broadcasts it and confirms that exact message, as `send_wallet_message`
 /// does.
-async fn send_announced_wallet_message(
+pub(super) async fn send_announced_wallet_message(
     wallet: &WalletContract,
     rpc_client: std::sync::Arc<chain_rpc_client::v2::client_json_rpc::ClientJsonRpc>,
     destination: MsgAddressInt,

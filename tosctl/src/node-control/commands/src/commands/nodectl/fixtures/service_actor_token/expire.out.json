@@ -1,0 +1,21 @@
+{
+  "version": "tosctl.service-actor-token.prepared-message.v1",
+  "operation": "expire",
+  "rail": "tos.service.service-actor-token.v1",
+  "code_profile": "release",
+  "actor": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "read_at": {
+    "seqno": 4242,
+    "root_hash": "abababababababababababababababababababababababababababababababab"
+  },
+  "sender": "0:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+  "destination": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "value_nanotos": "10000000",
+  "bounce": true,
+  "body_boc": "te6ccgEBAQEAFgAAKFNUQwMAAAAAAAAAAwAAAAAAAAAF",
+  "body_hash": "d0dccc474274b28da220c4357cba21b63fc7b32b793b27a3b75cc727e5bbabf2",
+  "details": {
+    "query_id": "3",
+    "request_id": "5"
+  }
+}

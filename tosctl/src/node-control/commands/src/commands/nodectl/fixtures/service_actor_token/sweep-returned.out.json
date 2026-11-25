@@ -1,0 +1,25 @@
+{
+  "version": "tosctl.service-actor-token.prepared-message.v1",
+  "operation": "sweep-returned",
+  "rail": "tos.service.service-actor-token.v1",
+  "code_profile": "release",
+  "actor": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "read_at": {
+    "seqno": 4242,
+    "root_hash": "abababababababababababababababababababababababababababababababab"
+  },
+  "sender": "0:d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
+  "destination": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "value_nanotos": "2400000000",
+  "bounce": true,
+  "body_boc": "te6ccgEBAQEAFgAAKFNUQw0AAAAAAAAAAwAAAAAAAAAI",
+  "body_hash": "78704419d0baee74856c335351de3f8b615fe50064d3a00190f644ac7de206b4",
+  "details": {
+    "id": "8",
+    "payout_funding": "1200000000",
+    "query_id": "3",
+    "recipient": "0:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+    "return_deadline": "1900000000",
+    "token_amount": "1000000"
+  }
+}
