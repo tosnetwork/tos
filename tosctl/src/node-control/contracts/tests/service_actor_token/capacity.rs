@@ -65,6 +65,9 @@ const RETURNED: u64 = 10;
 const FUNDING_RETURN: u64 = 5;
 const OWNER_PAYOUT: u64 = 5;
 const TRANSIENT: u64 = 10;
+/// An attestor key named by pending requests: its eleven-cell chain, its entry
+/// and its dictionary cells, rounded up.
+const ATTESTOR_KEY: u64 = 15;
 
 fn bound() -> u64 {
     let (l, r, f) = (
@@ -76,6 +79,7 @@ fn bound() -> u64 {
         + RETURNED * (r + l + f)
         + FUNDING_RETURN * f
         + OWNER_PAYOUT * u64::from(pc::MAX_REVENUE_PAYOUTS + pc::MAX_SURPLUS_PAYOUTS)
+        + ATTESTOR_KEY * u64::from(pc::MAX_LIVE_ATTESTOR_KEYS)
         + TRANSIENT
 }
 
@@ -112,7 +116,9 @@ fn counters(callers: impl IntoIterator<Item = MsgAddressInt>) -> Option<Cell> {
     d.data().cloned()
 }
 
-fn pending_entry(i: u64, key: &Option<Cell>, key_id: &[u8; 32]) -> Cell {
+/// A pending request naming attestor key `key_id`; the key itself is stored
+/// once, in the attestor key dictionary.
+fn pending_entry(i: u64, key_id: &[u8; 32]) -> Cell {
     cell(|b| {
         addr(1, i).write_to(b).unwrap();
         coins(b, PRICE);
@@ -124,19 +130,9 @@ fn pending_entry(i: u64, key: &Option<Cell>, key_id: &[u8; 32]) -> Cell {
         b.checked_append_reference(cell(|c| {
             c.append_raw(&hash(3, i), 256).unwrap();
             c.append_raw(&hash(4, 0), 256).unwrap();
-            match key {
-                Some(k) => {
-                    c.append_bit_one().unwrap();
-                    c.append_raw(key_id, 256).unwrap();
-                    c.append_bit_one().unwrap();
-                    c.checked_append_reference(k.clone()).unwrap();
-                }
-                None => {
-                    c.append_bit_zero().unwrap();
-                    c.append_raw(&[0; 32], 256).unwrap();
-                    c.append_bit_zero().unwrap();
-                }
-            }
+            c.append_bit_one().unwrap();
+            c.append_raw(key_id, 256).unwrap();
+            c.append_bit_zero().unwrap();
         }))
         .unwrap();
     })
@@ -170,8 +166,20 @@ fn no_undo() -> Cell {
 /// slots left.
 fn worst_state(returns_free: u32) -> World {
     let attestor = contracts::native_registry::native_public_key_from_seed(&[0x31; 32]);
-    let key_id = contracts::native_registry::controller_key_id(&attestor).unwrap();
     let mut w = World::with(Options { attestor_pubkey: Some(attestor), ..Options::default() });
+    // MAX_LIVE_ATTESTOR_KEYS distinct keys, each named by pending requests; the
+    // first is the policy's current key.
+    let keys: Vec<([u8; 32], Cell)> = (0..u64::from(pc::MAX_LIVE_ATTESTOR_KEYS))
+        .map(|k| {
+            let public = contracts::native_registry::native_public_key_from_seed(
+                &[if k == 0 { 0x31 } else { 0x40 + k as u8 }; 32],
+            );
+            (
+                contracts::native_registry::controller_key_id(&public).unwrap(),
+                contracts::native_registry::stored_bytes(&public).unwrap(),
+            )
+        })
+        .collect();
     let buyer = w.user(0);
     w.call(&buyer); // the actor's wallet exists
     w.checking = false;
@@ -182,20 +190,13 @@ fn worst_state(returns_free: u32) -> World {
     );
     let returns = f - u64::from(returns_free);
     w.patch(|d| {
-        let mut s = SliceData::load_cell(d.policy.clone()).unwrap();
-        let mut c = SliceData::load_cell(s.checked_drain_reference().unwrap()).unwrap();
-        c.get_next_bits(256 + 256 + 1 + 256).unwrap();
-        let key = if c.get_next_bit().unwrap() {
-            Some(c.checked_drain_reference().unwrap())
-        } else {
-            None
-        };
         let mut payouts: Vec<(u64, Cell)> = Vec::new();
         // Live entries, each being swept: the entry is in its payout's undo.
         for i in 0..l {
             let undo = cell(|b| {
                 b.append_bits(1, 2).unwrap();
-                b.checked_append_reference(pending_entry(i, &key, &key_id)).unwrap();
+                let key_id = &keys[(i as usize) % keys.len()].0;
+                b.checked_append_reference(pending_entry(i, key_id)).unwrap();
             });
             payouts.push((1 + i, payout(kind::SWEEP, i, &addr(1, i), undo)));
         }
@@ -225,6 +226,15 @@ fn worst_state(returns_free: u32) -> World {
             payouts.push((3_000_000 + i, payout(k, 0, &addr(6, i), no_undo())));
         }
         d.requests[0] = None;
+        let mut key_dict = HashmapE::with_bit_len(256);
+        for (id, key) in &keys {
+            let mut value = BuilderData::new();
+            value.append_u32((l / keys.len() as u64) as u32).unwrap();
+            value.checked_append_reference(key.clone()).unwrap();
+            key_dict.set_builder(SliceData::from_raw(id.to_vec(), 256), &value).unwrap();
+        }
+        d.requests[3] = key_dict.data().cloned();
+        d.attestor_key_count = keys.len() as u8;
         d.requests[2] = counters((0..l).map(|i| addr(1, i)));
         d.payout_dicts[0] = ref_dict(payouts);
         d.payout_dicts[1] = ref_dict(returned);
@@ -336,4 +346,113 @@ fn surplus_payouts_in_flight_are_capped() {
         &w.op(&owner, Actor::recover_surplus(1, 1).unwrap(), funding),
         err::PAYOUT_IN_FLIGHT,
     );
+}
+
+#[test]
+fn accepting_tokens_turns_false_with_headroom_below_every_cap() {
+    let h = pc::ACCEPTING_HEADROOM;
+    let mut w = World::new();
+    let accepting = |w: &World| w.get("get_accepting_tokens", vec![]).int_at(0) != 0;
+    assert!(accepting(&w));
+    // Funding returns in flight: true at 447, false from 448.
+    w.patch(|d| d.returns_in_flight = (pc::MAX_RETURNS_IN_FLIGHT - h - 1) as u16);
+    assert!(accepting(&w));
+    w.patch(|d| d.returns_in_flight = (pc::MAX_RETURNS_IN_FLIGHT - h) as u16);
+    assert!(!accepting(&w), "false at 448 returns in flight");
+    // The SDK buyer path refuses to build a funding transfer now.
+    let buyer = w.user(0);
+    let prices = w.funding_prices();
+    assert!(!prices.accepting_tokens);
+    let forward = w.call_forward();
+    let err = Actor::funding_transfer(
+        1,
+        PRICE,
+        &w.actor,
+        &buyer,
+        forward,
+        &prices,
+        [1; 32],
+        w.terms_hash(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("not accepting tokens"), "{err}");
+    // The live and returned stores, each with the same headroom.
+    for (live, returned, open) in [
+        (pc::MAX_LIVE_GLOBAL - h - 1, 0, true),
+        (pc::MAX_LIVE_GLOBAL - h, 0, false),
+        (0, pc::MAX_RETURNED_GLOBAL - h - 1, true),
+        (0, pc::MAX_RETURNED_GLOBAL - h, false),
+    ] {
+        w.patch(|d| {
+            d.returns_in_flight = 0;
+            d.live_count = live;
+            d.returned_count = returned;
+        });
+        assert_eq!(accepting(&w), open, "live {live} returned {returned}");
+    }
+}
+
+#[test]
+fn a_funding_that_arrives_between_the_headroom_and_the_cap_is_still_returned() {
+    let mut w = World::new();
+    let buyer = w.user(0);
+    w.call(&buyer);
+    // Sent before the getter turned false, it arrives with 480 returns in flight.
+    w.patch(|d| d.returns_in_flight = 480);
+    assert_eq!(w.get("get_accepting_tokens", vec![]).int_at(0), 0);
+    let before = w.tokens(&buyer);
+    let start = w.fund(&buyer, PRICE + 1, w.call_forward(), Some(w.token_call([2; 32])));
+    let logs = w.funding_logs_since(start);
+    assert_ne!(logs[0].payout_id, 0, "a return was made");
+    assert_eq!(w.tokens(&buyer), before, "and delivered: never surplus");
+    assert_eq!(w.surplus(), 0);
+    assert_eq!(w.native().returns_in_flight, 480, "its slot was released");
+}
+
+#[test]
+fn attestor_rotation_is_refused_while_four_keys_are_named_and_allowed_after_they_resolve() {
+    let attestors: Vec<crate::ported::Attestor> =
+        (0..5u8).map(|k| crate::ported::Attestor::new([0x50 + k; 32])).collect();
+    let first = attestors[0].public_key.clone();
+    let mut w = World::with(Options { attestor_pubkey: Some(first), ..Options::default() });
+    let owner = w.owner.clone();
+    let buyer = w.user(0);
+    let count = |w: &World| w.get("get_attestor_key_count", vec![]).int_at(0);
+    let mut ids = vec![w.call(&buyer)];
+    for k in 1..pc::MAX_LIVE_ATTESTOR_KEYS as usize {
+        let key = attestors[k].public_key.clone();
+        succeeded(&w.op(&owner, Actor::rotate_attestor_key(1, &key).unwrap(), TOS));
+        ids.push(w.call(&buyer));
+        ids.push(w.call(&buyer)); // two requests naming the same key store it once
+    }
+    assert_eq!(count(&w), i128::from(pc::MAX_LIVE_ATTESTOR_KEYS));
+    let fifth = attestors[4].public_key.clone();
+    refused_with(
+        &w.op(&owner, Actor::rotate_attestor_key(2, &fifth).unwrap(), TOS),
+        err::ATTESTOR_KEYS_FULL,
+    );
+    // Requests 0 names key 0; 1-2 key 1; 3-4 key 2; 5-6 key 3. Both requests
+    // naming key 1 are answered: the key is released and a rotation fits again.
+    let network = crate::ported::global_id(&w);
+    for id in [ids[1], ids[2]] {
+        let body = crate::ported::signed_respond(&w, &attestors[1], network, id, [9; 32]);
+        succeeded(&w.op(&owner, body, TOS));
+    }
+    assert_eq!(count(&w), i128::from(pc::MAX_LIVE_ATTESTOR_KEYS) - 1);
+    succeeded(&w.op(&owner, Actor::rotate_attestor_key(3, &fifth).unwrap(), TOS));
+    // Expiry releases keys too, and so does a sweep that settles.
+    w.advance(SLA);
+    for id in [ids[0], ids[3], ids[4], ids[5]] {
+        succeeded(&w.op(&buyer, Actor::expire(1, id).unwrap(), TOS));
+    }
+    assert_eq!(count(&w), 1, "only key 3 is still named");
+    assert!(w.get("get_request_attestor_key", vec![int_arg(ids[6])]).stack[0].as_cell().is_ok());
+    w.advance(WINDOW);
+    let stranger = w.net.stranger.address().clone();
+    let funding = w.payout_funding();
+    let start = w.net.delivered.len();
+    succeeded(&w.op(&stranger, Actor::sweep_expired_request(1, ids[6]).unwrap(), funding));
+    assert_eq!(w.outcome_logs_since(start)[0].outcome, outcome::DELIVERED);
+    assert_eq!(count(&w), 0, "no pending request names a key");
 }

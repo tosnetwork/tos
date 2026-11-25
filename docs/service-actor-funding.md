@@ -290,12 +290,13 @@ time from the basechain's gas and forwarding prices, and the getter
 `ADMISSION_GAS_ALLOWANCE`, `RETURN_BUDGET`, `report_tos_amount`,
 `outcome_fee_lock` and the payout op minimum.
 
-The token wallet's own value check also prices ConfigParam 79's
+The token wallet's own value check also prices the bridge parameter's
 `wallet_gas_consumption` and `wallet_min_tos_for_storage`. The actor reads them
-at run time, taking the largest of each over every token bridge parameter (79,
-81, 82, 83 and their negative slots). A vote that raises them therefore raises
-the actor's budgets with it and never makes a payout bounce. When no bridge
-parameter parses, the reserve is priced at 0.3 TOS. This is a bridge parameter,
+at run time from the asset's own bridge parameter, which its route names (79,
+81, 82 or 83, checked by the SDK at deploy), or from the negative slot the
+bridge falls back to. A vote that raises them therefore raises the actor's
+budgets with it and never makes a payout bounce. When neither parses, the
+reserve is priced at 0.3 TOS. This is a bridge parameter,
 not recognition, so no payout reads ConfigParam 84.
 
 A payout reserves its `outcome_fee_lock` from the requester's value. Everything
@@ -313,10 +314,10 @@ transaction and reports the same gas.
 
 | Constant | Value | Most measured | Bounds |
 | --- | --- | --- | --- |
-| `PRE_ACCEPT_GAS` | 20,000 | 9,675 | an outcome handler up to its `set_gas_limit` |
-| `OUTCOME_HANDLER_GAS` | 240,000 | 116,475 | a whole outcome handler (a refund or sweep refused at R) |
-| `ADMISSION_GAS` | 300,000 | 145,646 | the notification handler, with a 16-entry ConfigParam 84 whose last entry is the actor's master |
-| `ABSENT_REPORT_GAS` | 20,000 | 7,934 | the answer to a report of an absent payout |
+| `PRE_ACCEPT_GAS` | 24,000 | 10,026 | an outcome handler up to its `set_gas_limit` |
+| `OUTCOME_HANDLER_GAS` | 240,000 | 117,742 | a whole outcome handler (a refund or sweep refused at R) |
+| `ADMISSION_GAS` | 300,000 | 131,158 | the notification handler, with a 16-entry ConfigParam 84 whose last entry is the actor's master |
+| `ABSENT_REPORT_GAS` | 20,000 | 8,178 | the answer to a report of an absent payout |
 
 A re-reporter sends `rereport_refusal` to the actor's wallet with at least
 `get_rereport_funding()`. That is twice, at current prices, the cost of three
@@ -341,8 +342,9 @@ therefore capped, and the caps keep the worst state at 80% of the limit
 | returned entry being paid, with its caller's counter | 10 | 1,500 + 1,500 + 512 | 35,120 |
 | funding return in flight | 5 | `MAX_RETURNS_IN_FLIGHT` = 512 | 2,560 |
 | owner payout in flight | 5 | 4 revenue + 4 surplus | 40 |
+| attestor key named by pending requests | 15 | `MAX_LIVE_ATTESTOR_KEYS` = 4 | 60 |
 | one notification in flight | | | 10 |
-| total | | | 51,550 |
+| total | | | 51,610 |
 
 The returned count is `MAX_RETURNED_GLOBAL` plus every live entry and funding
 return, because a payout refused in flight still creates its returned entry.
@@ -350,7 +352,7 @@ That over-counts, since a live entry refused in flight stops being live.
 
 Each dictionary entry adds at most two cells, a leaf and a fork, whatever the
 dictionary's shape. `tests/service_actor_token/capacity.rs` builds this worst
-state with every cell distinct and counts it: 46,975 cells. The same file shows
+state with every cell distinct and counts it: 47,025 cells. The same file shows
 three things:
 - a further funding is refused (1907) and returned;
 - with ConfigParam 43 lowered below the bound, the same funding fails;
@@ -359,3 +361,18 @@ three things:
 At `MAX_RETURNS_IN_FLIGHT` unresolved funding returns, a further refused funding
 makes no return. Its SAF1 names it with payout id 0, and its tokens are surplus.
 Only a flood of refused fundings faster than their returns resolve reaches this.
+A notification cannot bounce and a return needs state, so no finite cap avoids
+it.
+
+Honest buyers stay clear of it. They read `get_accepting_tokens` at finalized
+state before they fund, and the SDK's `funding_transfer` refuses while it is
+false. The getter turns false 64 entries (`ACCEPTING_HEADROOM`) below each cap:
+448 funding returns in flight, 1,436 live entries or 1,436 returned entries.
+That leaves room for fundings already sent: below the caps they are admitted,
+or refused and returned. T14 alarms on funding returns in flight near the cap.
+
+Each attestor key a pending request names is stored once, in a dictionary
+keyed by key id with the number of requests naming it, and is released when
+the last of them leaves the pending store. At most `MAX_LIVE_ATTESTOR_KEYS`
+(4) distinct keys are named at once, and `rotate_attestor_key` is refused
+(1944) while 4 are.

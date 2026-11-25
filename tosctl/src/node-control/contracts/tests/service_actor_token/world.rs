@@ -165,7 +165,11 @@ impl World {
             let user = net.user(i);
             net.swap_to(&user, MINTED);
         }
-        let route = AssetRoute { master: net.minter(), wallet_code: codes().wallet.clone() };
+        let route = AssetRoute {
+            master: net.minter(),
+            wallet_code: codes().wallet.clone(),
+            bridge_config_param: CONFIG_PARAM,
+        };
         let init = ServiceActorTokenInit {
             owner: owner.clone(),
             authorized_caller: options.authorized_caller.map(|i| net.user(i)),
@@ -382,6 +386,7 @@ impl World {
         contracts::service_actor_token::FundingPrices {
             storage_fee: self.get("get_service_data", vec![]).int_at(4) as u64,
             min_funding_value: self.min_funding(),
+            accepting_tokens: self.get("get_accepting_tokens", vec![]).int_at(0) != 0,
         }
     }
 
@@ -782,12 +787,13 @@ pub struct ActorData {
     pub returned_count: u32,
     pub returns_in_flight: u16,
     pub surplus_payouts_in_flight: u8,
+    pub attestor_key_count: u8,
     /// pending, refundable, returned, in_flight, token revenue
     pub token: [u128; 5],
     pub query: Cell,
     pub route: Cell,
-    /// pending_requests, refunds, caller_live_counts
-    pub requests: [Option<Cell>; 3],
+    /// pending_requests, refunds, caller_live_counts, attestor_keys
+    pub requests: [Option<Cell>; 4],
     /// payouts, returned, caller_returned_counts
     pub payout_dicts: [Option<Cell>; 3],
 }
@@ -829,11 +835,12 @@ impl ActorData {
         let returned_count = a.get_next_u32().unwrap();
         let returns_in_flight = a.get_next_u16().unwrap();
         let surplus_payouts_in_flight = a.get_next_byte().unwrap();
+        let attestor_key_count = a.get_next_byte().unwrap();
         let mut t = SliceData::load_cell(a.checked_drain_reference().unwrap()).unwrap();
         let token = [c(&mut t), c(&mut t), c(&mut t), c(&mut t), c(&mut t)];
         let query = a.checked_drain_reference().unwrap();
         let route = a.checked_drain_reference().unwrap();
-        let requests = [dict_of(&mut r), dict_of(&mut r), dict_of(&mut r)];
+        let requests = [dict_of(&mut r), dict_of(&mut r), dict_of(&mut r), dict_of(&mut r)];
         let payout_dicts = [dict_of(&mut p), dict_of(&mut p), dict_of(&mut p)];
         Self {
             owner,
@@ -850,6 +857,7 @@ impl ActorData {
             returned_count,
             returns_in_flight,
             surplus_payouts_in_flight,
+            attestor_key_count,
             token,
             query,
             route,
@@ -874,6 +882,7 @@ impl ActorData {
             b.append_u32(self.returned_count).unwrap();
             b.append_u16(self.returns_in_flight).unwrap();
             b.append_u8(self.surplus_payouts_in_flight).unwrap();
+            b.append_u8(self.attestor_key_count).unwrap();
             b.checked_append_reference(token).unwrap();
             b.checked_append_reference(self.query.clone()).unwrap();
             b.checked_append_reference(self.route.clone()).unwrap();

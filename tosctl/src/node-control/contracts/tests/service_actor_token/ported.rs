@@ -21,13 +21,13 @@ use crate::world::*;
 
 const MIN_WINDOW: u32 = 3_600;
 
-struct Attestor {
+pub(crate) struct Attestor {
     seed: [u8; 32],
-    public_key: Vec<u8>,
+    pub(crate) public_key: Vec<u8>,
 }
 
 impl Attestor {
-    fn new(seed: [u8; 32]) -> Self {
+    pub(crate) fn new(seed: [u8; 32]) -> Self {
         Self { seed, public_key: contracts::native_registry::native_public_key_from_seed(&seed) }
     }
 
@@ -47,7 +47,7 @@ fn int256(item: &tos_vm::stack::StackItem) -> [u8; 32] {
     hex::decode(padded).unwrap().try_into().unwrap()
 }
 
-fn global_id(w: &World) -> i32 {
+pub(crate) fn global_id(w: &World) -> i32 {
     match w.net.bc.config_params().config(19).unwrap() {
         Some(chain_block::ConfigParamEnum::ConfigParam19(id)) => id as i32,
         other => panic!("parameter 19 is not the global id: {other:?}"),
@@ -69,7 +69,7 @@ fn request(w: &World, id: u64) -> (MsgAddressInt, u128, u64, u64, [u8; 32], [u8;
     )
 }
 
-fn signed_respond(
+pub(crate) fn signed_respond(
     w: &World,
     attestor: &Attestor,
     network: i32,

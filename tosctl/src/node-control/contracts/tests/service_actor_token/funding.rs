@@ -522,6 +522,7 @@ fn every_admission_refusal_ends_in_a_funding_return() {
             master.write_to(b).unwrap();
             b.append_raw(&[0x44; 32], 256).unwrap();
             b.checked_append_reference(code).unwrap();
+            b.append_u32(CONFIG_PARAM).unwrap();
         });
         d.build()
     });

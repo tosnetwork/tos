@@ -27,15 +27,20 @@ enum Handler {
     Delivered,
     Refused,
     Bounce,
+    Notification,
+    TakeBalance,
 }
 
 #[derive(Clone, Copy, Debug)]
 enum Forgery {
     /// Every field right, sent by someone other than the guarded wallet.
     WrongSender,
-    /// Sent from the guarded wallet's address, the amount (and for a delivery
-    /// the recipient) wrong.
+    /// Sent from the guarded wallet's address, the amount wrong.
     WrongFields,
+    /// A delivery from R with the amount wrong and the recipient right.
+    WrongAmount,
+    /// A delivery from R with the recipient wrong and the amount right.
+    WrongRecipient,
     /// The sender wrong and too little value to pay for the handler.
     Underfunded,
 }
@@ -59,11 +64,32 @@ const ROWS: &[Row] = &[
         to: "if ((reported_amount != amount)",
     },
     Row {
-        name: "delivered: amount and recipient checks removed",
+        name: "delivered: amount check removed",
         handler: Handler::Delivered,
-        forgery: Forgery::WrongFields,
-        from: "    if ((~ equal_slice_bits(sender, recipient_wallet)) | (reported_amount != amount)\n        | (~ equal_slice_bits(reported_recipient, recipient))) {",
-        to: "    if (~ equal_slice_bits(sender, recipient_wallet)) {",
+        forgery: Forgery::WrongAmount,
+        from: "(reported_amount != amount)\n        | (~ equal_slice_bits(reported_recipient, recipient))",
+        to: "(~ equal_slice_bits(reported_recipient, recipient))",
+    },
+    Row {
+        name: "delivered: recipient check removed",
+        handler: Handler::Delivered,
+        forgery: Forgery::WrongRecipient,
+        from: "(reported_amount != amount)\n        | (~ equal_slice_bits(reported_recipient, recipient))",
+        to: "(reported_amount != amount)",
+    },
+    Row {
+        name: "notification: own-wallet sender check removed",
+        handler: Handler::Notification,
+        forgery: Forgery::WrongSender,
+        from: "    if (~ equal_slice_bits(sender, own_wallet)) {\n      ;; No token reached this actor's wallet.",
+        to: "    if (false) {\n      ;; No token reached this actor's wallet.",
+    },
+    Row {
+        name: "take_balance: sender check removed",
+        handler: Handler::TakeBalance,
+        forgery: Forgery::WrongSender,
+        from: "    slice own_wallet = own_wallet_of(route_cell);\n    if (~ equal_slice_bits(sender, own_wallet)) {\n      return ();\n    }\n    query_cell = empty_query();",
+        to: "    slice own_wallet = own_wallet_of(route_cell);\n    query_cell = empty_query();",
     },
     Row {
         name: "delivered: gas raised before the checks",
@@ -117,7 +143,8 @@ const ROWS: &[Row] = &[
 ];
 
 /// A world running `code` (or the release) with a live refund payout whose
-/// report is still to come; returns the payout's id.
+/// report is still to come and a balance query whose answer is still to come;
+/// returns the payout's id.
 fn with_live_payout(code: Option<Cell>) -> (World, u64) {
     let mut w = World::with(Options { code, ..Options::default() });
     let buyer = w.user(0);
@@ -129,6 +156,10 @@ fn with_live_payout(code: Option<Cell>) -> (World, u64) {
     w.settle();
     let payout = w.counters().3 - 1;
     assert!(w.payout(payout).is_some());
+    let owner = w.owner.clone();
+    w.op_one(&owner, Actor::recover_surplus(1, 1).unwrap(), 2 * funding);
+    w.intercept(|m| body_op(m) == Some(OP_TAKE_BALANCE));
+    assert!(w.balance_query().0, "a balance query is pending");
     (w, payout)
 }
 
@@ -142,13 +173,21 @@ fn forged_message(w: &World, payout: u64, handler: Handler, forgery: Forgery, ga
         w.net.bc.config_params().gas_prices(false).unwrap().calc_gas_fee(gas * 4 / 5).unwrap()
             as u64;
     let value = if matches!(forgery, Forgery::Underfunded) { underfunded } else { TOS };
-    let wrong = matches!(forgery, Forgery::WrongFields);
-    let amount = if wrong { p.amount + 1 } else { p.amount };
+    let wrong =
+        matches!(forgery, Forgery::WrongFields | Forgery::WrongAmount | Forgery::WrongRecipient);
+    let amount = if matches!(forgery, Forgery::WrongFields | Forgery::WrongAmount) {
+        p.amount + 1
+    } else {
+        p.amount
+    };
     match handler {
         Handler::Delivered => {
             let from = if wrong { p.recipient_wallet.clone() } else { stranger };
-            let recipient: MsgAddressInt =
-                if wrong { w.owner.clone() } else { p.recipient.clone() };
+            let recipient: MsgAddressInt = if matches!(forgery, Forgery::WrongRecipient) {
+                w.owner.clone()
+            } else {
+                p.recipient.clone()
+            };
             let body = cell(|b| {
                 b.append_u32(OP_TRANSFER_DELIVERED).unwrap().append_u64(payout).unwrap();
                 coins(b, amount);
@@ -178,6 +217,30 @@ fn forged_message(w: &World, payout: u64, handler: Handler, forgery: Forgery, ga
             }
             m
         }
+        Handler::Notification => {
+            // A notification naming a fully funded call, from anyone but the
+            // actor's own wallet: no token reached the actor.
+            let buyer = w.user(0);
+            let payload = w.token_call([0x66; 32]);
+            let body = cell(|b| {
+                b.append_u32(OP_TRANSFER_NOTIFICATION).unwrap().append_u64(1).unwrap();
+                coins(b, PRICE);
+                buyer.write_to(b).unwrap();
+                b.append_bit_one().unwrap();
+                b.checked_append_reference(payload).unwrap();
+            });
+            let value = w.call_forward() as u64 + TOS;
+            MessageBuilder::internal(&stranger, &actor, value).bounce(false).body(body).build()
+        }
+        Handler::TakeBalance => {
+            // An answer to the pending query, from anyone but the actor's wallet.
+            let query_id = w.balance_query().1;
+            let body = cell(|b| {
+                b.append_u32(OP_TAKE_BALANCE).unwrap().append_u64(query_id).unwrap();
+                coins(b, 1_000_000);
+            });
+            MessageBuilder::internal(&stranger, &actor, value).bounce(false).body(body).build()
+        }
     }
 }
 
@@ -201,7 +264,7 @@ fn exposed(w: &mut World, msg: Message) -> bool {
 }
 
 #[test]
-fn every_outcome_guard_and_the_gas_rule_are_held_by_a_test() {
+fn every_authentication_guard_and_the_gas_rule_are_held_by_a_test() {
     let source = std::fs::read_to_string(actor_source()).unwrap();
     let _ = SET_GAS;
     for row in ROWS {
