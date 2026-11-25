@@ -564,7 +564,7 @@ jobs:
         run: |
           test ! -e "$TOKEN_BRIDGE_TRACE_DIR"
           cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test service_actor_token_sandbox
-          python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR" --expected-records 14931
+          python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR" --expected-records 15547
 
       # From version 15 a failed action phase also pays the fines of the
       # messages it already sent; both executors must charge them identically.

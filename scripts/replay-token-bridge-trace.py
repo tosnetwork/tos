@@ -37,7 +37,7 @@ from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
 
 DEFAULT_CONFIG = ROOT / "tosctl/src/executor/real_boc/default_config.boc"
 # Sized for the largest pinned population, the token-rail Service Actor suite
-# (about 15,000 records, 440 MB), with room to grow.
+# (about 15,500 records, 460 MB), with room to grow.
 MAX_TRACE_RECORDS = 20_000
 MAX_TRACE_FILE = 16 * 1024 * 1024
 MAX_TRACE_BYTES = 512 * 1024 * 1024

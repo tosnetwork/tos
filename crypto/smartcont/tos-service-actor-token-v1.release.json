@@ -5,15 +5,15 @@
   "source": "crypto/smartcont/service-actor-token-code.fc",
   "stdlib": "crypto/smartcont/stdlib.fc",
   "build_script": "scripts/build-tos-service-actor-v1.sh",
-  "tos_commit": "5d27b534b7315899f3f273ff28be894c557332c3",
+  "tos_commit": "eac5155eb37e067b9444675662aa65bbc37090bf",
   "compiler": {
     "name": "FunC",
     "semantic_version": "v0.4.6",
     "source_commit": "392bc162e095cc34292eb9ea0709273407e06ca7",
     "arguments": ["-W", "<output.boc>", "-A", "-P", "-o", "<temporary.fif>"]
   },
-  "code_hash": "tvm-cell-sha256:ac86cf5489d3772716c537e5c6e73e0470e8da2356d5be28fccaf25832707221",
-  "boc_sha256": "sha256:58d4796c3ef4fa811e54fde481f72aa777e67ed3cbc0a1092b12ee8e755d905c",
-  "boc_bytes": 12281,
+  "code_hash": "tvm-cell-sha256:5af1ece2d098fd178bd95332e67cd1dc64e4f046e0b1d57a9446c25b5a51570d",
+  "boc_sha256": "sha256:b45a9e8c747d826a33f4f8995241f520eeb087dd1ff083e77d48c10bb23bc031",
+  "boc_bytes": 12795,
   "artifact_base64": "crypto/smartcont/tos-service-actor-token-v1.boc.base64"
 }
