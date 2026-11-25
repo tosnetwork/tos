@@ -607,3 +607,24 @@ fn a_sender_off_workchain_0_is_refused_and_its_tokens_are_logged_surplus() {
     assert_eq!(w.native().returned_count, 0);
     assert_eq!(w.surplus(), PRICE as i128);
 }
+
+#[test]
+fn a_route_naming_no_bridge_parameter_is_refused_and_returned() {
+    // Deploy data the SDK refuses, placed directly: the route names ConfigParam
+    // 84, which is not a token bridge parameter.
+    let mut w = World::with_data(Options::default(), |data| {
+        let mut d = ActorData::parse(&data);
+        let mut s = chain_block::SliceData::load_cell(d.route.clone()).unwrap();
+        let master = MsgAddressInt::construct_from(&mut s).unwrap();
+        let hash = s.get_next_bits(256).unwrap();
+        let code = s.checked_drain_reference().unwrap();
+        d.route = cell(|b| {
+            master.write_to(b).unwrap();
+            b.append_raw(&hash, 256).unwrap();
+            b.checked_append_reference(code).unwrap();
+            b.append_u32(84).unwrap();
+        });
+        d.build()
+    });
+    refused_call(&mut w, err::ASSET_ROUTE_INVALID);
+}

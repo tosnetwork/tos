@@ -326,7 +326,7 @@ const int S_REREPORT_GAS = 19042;
 ;; OUTCOME_HANDLER_GAS the whole handler, ADMISSION_GAS the notification
 ;; handler, ABSENT_REPORT_GAS the answer to a report of an absent payout.
 const int PRE_ACCEPT_GAS = 24000;
-const int OUTCOME_HANDLER_GAS = 240000;
+const int OUTCOME_HANDLER_GAS = 300000;
 const int ADMISSION_GAS = 300000;
 const int ABSENT_REPORT_GAS = 20000;
 
@@ -563,6 +563,11 @@ cell empty_query() inline {
   rs~skip_bits(32);
   rs.end_parse();
   return (master, code_hash, code);
+}
+
+;; A token bridge parameter: the slots of the bridge parameter files.
+int bridge_slot?(int id) inline {
+  return (id == 79) | (id == 81) | (id == 82) | (id == 83);
 }
 
 ;; The asset's token bridge parameter, as the route names it.
@@ -1564,7 +1569,8 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     } elseif (has_att & null?(attestor_key_of(att_id))
               & (attestor_key_count >= MAX_LIVE_ATTESTOR_KEYS)) {
       reason = err::attestor_keys_full;
-    } elseif ((~ canonical_basechain?(master)) | (cell_hash(code) != route_code_hash)) {
+    } elseif ((~ canonical_basechain?(master)) | (cell_hash(code) != route_code_hash)
+              | (~ bridge_slot?(route_bridge_param(route_cell)))) {
       reason = err::asset_route_invalid;
     } elseif ((asset_status != 1) | (asset_wallet_code_hash != route_code_hash)) {
       reason = err::asset_not_recognized;

@@ -315,8 +315,8 @@ transaction and reports the same gas.
 | Constant | Value | Most measured | Bounds |
 | --- | --- | --- | --- |
 | `PRE_ACCEPT_GAS` | 24,000 | 10,026 | an outcome handler up to its `set_gas_limit` |
-| `OUTCOME_HANDLER_GAS` | 240,000 | 117,742 | a whole outcome handler (a refund or sweep refused at R) |
-| `ADMISSION_GAS` | 300,000 | 131,158 | the notification handler, with a 16-entry ConfigParam 84 whose last entry is the actor's master |
+| `OUTCOME_HANDLER_GAS` | 300,000 | 117,742 | a whole outcome handler (a refund or sweep refused at R) |
+| `ADMISSION_GAS` | 300,000 | 131,613 | the notification handler, with a 16-entry ConfigParam 84 whose last entry is the actor's master |
 | `ABSENT_REPORT_GAS` | 20,000 | 8,178 | the answer to a report of an absent payout |
 
 A re-reporter sends `rereport_refusal` to the actor's wallet with at least
