@@ -4,6 +4,7 @@
 #include "block/block-parse.h"
 #include "block/check-proof.h"
 #include "block/mc-config.h"
+#include "block/settlement-assets.h"
 #include "lite-client/lite-client-common.h"
 #include "tl/tl_object_parse.h"
 #include "tos/quorum.h"
@@ -45,7 +46,7 @@ td::Result<std::string> config_json(td::BufferSlice reply, BlockIdExt id, int pa
     return explorer::error(Failure::EvidenceInvalid);
   auto& cfg = *config.ok();
   auto cell = cfg.get_config_param(param);
-  const bool typed = param == 8 || param == 43 || param == 48;
+  const bool typed = param == 8 || param == 43 || param == 48 || param == block::settlement_assets_config_param;
   if (cell.is_null() && !typed)
     return explorer::error(Failure::ConfigParamAbsent);
   // Dependency Config 8 is requested in the same proof and decoded exactly.

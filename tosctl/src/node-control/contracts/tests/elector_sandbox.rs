@@ -6350,3 +6350,156 @@ fn vm_getter_fixtures_match_the_deployed_elector() {
     assert_eq!(reply(&result), (STAKE_ACCEPTED, 0), "the fixture stake was refused");
     check_vm_getter_fixture("elector-one-stake.boc", &elector_account_boc(&chain));
 }
+
+// ---------------------------------------------------------------------------
+// ConfigParam 84: recognized settlement assets
+//
+// The genesis lists 84 in ConfigParam 10, so a proposal for it must be critical. A
+// value built the way `tosctl vote offer settlement-assets build` builds it is
+// proposed, won over the three rounds a critical proposal needs, installed, and read
+// back from the configuration contract's stored dictionary.
+// ---------------------------------------------------------------------------
+
+fn settlement_assets_value() -> chain_block::Cell {
+    use chain_block::{
+        SettlementAsset, SettlementAssetOrigin, SettlementAssetOriginKind, SettlementAssetStatus,
+        SettlementAssets, UInt256,
+    };
+    let mut assets = SettlementAssets::new();
+    assets
+        .insert(
+            UInt256::from([0xa1; 32]),
+            SettlementAsset {
+                status: SettlementAssetStatus::Active,
+                decimals: 6,
+                minter_code_hash: UInt256::from([0x11; 32]),
+                wallet_code_hash: UInt256::from([0x22; 32]),
+                max_liability_per_actor: chain_block::Coins::from(1_000_000_000u64),
+                origin: SettlementAssetOrigin {
+                    kind: SettlementAssetOriginKind::TokenBridge,
+                    bridge_address: UInt256::from([0x33; 32]),
+                    source_chain_id: 1,
+                    source_token: [0x44; 20],
+                },
+            },
+        )
+        .expect("one entry");
+    assets.to_cell().expect("the value")
+}
+
+#[test]
+fn settlement_assets_are_critical_and_absent_at_genesis() {
+    let chain = launch();
+    assert!(is_critical(&chain, 84), "ConfigParam 84 is not in the genesis ConfigParam 10");
+    assert!(raw_parameter(&chain, 84).is_none(), "the genesis recognizes a settlement asset");
+    assert!(vm_parameter(&chain, 84).is_none(), "the chain configuration carries ConfigParam 84");
+}
+
+#[test]
+fn an_uncritical_settlement_assets_proposal_is_refused() {
+    use contracts::config_contract::messages::proposal;
+    let mut chain = launch();
+    let value = settlement_assets_value();
+    let setup = voting_setup(&chain, true);
+    let ttl = setup.min_store_sec.checked_add(3_600).expect("a lifetime");
+    let (price, _) = proposal::storage_price(&setup, Some(&value), ttl).expect("a price");
+    let value_to_send =
+        u64::try_from(price + proposal::MIN_VALUE_ABOVE_PRICE + u128::from(TOS)).expect("a value");
+    let proposer = chain.blockchain.treasury("assets-proposer", 100_000 * TOS).expect("funded");
+    let cell = proposal::proposal_cell(84, Some(value), None).expect("proposal");
+
+    let plain = proposal::new_proposal_body(84, ttl, cell.clone(), false).expect("body");
+    let before = balance_of(&chain, &chain.config_contract);
+    let result = chain
+        .blockchain
+        .send_message(proposer.build_message(
+            &chain.config_contract,
+            value_to_send,
+            true,
+            Some(plain),
+        ))
+        .expect("delivered");
+    let tags = replies(&result);
+    assert!(tags.contains(&0xc372_6954), "an uncritical ConfigParam 84 proposal: {tags:02x?}");
+    assert!(!tags.contains(&proposal::PROPOSAL_ACCEPTED), "it was registered");
+    assert_eq!(balance_of(&chain, &chain.config_contract), before, "a refusal kept value");
+
+    let critical = proposal::new_proposal_body(85, ttl, cell, true).expect("body");
+    let result = chain
+        .blockchain
+        .send_message(proposer.build_message(
+            &chain.config_contract,
+            value_to_send,
+            true,
+            Some(critical),
+        ))
+        .expect("delivered");
+    assert!(replies(&result).contains(&proposal::PROPOSAL_ACCEPTED), "{:02x?}", replies(&result));
+}
+
+#[test]
+fn a_settlement_assets_value_is_adopted_by_a_critical_vote_and_reads_back() {
+    use contracts::config_contract::messages::proposal;
+    let (mut chain, validators, _) = elect_install_and_rotate();
+    let value = settlement_assets_value();
+    let cell = proposal::proposal_cell(84, Some(value.clone()), None).expect("proposal");
+    let hash: [u8; 32] = cell.hash(0).as_slice()[..32].try_into().expect("a 32-byte hash");
+    let body = proposal::new_proposal_body(0x8400, 6_000_000, cell, true).expect("body");
+    let proposer = chain.blockchain.treasury("assets-rounds", 20_000 * TOS).expect("funded");
+    let result = chain
+        .blockchain
+        .send_message(proposer.build_message(
+            &chain.config_contract,
+            10_000 * TOS,
+            true,
+            Some(body),
+        ))
+        .expect("delivered");
+    assert!(replies(&result).contains(&PROPOSAL_ACCEPTED), "{:02x?}", replies(&result));
+
+    // A critical proposal needs three won rounds, each under another validator set.
+    assert_eq!(win_round(&mut chain, &validators, &hash, 0x8410), VOTE_COUNTED);
+    assert!(raw_parameter(&chain, 84).is_none(), "installed after one round");
+    turn_round(&mut chain);
+    assert_eq!(win_round(&mut chain, &validators, &hash, 0x8420), VOTE_COUNTED);
+    assert!(raw_parameter(&chain, 84).is_none(), "installed after two rounds");
+    turn_round(&mut chain);
+    assert_eq!(win_round(&mut chain, &validators, &hash, 0x8430), ACCEPTED_CRITICAL);
+
+    let installed = raw_parameter(&chain, 84).expect("ConfigParam 84 is installed");
+    assert_eq!(installed, value, "the installed cell differs from the proposed value");
+    match configuration_from_contract(&chain).config(84).expect("decodes") {
+        Some(chain_block::ConfigParamEnum::ConfigParam84(assets)) => {
+            assert_eq!(assets.to_cell().expect("cell"), value);
+            let pinned = chain_block::read_pinned_settlement_assets(
+                installed,
+                &[chain_block::UInt256::from([0xa1; 32])],
+            )
+            .expect("the pinned read");
+            assert_eq!(pinned[0].asset.as_ref().expect("listed").decimals, 6);
+        }
+        other => panic!("ConfigParam 84 decodes as {other:?}"),
+    }
+}
+
+/// The template's version-16 path, the only one that runs (on its own the template
+/// aborts: "Version 16 Genesis requires an explicit AUTH network tag"), lists 84
+/// beside 48 in ConfigParam 10, and ConfigParam 9 does not require it.
+#[test]
+fn the_genesis_critical_list_carries_settlement_assets_beside_the_auth_policy() {
+    let config = configuration(&zerostate());
+    match config.config(10) {
+        Ok(Some(chain_block::ConfigParamEnum::ConfigParam10(value))) => {
+            assert!(value.critical_params.get(&84i32).expect("lookup").is_some());
+            assert!(value.critical_params.get(&48i32).expect("lookup").is_some());
+        }
+        other => panic!("ConfigParam 10 is {other:?}"),
+    }
+    match config.config(9) {
+        Ok(Some(chain_block::ConfigParamEnum::ConfigParam9(value))) => {
+            assert!(value.mandatory_params.get(&84i32).expect("lookup").is_none());
+        }
+        other => panic!("ConfigParam 9 is {other:?}"),
+    }
+    assert!(config.config(84).expect("lookup").is_none());
+}

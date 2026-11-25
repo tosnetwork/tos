@@ -1732,7 +1732,8 @@
           "enum": [
             8,
             43,
-            48
+            48,
+            84
           ]
         },
         "presence": {
@@ -1756,6 +1757,9 @@
                 },
                 {
                   "$ref": "#/$defs/AuthPolicy"
+                },
+                {
+                  "$ref": "#/$defs/SettlementAssets"
                 }
               ]
             },
@@ -1844,7 +1848,8 @@
               "param": {
                 "enum": [
                   43,
-                  48
+                  48,
+                  84
                 ]
               }
             },
@@ -1944,6 +1949,25 @@
                     ]
                   }
                 }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "param": {
+                "const": 84
+              },
+              "presence": {
+                "const": "present"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "$ref": "#/$defs/SettlementAssets"
               }
             }
           }
@@ -2131,6 +2155,129 @@
         "fee_payment"
       ],
       "additionalProperties": false
+    },
+    "SettlementAssetOrigin": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "token_bridge",
+            "native_issuance"
+          ]
+        },
+        "bridge_address": {
+          "$ref": "#/$defs/RawAddress",
+          "pattern": "^-1:[0-9a-f]{64}$"
+        },
+        "source_chain_id": {
+          "$ref": "#/$defs/U32"
+        },
+        "source_token": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      },
+      "required": [
+        "kind",
+        "bridge_address",
+        "source_chain_id",
+        "source_token"
+      ],
+      "additionalProperties": false
+    },
+    "SettlementAsset": {
+      "type": "object",
+      "properties": {
+        "master": {
+          "$ref": "#/$defs/RawAddress",
+          "pattern": "^0:[0-9a-f]{64}$"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "admission_suspended",
+            "retired"
+          ]
+        },
+        "decimals": {
+          "$ref": "#/$defs/U8"
+        },
+        "minter_code_hash": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "wallet_code_hash": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "max_liability_per_actor": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,36}$",
+          "description": "Non-zero Coins amount; native parser enforces <= 2^120 - 1, which means no cap."
+        },
+        "uncapped": {
+          "type": "boolean"
+        },
+        "origin": {
+          "$ref": "#/$defs/SettlementAssetOrigin"
+        }
+      },
+      "required": [
+        "master",
+        "status",
+        "decimals",
+        "minter_code_hash",
+        "wallet_code_hash",
+        "max_liability_per_actor",
+        "uncapped",
+        "origin"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "uncapped": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "max_liability_per_actor": {
+                "const": "1329227995784915872903807060280344575"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "max_liability_per_actor": {
+                "not": {
+                  "const": "1329227995784915872903807060280344575"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "SettlementAssets": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "settlement_assets_v1"
+        },
+        "assets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SettlementAsset"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "assets"
+      ],
+      "additionalProperties": false,
+      "description": "ConfigParam 84. Entries are in ascending master order; a client uses only the masters it pins."
     }
   }
 }

@@ -18,15 +18,14 @@ Account roots. Replay uses independently seeded inputs, not continuous Rust
 Account/cache carry.
 
 Canonical version-16 generated configuration has full ConfigParams root
-`65331f7022fe3173b4aebad27bef02f8027c25f8643a2265811293130d7bb23b` and dictionary
-root `d19d22b1bca12dc5a73a04cac7fa3cea7e6eb7bcd059af42803c18659c31cd37`. These
+`42ed2f3c7b43acb2c800cd1579f0ec22113bebf2435743603d26dfae1e21a7bd` and dictionary
+root `3689c2fa452f2164b57adc2784f90e7fbf166e9d6035e310df8513c90735770e`. These
 identities were measured from the real source template/candidate wrapper by the
 integrated local generator; the final architecture gate verifies both exports.
-The current identity refresh follows the epoch-6 genesis template change. All
-parameter keys/cell hashes were compared independently with the previous export:
-CP5 is new (blackhole -1:ffff...ffff, fee burn 0/1), CP10 adds 5 to the critical
-set, CP13 lowers the complaint deposit from 100 to 1 TOS and CP18 sets basechain
-rent to 0 per bit and 135 per cell; no other parameter changes. The unchanged integrated generator baseline/fallback/restoration control
+The current identity refresh follows the genesis template adding ConfigParam 84
+(recognized settlement assets) to the ConfigParam 10 critical set. All parameter
+keys/cell hashes were compared independently with the previous export: only CP10
+changes; no other parameter changes. The unchanged integrated generator baseline/fallback/restoration control
 and actual hosted export agree byte-for-byte. They supplement CP8/21/48 parsing. The full supplied raw file is preserved:
 Fift CRC and Rust file encodings can differ for the same semantic roots. An
 intentional generator change requires a reviewed identity refresh. Producer

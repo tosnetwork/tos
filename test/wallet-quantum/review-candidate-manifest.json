@@ -36,7 +36,7 @@
     }
   },
   "config": {
-    "bytes": 7477,
+    "bytes": 7486,
     "gas": {
       "20": {
         "block_gas_limit": 2500000,
@@ -51,7 +51,7 @@
     },
     "global_id": 1,
     "network": "4242424242424242424242424242424242424242424242424242424242424242",
-    "sha256": "eb7abf8cc485807ea86f75fa9ac1a2b91736ce3bcccc906813eb52e6d51633d1",
+    "sha256": "28a0fd4b11f59a50e15a7631a861cd3001644e83d221470c9f7b3082cae5e669",
     "version": 16
   },
   "files": {
@@ -72,8 +72,8 @@
       "sha256": "ca804d2c2162b79ec47691da2889e991b6001c90336226f37967a3aca6ca3089"
     },
     "config.boc": {
-      "bytes": 7477,
-      "sha256": "eb7abf8cc485807ea86f75fa9ac1a2b91736ce3bcccc906813eb52e6d51633d1"
+      "bytes": 7486,
+      "sha256": "28a0fd4b11f59a50e15a7631a861cd3001644e83d221470c9f7b3082cae5e669"
     },
     "repository/LICENSE": {
       "bytes": 35149,
@@ -84,8 +84,8 @@
       "sha256": "4e30874f0e49807d6d8d6d967649332c9370bda0449c8727a7e6bdebf3453d75"
     },
     "repository/crypto/block/block.tlb": {
-      "bytes": 44862,
-      "sha256": "aa279109ba159b0472e230168820a3b28af476b5fdd63a6e40d0b4dd260a7a94"
+      "bytes": 46002,
+      "sha256": "cfe1e6bca34905038bb459712b86b2783b567ce7b869d1077d409a87c36aea40"
     },
     "repository/crypto/fift/lib/Asm.fif": {
       "bytes": 49768,

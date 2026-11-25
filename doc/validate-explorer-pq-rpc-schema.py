@@ -450,6 +450,35 @@ def main(schema=SCHEMA):
             ("AuthPolicy", {**policy, "primary_deadline": 100, "primary_status": "retired"}, True),
         ]
     )
+    # ConfigParam 84: the value the native view prints for the shared vector.
+    vector = json.loads(
+        (Path(__file__).parents[1] / "test/fixtures/configparam-84-v1.json").read_text()
+    )
+    assets = json.loads(vector["json_rpc_value"])
+    first = assets["assets"][0]
+    decoded_assets = dict(
+        schema_version=1, param=84, presence="present", observation=observation, value=assets
+    )
+    cases.extend(
+        [
+            ("SettlementAssets", assets, True),
+            ("SettlementAssets", {**assets, "assets": []}, True),
+            ("DecodedConfig", decoded_assets, True),
+            ("DecodedConfig", {**decoded_assets, "presence": "absent", "value": None}, True),
+            ("DecodedConfig", {**decoded_assets, "value": None}, False),
+            ("DecodedConfig", {**decoded_assets, "presence": "absent"}, False),
+            ("SettlementAsset", {**first, "status": "paused"}, False),
+            ("SettlementAsset", {**first, "max_liability_per_actor": "0"}, False),
+            ("SettlementAsset", {**first, "uncapped": True}, False),
+            ("SettlementAsset", {**first, "master": "-1:" + "a1" * 32}, False),
+            ("SettlementAsset", {**first, "ticker": "USDC"}, False),
+            (
+                "SettlementAsset",
+                {**first, "origin": {**first["origin"], "kind": "custodial"}},
+                False,
+            ),
+        ]
+    )
     # Deadline/time comparison remains a native semantic check, not a schema claim.
     for name, value, valid in cases:
         check(name, value, valid, schema)

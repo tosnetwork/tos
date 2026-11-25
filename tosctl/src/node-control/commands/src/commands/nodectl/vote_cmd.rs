@@ -54,6 +54,9 @@ pub enum VoteOfferAction {
     Cast(VoteOfferCastCmd),
     /// Create a configuration proposal
     Create(VoteOfferCreateCmd),
+    /// Build or verify ConfigParam 84, the recognized settlement assets
+    #[command(name = "settlement-assets")]
+    SettlementAssets(super::settlement_assets_cmd::SettlementAssetsCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -142,6 +145,11 @@ pub struct VoteOfferCreateCmd {
     /// Do not require the new value to decode as the parameter's known type
     #[arg(long)]
     skip_value_check: bool,
+    /// Required to propose a ConfigParam 84 value: confirm that every current
+    /// validator runs a node whose schema has ConfigParam 84. A node without it
+    /// refuses any configuration that holds 84, and the masterchain halts.
+    #[arg(long)]
+    assume_all_validators_upgraded: bool,
     /// Output format: table or json
     #[arg(short, long, default_value = "table")]
     format: super::output_format::OutputFormat,
@@ -179,6 +187,9 @@ pub(crate) fn check_value_shape(param_id: i32, value: &chain_block::Cell) -> any
              --skip-value-check to propose it anyway"
         )
     };
+    // The node validates every parameter against a fixed cell budget, and a value
+    // over it halts the masterchain once installed, whatever its schema says.
+    chain_block::check_config_param_budget(index, value).map_err(|e| refuse(e.to_string()))?;
     let parsed = chain_block::ConfigParamEnum::construct_from_cell_and_number(value.clone(), index)
         .map_err(|e| refuse(e.to_string()))?;
     // Decoding stops at the fields it knows; only a value that re-encodes to the same
@@ -191,6 +202,51 @@ pub(crate) fn check_value_shape(param_id: i32, value: &chain_block::Cell) -> any
         refuse(
             "it carries data beyond, or encoded differently from, that parameter's fields".into()
         )
+    );
+    Ok(())
+}
+
+/// No validator reports which configuration schema its node carries: the
+/// telemetry overlay's `node_version` is self-declared and optional, and
+/// `liteServer.getVersion` describes only the queried node. So a parameter that
+/// older nodes cannot validate is proposed only on the operator's explicit word
+/// that every validator has upgraded.
+pub(crate) fn require_schema_rollout(param_id: i32, assume_upgraded: bool) -> anyhow::Result<()> {
+    if param_id != chain_block::SETTLEMENT_ASSETS_CONFIG_PARAM as i32 {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        assume_upgraded,
+        "ConfigParam 84 can be installed only after every validator runs a node whose schema \
+         has ConfigParam 84: a node without it refuses the new configuration and the \
+         masterchain halts. No validator reports its schema, so this tool cannot check it. \
+         Confirm the rollout and pass --assume-all-validators-upgraded"
+    );
+    eprintln!(
+        "WARNING: proposing ConfigParam 84 on the operator's word that EVERY current validator \
+         runs a node with the ConfigParam 84 schema. If any does not, adopting this proposal \
+         halts the masterchain."
+    );
+    Ok(())
+}
+
+/// A parameter that must only ever change by a critical vote is proposed only on a
+/// network whose live ConfigParam 10 lists it. Genesis lists ConfigParam 84, but a
+/// network started before 84 existed does not, and there an ordinary vote would
+/// install it.
+pub(crate) fn require_critical_listing(
+    param_id: i32,
+    value_present: bool,
+    live_critical: &chain_block::ConfigParam10,
+) -> anyhow::Result<()> {
+    if param_id != chain_block::SETTLEMENT_ASSETS_CONFIG_PARAM as i32 || !value_present {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        live_critical.critical_params.get(&param_id)?.is_some(),
+        "ConfigParam 84 is not in this network's ConfigParam 10, so an ordinary vote could \
+         install or change it. Add 84 to ConfigParam 10 by a critical vote first, then \
+         propose the ConfigParam 84 value"
     );
     Ok(())
 }
@@ -279,6 +335,9 @@ impl VoteOfferCreateCmd {
         if let (Some(cell), false) = (&value, self.skip_value_check) {
             check_value_shape(self.param, cell)?;
         }
+        if value.is_some() {
+            require_schema_rollout(self.param, self.assume_all_validators_upgraded)?;
+        }
         let if_hash_equal = match &self.if_hash_equal {
             Some(text) => {
                 let bytes = hex::decode(text.trim_start_matches("0x"))
@@ -313,7 +372,11 @@ impl VoteOfferCreateCmd {
             })
         };
         let mandatory = contains(chain.get_config_param(9).await?)?;
-        let critical_param = contains(chain.get_config_param(10).await?)?;
+        let live_critical = chain.get_config_param(10).await?;
+        if let ConfigParamEnum::ConfigParam10(list) = &live_critical {
+            require_critical_listing(self.param, value.is_some(), list)?;
+        }
+        let critical_param = contains(live_critical)?;
         let critical = self.critical || critical_param;
         let setup = match chain.get_config_param(11).await? {
             ConfigParamEnum::ConfigParam11(value) => {
@@ -997,6 +1060,7 @@ impl VoteOfferCmd {
             VoteOfferAction::Diff(cmd) => cmd.run(config_path).await,
             VoteOfferAction::Cast(cmd) => cmd.run(config_path).await,
             VoteOfferAction::Create(cmd) => cmd.run(config_path).await,
+            VoteOfferAction::SettlementAssets(cmd) => cmd.run(config_path).await,
         }
     }
 }

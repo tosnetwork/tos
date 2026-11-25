@@ -501,6 +501,55 @@ impl ClientJsonRpc {
         )
     }
 
+    /// The exact value cell of an optional parameter as of masterchain block
+    /// `seqno`, with the block the endpoint read it at, or `None` when every
+    /// endpoint reports the parameter absent there. A reader that decodes only
+    /// part of a value (ConfigParam 84 clients decode only the entries they pin)
+    /// needs the cell rather than a whole-value decode.
+    pub async fn get_optional_config_param_cell_at(
+        &self,
+        param_id: u32,
+        seqno: u32,
+    ) -> anyhow::Result<Option<(Cell, BlockIdExt)>> {
+        anyhow::ensure!(seqno > 0, "a pinned read needs a masterchain seqno above zero");
+        let seqno = seqno_param(seqno)?;
+        let total = self.endpoints.len();
+        let start = self.rr_cursor.fetch_add(1, Ordering::Relaxed) % total;
+        let request_id = serde_json::json!(uuid::Uuid::new_v4().to_string());
+        let params = serde_json::json!({"config_id": param_id, "seqno": seqno, "with_proof": true});
+        let mut absent = 0usize;
+        let mut last_error_category = None;
+        for attempt in 0..total {
+            let endpoint = &self.endpoints[(start + attempt) % total];
+            match endpoint
+                .client
+                .json_rpc("getConfigParam", params.clone(), request_id.clone())
+                .await
+            {
+                Ok(response) => {
+                    let block = response
+                        .get("block_id")
+                        .or_else(|| response.get("result").and_then(|r| r.get("block_id")))
+                        .cloned()
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("the endpoint did not report the block it read")
+                        })?;
+                    let block = serde_json::from_value::<BlockIdExt>(block).context("block_id")?;
+                    return Ok(Some((decode_config_param_cell(response)?, block)));
+                }
+                Err(error) if is_explicit_missing_config_param(&error) => absent += 1,
+                Err(error) => last_error_category = Some(bounded_rpc_error_category(&error)),
+            }
+        }
+        if absent == total {
+            return Ok(None);
+        }
+        let category = last_error_category.unwrap_or("remote_or_protocol_error");
+        anyhow::bail!(
+            "getConfigParam({param_id}) at seqno {seqno} failed without unanimous absence; endpoint_count={total}; rpc_error_category={category}"
+        )
+    }
+
     /// Reads the network identity (ConfigParam 19) that wallet contracts
     /// bind into every signed message. Signed writes go exclusively to the
     /// primary endpoint, so the identity is read from the primary as well:
@@ -1497,7 +1546,9 @@ mod tests {
     };
     use crate::v2::data_models::{ExactBocSubmissionStatus, RelayNetworkDomainPin};
     use base64::Engine;
-    use chain_block::{BocFlags, BocWriter, BuilderData, Cell, IBitstring, write_boc};
+    use chain_block::{
+        BocFlags, BocWriter, BuilderData, Cell, ConfigParamEnum, IBitstring, write_boc,
+    };
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -1866,6 +1917,108 @@ mod tests {
             },
         })
         .to_string()
+    }
+
+    /// ConfigParam 84 built, served as the node's `getConfigParam` answers it, and
+    /// read back through both the whole-value and the pinned-cell reads.
+    fn settlement_assets_value() -> chain_block::SettlementAssets {
+        use chain_block::{
+            SettlementAsset, SettlementAssetOrigin, SettlementAssetOriginKind,
+            SettlementAssetStatus, UInt256,
+        };
+        let mut assets = chain_block::SettlementAssets::new();
+        assets
+            .insert(
+                UInt256::from([0xa1; 32]),
+                SettlementAsset {
+                    status: SettlementAssetStatus::AdmissionSuspended,
+                    decimals: 6,
+                    minter_code_hash: UInt256::from([0x11; 32]),
+                    wallet_code_hash: UInt256::from([0x22; 32]),
+                    max_liability_per_actor: chain_block::NO_LIABILITY_CAP,
+                    origin: SettlementAssetOrigin {
+                        kind: SettlementAssetOriginKind::TokenBridge,
+                        bridge_address: UInt256::from([0x33; 32]),
+                        source_chain_id: 1,
+                        source_token: [0x44; 20],
+                    },
+                },
+            )
+            .expect("one entry");
+        assets
+    }
+
+    fn served_config_info(value: &Cell) -> serde_json::Value {
+        serde_json::json!({
+            "@type": "configInfo",
+            "config": {
+                "@type": "tvm.cell",
+                "bytes": base64::engine::general_purpose::STANDARD
+                    .encode(write_boc(value).expect("boc")),
+            },
+            "block_id": {
+                "@type": "tos.blockIdExt",
+                "workchain": -1,
+                "shard": "-9223372036854775808",
+                "seqno": 7,
+                "root_hash": base64::engine::general_purpose::STANDARD.encode([0x5a; 32]),
+                "file_hash": base64::engine::general_purpose::STANDARD.encode([0x5b; 32]),
+            },
+        })
+    }
+
+    #[tokio::test]
+    async fn settlement_assets_round_trip_through_get_config_param() {
+        let assets = settlement_assets_value();
+        let value = assets.to_cell().expect("value");
+
+        let count = Arc::new(AtomicUsize::new(0));
+        let (url, handle) =
+            spawn_jsonrpc_ok_server(served_config_info(&value), count.clone()).await;
+        let client = ClientJsonRpc::connect(url, None).expect("client");
+        match client.get_config_param(84).await.expect("getConfigParam(84)") {
+            ConfigParamEnum::ConfigParam84(read) => assert_eq!(read, assets),
+            other => panic!("ConfigParam 84 decodes as {other:?}"),
+        }
+        handle.await.expect("server task");
+
+        let (url, handle) = spawn_reply_server(
+            "200 OK",
+            serde_json::json!({"jsonrpc": "2.0", "id": "@@ID@@", "result": served_config_info(&value)})
+                .to_string(),
+        )
+        .await;
+        let client = ClientJsonRpc::connect(url, None).expect("client");
+        let (cell, block) = client
+            .get_optional_config_param_cell_at(84, 7)
+            .await
+            .expect("the pinned read")
+            .expect("present");
+        assert_eq!(cell, value, "the served cell is not returned exactly");
+        assert_eq!(block.seqno, 7);
+        let request = handle.await.expect("server task");
+        assert_eq!(
+            request["params"],
+            serde_json::json!({"config_id": 84, "seqno": 7, "with_proof": true})
+        );
+        let pinned = chain_block::read_pinned_settlement_assets(
+            cell,
+            &[chain_block::UInt256::from([0xa1; 32])],
+        )
+        .expect("pinned");
+        assert!(pinned[0].asset.as_ref().expect("listed").is_uncapped());
+    }
+
+    #[tokio::test]
+    async fn an_absent_settlement_assets_param_reads_as_none() {
+        let (url, _handle) = spawn_reply_server(
+            "200 OK",
+            typed_error_body("@@ID@@", -32004, "CONFIG_PARAM_ABSENT", false),
+        )
+        .await;
+        let client = ClientJsonRpc::connect(url, None).expect("client");
+        let read = client.get_optional_config_param_cell_at(84, 7).await.expect("absence");
+        assert!(read.is_none());
     }
 
     #[tokio::test]

@@ -6,6 +6,7 @@
 #include "block/auth-policy.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
+#include "block/settlement-assets.h"
 #include "crypto/pq/pq-bytes.h"
 #include "crypto/smc-envelope/QuantumSelfPayCode.h"
 #include "td/utils/base64.h"
@@ -354,6 +355,106 @@ TEST(JsonRpcExplorer, config_absence_defaults_and_retirement_are_exact) {
     ASSERT_TRUE(result.is_error());
     ASSERT_EQ(result.error().code(), static_cast<int>(Failure::InvalidArgument));
   }
+}
+// test/fixtures/configparam-84-v1.json is written by the tosctl proposal value
+// builder (block-json test_settlement_assets.rs); both decoders read it.
+TEST(JsonRpcExplorer, settlement_assets_vector) {
+  auto text = td::read_file_str(EXPLORER_TEST_DATA_DIR "/../../../fixtures/configparam-84-v1.json");
+  ASSERT_TRUE(text.is_ok());
+  auto document = td::json_decode(td::MutableSlice(text.ok_ref()));
+  ASSERT_TRUE(document.is_ok());
+  auto& root = document.ok_ref().get_object();
+  ASSERT_EQ(root.get_required_int_field("param").move_as_ok(), 84);
+  auto load = [](const std::string& b64) {
+    auto bytes = td::base64_decode(b64);
+    CHECK(bytes.is_ok());
+    auto cell = vm::std_boc_deserialize(bytes.ok());
+    CHECK(cell.is_ok());
+    return cell.move_as_ok();
+  };
+  auto value = load(root.get_required_string_field("boc").move_as_ok());
+  auto expected = root.get_required_string_field("json_rpc_value").move_as_ok();
+  auto decoded = decode_config(84, value, 16, 1000);
+  ASSERT_TRUE(decoded.is_ok());
+  ASSERT_EQ(decoded.ok(), expected);
+  auto assets = block::unpack_settlement_assets(value);
+  ASSERT_TRUE(assets.is_ok());
+  ASSERT_EQ(assets.ok().size(), 2u);
+  ASSERT_TRUE(!assets.ok()[0].uncapped() && assets.ok()[1].uncapped());
+  // Absent is valid: no asset is recognized.
+  auto absent = decode_config(84, {}, 16, 1000);
+  ASSERT_TRUE(absent.is_ok());
+  ASSERT_EQ(absent.ok(), "null");
+  // An empty list is a value, distinct from absence.
+  vm::CellBuilder empty;
+  CHECK(empty.store_long_bool(1, 8) && empty.store_maybe_ref({}));
+  auto listed = decode_config(84, empty.finalize(), 16, 1000);
+  ASSERT_TRUE(listed.is_ok());
+  ASSERT_EQ(listed.ok(), "{\"kind\":\"settlement_assets_v1\",\"assets\":[]}");
+  auto cases = root.extract_required_field("malformed", td::JsonValue::Type::Array);
+  ASSERT_TRUE(cases.is_ok());
+  std::size_t count = 0;
+  for (auto& entry : cases.ok_ref().get_array()) {
+    auto& object = entry.get_object();
+    auto name = object.get_required_string_field("name").move_as_ok();
+    auto cell = load(object.get_required_string_field("boc").move_as_ok());
+    auto refused = decode_config(84, cell, 16, 1000);
+    if (refused.is_ok() || refused.error().code() != static_cast<int>(Failure::StateInvalid)) {
+      LOG(ERROR) << "malformed ConfigParam 84 case accepted: " << name;
+      ASSERT_TRUE(false);
+    }
+    ASSERT_TRUE(block::unpack_settlement_assets(cell).is_error());
+    ++count;
+  }
+  ASSERT_EQ(count, 16u);
+  // Exotic cells are refused by the decoder itself, not only by inspection.
+  auto library = vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize(true);
+  ASSERT_TRUE(block::unpack_settlement_assets(library).is_error());
+}
+// A ConfigParam 84 value of `entries` well-formed records under distinct keys.
+td::Ref<vm::Cell> settlement_assets_of(unsigned entries) {
+  vm::Dictionary dict(256);
+  for (unsigned i = 0; i < entries; ++i) {
+    auto origin = vm::CellBuilder()
+                      .store_long(1, 8)
+                      .store_bits(td::Bits256::zero().cbits(), 256)
+                      .store_long(1, 32)
+                      .store_zeroes(160)
+                      .finalize();
+    vm::CellBuilder record;
+    CHECK(record.store_long_bool(1, 8) && record.store_long_bool(1, 8) && record.store_long_bool(6, 8) &&
+          record.store_zeroes_bool(512) && record.store_long_bool(1, 4) && record.store_long_bool(1, 8) &&
+          record.store_ref_bool(origin));
+    td::BitArray<256> key;
+    key.set_zero();
+    (key.bits() + 224).store_uint(i, 32);
+    CHECK(dict.set_builder(key.cbits(), 256, record));
+  }
+  vm::CellBuilder value;
+  CHECK(value.store_long_bool(1, 8) && value.store_maybe_ref(std::move(dict).extract_root_cell()));
+  return value.finalize();
+}
+TEST(JsonRpcExplorer, settlement_assets_entry_cap_and_node_budget) {
+  // The decoder admits the cap and refuses one more.
+  auto at_cap = block::unpack_settlement_assets(settlement_assets_of(block::settlement_assets_max_entries));
+  ASSERT_TRUE(at_cap.is_ok());
+  ASSERT_EQ(at_cap.ok().size(), block::settlement_assets_max_entries);
+  ASSERT_TRUE(
+      block::unpack_settlement_assets(settlement_assets_of(block::settlement_assets_max_entries + 1)).is_error());
+  ASSERT_TRUE(decode_config(84, settlement_assets_of(block::settlement_assets_max_entries + 1), 16, 1000).is_error());
+  // The node's own boundary (check_one_config_param's validate_ref(1024) and the
+  // Fift config-valid? word): 341 entries take 1023 cells, 342 take 1026. The
+  // schema alone admits both; the cap keeps a proposal far below either.
+  for (unsigned entries : {16u, 341u, 342u}) {
+    auto value = settlement_assets_of(entries);
+    const bool fits = entries <= 341;
+    ASSERT_EQ(block::gen::ConfigParam{84}.validate_ref(1024, value), fits);
+    ASSERT_EQ(block::gen::ConfigParam{84}.validate_ref(value), fits);
+  }
+  // A schema without a constructor for an index refuses every value under it:
+  // ConfigParam 85 is undefined here, as 84 is on a node built before 84 existed,
+  // so such a node refuses any configuration that holds 84.
+  ASSERT_TRUE(!block::gen::ConfigParam{85}.validate_ref(settlement_assets_of(1)));
 }
 TEST(JsonRpcExplorer, policy_deadline_uses_authenticated_chain_time) {
   vm::Dictionary deadlines(8);

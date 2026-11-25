@@ -41,6 +41,7 @@ pub(crate) mod proof_attestation_cmd;
 pub(crate) mod service_actor_cmd;
 pub(crate) mod service_api_cmd;
 pub(crate) mod service_cmd;
+pub(crate) mod settlement_assets_cmd;
 mod tos_mnemonic;
 pub(crate) mod tx_cmd;
 mod utils;

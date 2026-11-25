@@ -889,6 +889,27 @@ _ TokenBridgeParams = ConfigParam 81; // BNB->TOS token bridge
 _ TokenBridgeParams = ConfigParam 82; // Polygon->TOS token bridge
 _ TokenBridgeParams = ConfigParam 83; // Tron->TOS token bridge
 
+// Recognized settlement assets, keyed by the account id of the token master on
+// workchain 0. status: 1 active, 2 admission suspended, 3 retired.
+// origin.kind: 1 bridged by the TOS token bridge, 2 reserved for native issuance.
+// max_liability_per_actor is non-zero; 2^120 - 1 (the largest Coins) means no cap.
+// The schema fixes the shape only; readers refuse every other value, and more
+// than 16 entries (the node validates a parameter against 1024 cells, which an
+// unbounded list would exceed and so halt the masterchain once installed).
+// Every validator must run a node with this schema before any value is proposed.
+settlement_asset_origin$_ kind:uint8 bridge_address:bits256
+  source_chain_id:uint32 source_token:bits160 = SettlementAssetOriginV1;
+
+settlement_asset_v1#01 status:uint8 decimals:uint8
+  minter_code_hash:bits256 wallet_code_hash:bits256
+  max_liability_per_actor:Coins
+  origin:^SettlementAssetOriginV1 = SettlementAssetV1; // <= 660 bits
+
+settlement_assets_v1#01 assets:(HashmapE 256 SettlementAssetV1)
+  = SettlementAssets;
+
+_ SettlementAssets = ConfigParam 84; // recognized settlement assets (critical)
+
 //
 //  PROOFS
 //
