@@ -49,7 +49,7 @@ use common::tvm_stack_parser::TvmStackParser;
 use contracts::service_actor_token::{
     FundingQuote, NativeLedger, PayoutData, ReturnedData, SERVICE_ACTOR_TOKEN_RAIL,
     ServiceActorTokenCodeProfile, ServiceActorTokenContract as Actor, ServiceActorTokenData,
-    TokenLedger, TokenPendingRequest, TokenRefund, err, kind, protocol_constants,
+    TokenLedger, TokenPendingRequest, TokenRefund, err, is_bridge_slot, kind, protocol_constants,
     token_wallet_state_init,
 };
 use std::{collections::BTreeMap, path::Path, sync::Arc};
@@ -624,7 +624,7 @@ impl Reader {
             .config_cell(GLOBAL_ID_CONFIG_PARAM.into())
             .await?
             .ok_or_else(|| anyhow::anyhow!("ConfigParam 19 is absent"))?;
-        Ok(SliceData::load_cell(cell)?.get_next_i32()?)
+        SliceData::load_cell(cell)?.get_next_i32()
     }
 
     async fn actor(
@@ -676,9 +676,9 @@ impl Reader {
             wallet_code.repr_hash().inner() == hash_at(&route, 1)?,
             "get_asset_route: the wallet code does not hash to the route's wallet code hash"
         );
-        let bridge_config_param = u32::try_from(route.u64(3)?).map_err(|_| {
-            anyhow::anyhow!("get_asset_route: the bridge parameter exceeds 32 bits")
-        })?;
+        let bridge_config_param = Actor::decode_bridge_config_param(
+            &self.get(actor, "get_bridge_config_param", vec![]).await?,
+        )?;
         let own = self.get(actor, "get_own_wallet", vec![]).await?;
         let mut own_slice = own.slice(0)?;
         let own_wallet = MsgAddressInt::construct_from(&mut own_slice)?;
@@ -1080,8 +1080,7 @@ pub(crate) fn plan_call(
         err::ATTESTOR_KEYS_FULL
     );
     anyhow::ensure!(
-        Actor::is_canonical_basechain(&view.master)
-            && [79, 81, 82, 83].contains(&view.bridge_config_param),
+        Actor::is_canonical_basechain(&view.master) && is_bridge_slot(view.bridge_config_param),
         "the actor's asset route is invalid (refused with {})",
         err::ASSET_ROUTE_INVALID
     );

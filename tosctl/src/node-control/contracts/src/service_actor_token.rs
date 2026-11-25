@@ -1689,8 +1689,14 @@ mod tests {
         let absent = TvmStackParser::new(vec![number("0")]);
         assert_eq!(ServiceActorTokenContract::decode_request(&absent).unwrap(), None);
 
+        // A price above 64 bits signs; one past the Coins range does not.
         let mut large = pending.clone();
         large.price = u128::from(u64::MAX) + 1;
+        assert!(
+            ServiceActorTokenContract::respond_domain_hash(7, &basechain(9), 1, &large, [5; 32])
+                .is_ok()
+        );
+        large.price = 1u128 << 120;
         assert!(
             ServiceActorTokenContract::respond_domain_hash(7, &basechain(9), 1, &large, [5; 32])
                 .is_err()
