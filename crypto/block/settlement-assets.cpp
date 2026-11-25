@@ -131,6 +131,10 @@ td::Result<std::vector<SettlementAsset>> unpack_settlement_assets(td::Ref<vm::Ce
         failure = invalid("malformed dictionary");
         return false;
       }
+      if (assets.size() >= settlement_assets_max_entries) {
+        failure = invalid("too many entries");
+        return false;
+      }
       auto asset = unpack_asset(*entry, key);
       if (asset.is_error()) {
         failure = asset.move_as_error();

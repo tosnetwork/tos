@@ -12,6 +12,9 @@ namespace block {
 
 // ConfigParam 84: the recognized settlement assets (block.tlb SettlementAssets).
 inline constexpr int settlement_assets_config_param = 84;
+// The most entries a value may hold (one or two are expected; 16 leaves headroom
+// far inside the node's validate_ref(1024) budget for configuration parameters).
+inline constexpr std::size_t settlement_assets_max_entries = 16;
 
 enum class SettlementAssetStatus : td::uint8 { Active = 1, AdmissionSuspended = 2, Retired = 3 };
 enum class SettlementAssetOriginKind : td::uint8 { TokenBridge = 1, NativeIssuance = 2 };
@@ -39,7 +42,8 @@ struct SettlementAsset {
 
 // Decodes a ConfigParam 84 value exactly: both constructor tags, the status and
 // origin kinds the schema defines, a non-zero liability cap in its shortest
-// Coins encoding, and no trailing bits or references in any record. Entries
+// Coins encoding, no trailing bits or references in any record, and at most
+// settlement_assets_max_entries entries. Entries
 // come back in ascending key order. Any deviation refuses the whole value.
 td::Result<std::vector<SettlementAsset>> unpack_settlement_assets(td::Ref<vm::Cell> value);
 

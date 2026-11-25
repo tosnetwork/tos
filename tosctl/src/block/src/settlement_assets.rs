@@ -20,12 +20,16 @@
 //!
 //! The schema fixes only the shape. This module also refuses every status and
 //! origin kind the schema does not define, a zero liability cap, any trailing bit
-//! or reference, and exotic cells. Two readers are provided:
+//! or reference, and an exotic cell anywhere in the value. The whole-value
+//! decoder and the builder also refuse more than [`SETTLEMENT_ASSETS_MAX_ENTRIES`]
+//! entries. Two readers are provided:
 //!
 //! * [`SettlementAssets`] decodes the whole value and refuses it when any entry is
 //!   malformed. Display and proposal building use it.
 //! * [`read_pinned_settlement_assets`] decodes only the entries a client pins and
-//!   ignores every other entry, however it is encoded. Settlement clients use it.
+//!   ignores the contents of every other entry and their number. Settlement
+//!   clients use it. It still refuses a value the node could not have installed:
+//!   one with an exotic cell or over the node's validation budget.
 
 use crate::{
     error, fail, BuilderData, Cell, CellType, Coins, Deserializable, HashmapE, HashmapType,
@@ -45,6 +49,67 @@ pub const NO_LIABILITY_CAP: Coins = Coins::MAX;
 const ORIGIN_BITS: usize = 8 + 256 + 32 + 160;
 /// The dictionary key: a workchain-0 account id.
 const KEY_BITS: usize = 256;
+/// The most entries a ConfigParam 84 value may hold. The network recognizes one or
+/// two assets; 16 leaves headroom and keeps the value far inside the node's
+/// validation budget.
+pub const SETTLEMENT_ASSETS_MAX_ENTRIES: usize = 16;
+/// The cell budget the node validates every configuration parameter against
+/// (`check_one_config_param` in crypto/block/block.cpp: `validate_ref(1024, ..)`).
+/// A value over it matches its schema yet fails validation when installed, and
+/// the collator then refuses to install the new configuration.
+pub const CONFIG_PARAM_VALIDATION_CELLS: usize = 1024;
+
+/// The cells the node's `validate_ref` visits for a value whose every reference is
+/// typed (as in every ConfigParam 84 value): each reference is a visit, so a cell
+/// reached twice counts twice. Returns `None` as soon as `limit` is exceeded.
+/// For a schema that leaves a reference untyped this over-counts, never
+/// under-counts, so refusing above the budget never admits a value the node
+/// would refuse.
+pub fn validation_cell_visits(cell: &Cell, limit: usize) -> Option<usize> {
+    let mut visits = 0usize;
+    let mut pending = vec![cell.clone()];
+    while let Some(next) = pending.pop() {
+        visits = visits.checked_add(1)?;
+        if visits > limit {
+            return None;
+        }
+        for index in 0..next.references_count() {
+            pending.push(next.reference(index).ok()?);
+        }
+    }
+    Some(visits)
+}
+
+/// Refuses a value with more cell visits than [`CONFIG_PARAM_VALIDATION_CELLS`].
+pub fn check_config_param_budget(param: u32, cell: &Cell) -> Result<()> {
+    if validation_cell_visits(cell, CONFIG_PARAM_VALIDATION_CELLS).is_none() {
+        fail!(
+            "ConfigParam {param}: the value needs more than {CONFIG_PARAM_VALIDATION_CELLS} cells \
+             of validation; the node would refuse to install it"
+        )
+    }
+    Ok(())
+}
+
+/// Every cell of the value must be ordinary at level 0: the node's schema check
+/// refuses an exotic cell anywhere in a configuration parameter.
+fn all_ordinary(cell: &Cell) -> Result<()> {
+    let mut pending = vec![cell.clone()];
+    let mut visits = 0usize;
+    while let Some(next) = pending.pop() {
+        visits += 1;
+        if visits > CONFIG_PARAM_VALIDATION_CELLS {
+            fail!("ConfigParam 84: the value exceeds the node's validation budget")
+        }
+        if next.cell_type() != CellType::Ordinary || next.level() != 0 {
+            fail!("ConfigParam 84: the value holds a cell that is not ordinary")
+        }
+        for index in 0..next.references_count() {
+            pending.push(next.reference(index)?);
+        }
+    }
+    Ok(())
+}
 
 /// Whether a token actor may admit new calls in the asset.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
@@ -280,6 +345,9 @@ impl SettlementAssets {
     /// Adds an entry, refusing a master that is already listed.
     pub fn insert(&mut self, master: UInt256, asset: SettlementAsset) -> Result<()> {
         asset.check()?;
+        if self.assets.len() >= SETTLEMENT_ASSETS_MAX_ENTRIES {
+            fail!("ConfigParam 84: at most {SETTLEMENT_ASSETS_MAX_ENTRIES} assets may be listed")
+        }
         if self.assets.contains_key(&master) {
             fail!("ConfigParam 84: master {master:x} is listed twice")
         }
@@ -296,6 +364,9 @@ impl SettlementAssets {
     pub fn from_cell(cell: Cell) -> Result<Self> {
         let (_, dictionary) = open_value(cell)?;
         let mut assets = BTreeMap::new();
+        if dictionary.len()? > SETTLEMENT_ASSETS_MAX_ENTRIES {
+            fail!("ConfigParam 84: more than {SETTLEMENT_ASSETS_MAX_ENTRIES} assets are listed")
+        }
         let mut failure = None;
         dictionary.iterate_slices(|mut key, value| {
             let master = key.get_next_hash()?;
@@ -357,7 +428,8 @@ pub struct PinnedSettlementAsset {
 /// Reads only the masters a client pins. Every other entry is ignored, however it
 /// is encoded, and more entries than pins is never an error. A pinned entry is
 /// decoded exactly and refused if malformed. The value itself must still carry
-/// the `settlement_assets_v1` tag and nothing after the dictionary root.
+/// the `settlement_assets_v1` tag and nothing after the dictionary root, hold
+/// only ordinary cells and fit the node's validation budget.
 pub fn read_pinned_settlement_assets(
     value: Cell,
     pins: &[UInt256],
@@ -390,6 +462,7 @@ fn ordinary_slice(cell: Cell, what: &str) -> Result<SliceData> {
 
 /// The tag, then `HashmapE 256` and nothing else.
 fn open_value(cell: Cell) -> Result<(u8, HashmapE)> {
+    all_ordinary(&cell)?;
     let mut slice = ordinary_slice(cell, "value")?;
     let tag = slice.get_next_byte()?;
     if tag != SETTLEMENT_ASSETS_TAG {

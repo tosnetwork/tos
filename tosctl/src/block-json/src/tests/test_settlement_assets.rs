@@ -23,6 +23,10 @@ use chain_block::{
     Cell, CellType, ConfigParamEnum, Deserializable, HashmapE, HashmapType, IBitstring, SliceData,
     UInt256,
 };
+use chain_block::{
+    check_config_param_budget, validation_cell_visits, CONFIG_PARAM_VALIDATION_CELLS,
+    SETTLEMENT_ASSETS_MAX_ENTRIES,
+};
 use serde_json::{json, Value};
 
 const MASTER_A: [u8; 32] = [0xa1; 32];
@@ -407,4 +411,98 @@ fn the_fixture_bocs_decode_from_bytes() {
         let cell = read_single_root_boc(bytes).unwrap();
         assert!(SettlementAssets::construct_from_cell(cell).is_err(), "{}", case["name"]);
     }
+}
+
+/// A value of `entries` well-formed records under distinct keys, built as the
+/// node sees it rather than through the builder.
+fn value_of(entries: usize) -> Cell {
+    let mut dict = HashmapE::with_bit_len(256);
+    for i in 0..entries {
+        let mut key = [0u8; 32];
+        key[28..].copy_from_slice(&(i as u32).to_be_bytes());
+        dict.set_builder(SliceData::from_raw(key.to_vec(), 256), &Record::good().leaf()).unwrap();
+    }
+    cell(|b| {
+        b.append_u8(0x01).unwrap();
+        dict.write_hashmap_data(b).unwrap();
+    })
+}
+
+#[test]
+fn the_entry_cap_admits_sixteen_and_refuses_seventeen() {
+    assert_eq!(SETTLEMENT_ASSETS_MAX_ENTRIES, 16);
+    let at_cap = SettlementAssets::construct_from_cell(value_of(16)).unwrap();
+    assert_eq!(at_cap.assets.len(), 16);
+    let over = SettlementAssets::construct_from_cell(value_of(17)).unwrap_err().to_string();
+    assert!(over.contains("more than 16"), "{over}");
+    // The builder stops at the cap as well.
+    let mut built = at_cap.clone();
+    let extra = built.assets.values().next().unwrap().clone();
+    let refused = built.insert(UInt256::from([0xee; 32]), extra).unwrap_err().to_string();
+    assert!(refused.contains("at most 16"), "{refused}");
+    let mut spec = json!({"assets": []});
+    let entry = spec_entry();
+    for i in 0..17u8 {
+        let mut e = entry.clone();
+        e["master"] = json!(hex::encode([i; 32]));
+        spec["assets"].as_array_mut().unwrap().push(e);
+    }
+    assert!(settlement_assets_from_json(&spec).is_err());
+    // A client reading its pin does not count the other entries.
+    let mut pin = [0u8; 32];
+    pin[31] = 3;
+    let read = read_pinned_settlement_assets(value_of(17), &[UInt256::from(pin)]).unwrap();
+    assert!(read[0].asset.is_some());
+}
+
+fn spec_entry() -> Value {
+    spec()["assets"][0].clone()
+}
+
+#[test]
+fn the_validation_budget_is_the_nodes() {
+    // The node's boundary: 341 entries take 1023 cells, 342 take 1026
+    // (JsonRpcExplorer.settlement_assets_entry_cap_and_node_budget checks the
+    // same values against validate_ref).
+    assert_eq!(CONFIG_PARAM_VALIDATION_CELLS, 1024);
+    assert_eq!(validation_cell_visits(&value_of(341), 1024), Some(1023));
+    assert_eq!(validation_cell_visits(&value_of(342), 1024), None);
+    assert_eq!(validation_cell_visits(&value_of(16), 1024), Some(48));
+    assert!(check_config_param_budget(84, &value_of(341)).is_ok());
+    assert!(check_config_param_budget(84, &value_of(342)).is_err());
+    // A value the node could not install is refused even by the pinned reader.
+    assert!(read_pinned_settlement_assets(value_of(342), &[UInt256::from([0u8; 32])]).is_err());
+}
+
+#[test]
+fn an_exotic_interior_cell_is_refused() {
+    let mut library = BuilderData::new();
+    library.set_type(CellType::LibraryReference);
+    library.append_u8(2).unwrap();
+    library.append_raw(&[0u8; 32], 256).unwrap();
+    let library = library.into_cell().unwrap();
+    let value = cell(|b| {
+        b.append_u8(0x01).unwrap();
+        b.append_bit_one().unwrap();
+        b.checked_append_reference(library.clone()).unwrap();
+    });
+    let refused = SettlementAssets::construct_from_cell(value.clone()).unwrap_err().to_string();
+    assert!(refused.contains("not ordinary"), "{refused}");
+    let pinned = read_pinned_settlement_assets(value, &[UInt256::from([0u8; 32])]).unwrap_err();
+    assert!(pinned.to_string().contains("not ordinary"), "{pinned}");
+}
+
+#[test]
+fn a_spec_with_a_repeated_field_is_refused() {
+    let good = serde_json::to_string(&spec()).unwrap();
+    assert!(parse_settlement_assets_spec(&good).is_ok());
+    let twice = good.replacen("\"decimals\":6", "\"decimals\":6,\"decimals\":18", 1);
+    assert_ne!(twice, good);
+    let err = parse_settlement_assets_spec(&twice).unwrap_err().to_string();
+    assert!(err.contains("duplicate field"), "{err}");
+    let nested =
+        good.replacen("\"source_chain_id\":1", "\"source_chain_id\":1,\"source_chain_id\":56", 1);
+    assert_ne!(nested, good);
+    assert!(parse_settlement_assets_spec(&nested).is_err());
+    assert!(parse_settlement_assets_spec("{\"assets\":[],\"assets\":[]}").is_err());
 }

@@ -12,9 +12,12 @@ use chain_block::{
     Cell, Deserializable, MsgAddressInt, SETTLEMENT_ASSETS_CONFIG_PARAM, SettlementAssets,
     TokenBridgeParams, UInt256, read_pinned_settlement_assets, read_single_root_boc, write_boc,
 };
-use chain_block_json::{settlement_assets_from_json, settlement_assets_to_json};
+use chain_block_json::{
+    parse_settlement_assets_spec, settlement_assets_from_json, settlement_assets_to_json,
+};
 use contracts::settlement_assets::{
-    MASTER_WORKCHAIN, MasterEvidence, bridge_config_param, verify_settlement_asset,
+    BRIDGE_WORKCHAIN, MASTER_WORKCHAIN, MasterEvidence, bridge_config_param,
+    verify_settlement_asset,
 };
 
 #[derive(clap::Args, Clone)]
@@ -42,7 +45,10 @@ pub enum SettlementAssetsAction {
         value. Unknown or missing fields, a repeated master, a zero cap and an undefined status \
         or origin kind are refused; no cap is written as 1329227995784915872903807060280344575 \
         (2^120 - 1). The value is decoded back before it is printed. ConfigParam 84 is critical, \
-        so propose it with `vote offer create --param 84 --critical --value-boc-file <out>`."
+        so propose it with `vote offer create --param 84 --critical --value-boc-file <out>`. \
+        Every validator must first run a node whose schema has ConfigParam 84, since a node \
+        without it refuses any configuration that holds 84; `vote offer create` therefore \
+        also requires --assume-all-validators-upgraded."
 )]
 pub struct SettlementAssetsBuildCmd {
     /// JSON file holding the new value
@@ -58,9 +64,12 @@ pub struct SettlementAssetsBuildCmd {
     about = "Verify pinned ConfigParam 84 entries against finalized state",
     long_about = "Read ConfigParam 84 at the last masterchain block and decode only the pinned \
         masters; every other entry is ignored. For each pinned master that is listed, the \
-        master's code and data and the source chain's bridge ConfigParam are read at the same \
-        block, and the master's address is re-derived from the record the way the token bridge \
-        derives it. Any mismatch is refused with a nonzero exit."
+        source chain's bridge ConfigParam, the master account and the bridge account are read \
+        at the same block. The record's code hashes must be the bridge's own minter and wallet \
+        code, and the master's address is re-derived with the bridge's codes the way the bridge \
+        derives its minters. Any mismatch is refused with a nonzero exit. Every read must report \
+        the same masterchain block id; the endpoint's state and config proofs are not checked, \
+        so the result is only as trustworthy as the endpoint."
 )]
 pub struct SettlementAssetsVerifyCmd {
     /// Pinned master account id (64 hex digits, workchain 0); repeat for each pin
@@ -92,8 +101,7 @@ impl SettlementAssetsBuildCmd {
         use base64::Engine;
         let text = std::fs::read_to_string(&self.spec)
             .with_context(|| format!("read {}", self.spec.display()))?;
-        let spec: serde_json::Value =
-            serde_json::from_str(&text).context("the spec is not JSON")?;
+        let spec = parse_settlement_assets_spec(&text).context("the spec")?;
         let (cell, boc) = build_value(&spec)?;
         super::vote_cmd::check_value_shape(SETTLEMENT_ASSETS_CONFIG_PARAM as i32, &cell)?;
         if let Some(out) = &self.out {
@@ -103,6 +111,9 @@ impl SettlementAssetsBuildCmd {
         let report = serde_json::json!({
             "param": SETTLEMENT_ASSETS_CONFIG_PARAM,
             "critical": true,
+            "rollout_precondition": "every validator must run a node whose schema has \
+                ConfigParam 84 before this value is proposed; propose it with \
+                vote offer create --param 84 --critical --assume-all-validators-upgraded",
             "value_hash": hex::encode(cell.repr_hash().as_slice()),
             "value_boc": base64::engine::general_purpose::STANDARD.encode(&boc),
             "value": settlement_assets_to_json(&decoded),
@@ -123,10 +134,31 @@ pub(crate) fn parse_pin(text: &str) -> anyhow::Result<UInt256> {
     Ok(UInt256::from(bytes))
 }
 
-fn cell_from(boc: Option<Vec<u8>>, what: &str) -> anyhow::Result<Cell> {
-    let boc = boc.ok_or_else(|| anyhow::anyhow!("the master has no {what}"))?;
+fn cell_from(boc: Option<Vec<u8>>, whose: &str, what: &str) -> anyhow::Result<Cell> {
+    let boc = boc.ok_or_else(|| anyhow::anyhow!("the {whose} has no {what}"))?;
     read_single_root_boc(boc)
 }
+
+/// A read is bound to the masterchain block ConfigParam 84 was read at: the same
+/// seqno and the same root hash.
+fn same_block(
+    what: &str,
+    read: &chain_rpc_client::v2::data_models::BlockIdExt,
+    seqno: u32,
+    anchor: &chain_rpc_client::v2::data_models::BlockIdExt,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        read.workchain == -1 && read.seqno == seqno && read.root_hash == anchor.root_hash,
+        "{what} was read at masterchain block {} instead of the requested block {seqno}",
+        read.seqno
+    );
+    Ok(())
+}
+
+/// What `verify` trusts: the endpoint's answers, bound to one block by id but not
+/// checked against a proof.
+const TRUST: &str = "endpoint answers bound to one masterchain block id; \
+    state and config proofs are not checked by this command";
 
 impl SettlementAssetsVerifyCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
@@ -144,12 +176,18 @@ impl SettlementAssetsVerifyCmd {
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "seqno": seqno,
+                    "trust": TRUST,
                     "present": false,
                     "pins": pins.iter().map(|m| serde_json::json!({"master": hex::encode(m.as_slice()), "listed": false})).collect::<Vec<_>>(),
                 }))?
             );
             return Ok(());
         };
+        anyhow::ensure!(
+            block.workchain == -1 && block.seqno == seqno,
+            "ConfigParam 84 was read at masterchain block {} instead of the requested block {seqno}",
+            block.seqno
+        );
         let pinned = read_pinned_settlement_assets(value, &pins)?;
         let mut report = Vec::with_capacity(pinned.len());
         for entry in &pinned {
@@ -168,24 +206,35 @@ impl SettlementAssetsVerifyCmd {
                 rpc.get_optional_config_param_cell_at(param, seqno).await?.ok_or_else(|| {
                     anyhow::anyhow!("master {master_hex}: ConfigParam {param} is absent")
                 })?;
-            anyhow::ensure!(
-                bridge_block.root_hash == block.root_hash,
-                "ConfigParam {param} was read at another block than ConfigParam 84"
-            );
+            same_block(&format!("ConfigParam {param}"), &bridge_block, seqno, &block)?;
             let bridge_params = TokenBridgeParams::construct_from_cell(bridge_cell)
                 .with_context(|| format!("ConfigParam {param}"))?;
-            let address = MsgAddressInt::with_standart(
+            let master_address = MsgAddressInt::with_standart(
                 None,
                 MASTER_WORKCHAIN as i8,
                 entry.master.clone().into(),
             )?;
-            let account = rpc.get_address_information_at(&address, seqno).await?;
-            let code = cell_from(account.code, "code")?;
-            let data = cell_from(account.data, "data")?;
+            let master = rpc.get_address_information_at(&master_address, seqno).await?;
+            same_block("the master account", &master.block_id, seqno, &block)?;
+            let bridge_address = MsgAddressInt::with_standart(
+                None,
+                BRIDGE_WORKCHAIN as i8,
+                asset.origin.bridge_address.clone().into(),
+            )?;
+            let bridge = rpc.get_address_information_at(&bridge_address, seqno).await?;
+            same_block("the bridge account", &bridge.block_id, seqno, &block)?;
+            let code = cell_from(master.code, "master", "code")?;
+            let data = cell_from(master.data, "master", "data")?;
+            let bridge_data = cell_from(bridge.data, "bridge", "data")?;
             verify_settlement_asset(
                 &entry.master,
                 asset,
-                &MasterEvidence { code: &code, data: &data, bridge_params: &bridge_params },
+                &MasterEvidence {
+                    code: &code,
+                    data: &data,
+                    bridge_params: &bridge_params,
+                    bridge_data: &bridge_data,
+                },
             )?;
             report.push(serde_json::json!({
                 "master": master_hex,
@@ -200,6 +249,7 @@ impl SettlementAssetsVerifyCmd {
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "seqno": seqno,
+                "trust": TRUST,
                 "present": true,
                 "pins": report,
             }))?
@@ -254,6 +304,61 @@ mod tests {
         b.append_bit_zero().unwrap();
         let cell = b.into_cell().unwrap();
         assert!(super::super::vote_cmd::check_value_shape(84, &cell).is_err());
+    }
+
+    /// A chain of `cells` cells, each referring to the next.
+    fn chain_of(cells: usize) -> Cell {
+        let mut tail = chain_block::BuilderData::new().into_cell().unwrap();
+        for _ in 1..cells {
+            let mut b = chain_block::BuilderData::new();
+            b.checked_append_reference(tail).unwrap();
+            tail = b.into_cell().unwrap();
+        }
+        tail
+    }
+
+    #[test]
+    fn vote_offer_create_refuses_any_value_over_the_node_validation_budget() {
+        // ConfigParam 200 has no typed decoder here, so only the budget applies.
+        assert!(super::super::vote_cmd::check_value_shape(200, &chain_of(1024)).is_ok());
+        let refused = super::super::vote_cmd::check_value_shape(200, &chain_of(1025))
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("more than 1024 cells"), "{refused}");
+    }
+
+    #[test]
+    fn proposing_84_needs_the_explicit_rollout_confirmation() {
+        use super::super::vote_cmd::require_schema_rollout;
+        let refused = require_schema_rollout(84, false).unwrap_err().to_string();
+        assert!(refused.contains("--assume-all-validators-upgraded"), "{refused}");
+        assert!(require_schema_rollout(84, true).is_ok());
+        assert!(require_schema_rollout(79, false).is_ok());
+    }
+
+    fn block(
+        workchain: i32,
+        seqno: u32,
+        root: u8,
+    ) -> chain_rpc_client::v2::data_models::BlockIdExt {
+        serde_json::from_value(serde_json::json!({
+            "@type": "tos.blockIdExt",
+            "workchain": workchain,
+            "shard": "-9223372036854775808",
+            "seqno": seqno,
+            "root_hash": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [root; 32]),
+            "file_hash": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [0u8; 32]),
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn every_verify_read_is_bound_to_the_config_block() {
+        let anchor = block(-1, 7, 0x5a);
+        assert!(same_block("read", &block(-1, 7, 0x5a), 7, &anchor).is_ok());
+        assert!(same_block("read", &block(-1, 8, 0x5a), 7, &anchor).is_err());
+        assert!(same_block("read", &block(-1, 7, 0x5b), 7, &anchor).is_err());
+        assert!(same_block("read", &block(0, 7, 0x5a), 7, &anchor).is_err());
     }
 
     #[test]

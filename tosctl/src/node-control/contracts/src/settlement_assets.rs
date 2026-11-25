@@ -99,6 +99,23 @@ pub struct MasterEvidence<'a> {
     pub data: &'a Cell,
     /// The bridge ConfigParam of the record's source chain (79, 81, 82 or 83).
     pub bridge_params: &'a TokenBridgeParams,
+    /// The data of the bridge account `-1:origin.bridge_address`.
+    pub bridge_data: &'a Cell,
+}
+
+/// The minter and wallet code a token bridge creates its minters with: refs 0
+/// and 1 of its storage, after `born:uint64 evm_chain:uint32 evm_bridge:uint160
+/// generation:uint32 gen_start:uint64 gen_state:uint2 collector:MsgAddressInt`
+/// (`load_data` in crosschain/token-bridge/tvm/contracts/token-bridge.fc).
+pub fn bridge_codes(bridge_data: &Cell) -> anyhow::Result<(Cell, Cell)> {
+    let mut slice = SliceData::load_cell(bridge_data.clone())?;
+    slice.get_next_bits(64 + 32 + 160 + 32 + 64 + 2)?;
+    let _collector: MsgAddressInt = chain_block::Deserializable::construct_from(&mut slice)?;
+    anyhow::ensure!(
+        slice.remaining_bits() == 0 && slice.remaining_references() == 3,
+        "the bridge account's data is not a token bridge's storage"
+    );
+    Ok((slice.reference(0)?, slice.reference(1)?))
 }
 
 /// Re-derives the master from the record and its evidence and refuses any
@@ -118,6 +135,17 @@ pub fn verify_settlement_asset(
         bridge_config_param(origin.source_chain_id).is_some(),
         "master {master:x}: source chain {} has no token bridge parameter",
         origin.source_chain_id
+    );
+    // The bridge's own codes: a minter with any other code is not one this bridge
+    // created, even if its storage names the bridge.
+    let (bridge_minter_code, bridge_wallet_code) =
+        bridge_codes(evidence.bridge_data).map_err(|err| {
+            anyhow::anyhow!("master {master:x}: bridge {:x}: {err}", origin.bridge_address)
+        })?;
+    anyhow::ensure!(
+        asset.minter_code_hash == bridge_minter_code.repr_hash()
+            && asset.wallet_code_hash == bridge_wallet_code.repr_hash(),
+        "master {master:x}: the recorded code hashes are not the bridge's minter and wallet code"
     );
     // Step 2: the master runs the recorded minter code.
     anyhow::ensure!(
@@ -161,10 +189,11 @@ pub fn verify_settlement_asset(
         stored_bridge == bridge,
         "master {master:x}: the minter is driven by {stored_bridge}, not the recorded bridge {bridge}"
     );
-    // Step 1: the key is the canonical account id of the derived address.
+    // Step 1: the key is the canonical account id of the address the bridge derives,
+    // with the bridge's own codes.
     let derived = minter_account_id(
-        evidence.code.clone(),
-        minter_initial_data(expected_content, wallet_code, &bridge)?,
+        bridge_minter_code,
+        minter_initial_data(expected_content, bridge_wallet_code, &bridge)?,
     )?;
     anyhow::ensure!(
         &derived == master,
@@ -190,21 +219,46 @@ mod tests {
         b.into_cell().unwrap()
     }
 
+    /// A token bridge's storage holding `minter` and `wallet` as its codes.
+    fn bridge_storage(minter: Cell, wallet: Cell) -> Cell {
+        let mut b = BuilderData::new();
+        zeros(&mut b, 64 + 32 + 160 + 32 + 64 + 2).unwrap();
+        MsgAddressInt::with_standart(None, 0, UInt256::from([0x42; 32]).into())
+            .unwrap()
+            .write_to(&mut b)
+            .unwrap();
+        b.checked_append_reference(minter).unwrap();
+        b.checked_append_reference(wallet).unwrap();
+        b.checked_append_reference(leaf(0)).unwrap();
+        b.into_cell().unwrap()
+    }
+
     struct Synthetic {
         master: UInt256,
         asset: SettlementAsset,
         code: Cell,
         data: Cell,
         params: TokenBridgeParams,
+        bridge_data: Cell,
     }
 
-    /// A minter state built to derive exactly; `content` and `stored_bridge`
-    /// replace what the account data holds without changing the derivation.
-    fn synthetic(chain: u32, content: Option<Cell>, stored_bridge: Option<UInt256>) -> Synthetic {
+    struct Variation {
+        chain: u32,
+        content: Option<Cell>,
+        stored_bridge: Option<UInt256>,
+        /// The bridge's codes, when they are not the minter's own.
+        bridge_codes: Option<(Cell, Cell)>,
+    }
+
+    const PLAIN: Variation =
+        Variation { chain: 1, content: None, stored_bridge: None, bridge_codes: None };
+
+    /// A minter whose record, code and data derive its own address exactly.
+    fn synthetic(v: Variation) -> Synthetic {
         let origin = SettlementAssetOrigin {
             kind: SettlementAssetOriginKind::TokenBridge,
             bridge_address: UInt256::from([0x33; 32]),
-            source_chain_id: chain,
+            source_chain_id: v.chain,
             source_token: [0x44; 20],
         };
         let code = leaf(1);
@@ -217,12 +271,14 @@ mod tests {
             minter_initial_data(expected.clone(), wallet.clone(), &bridge).unwrap(),
         )
         .unwrap();
-        let stored = match stored_bridge {
+        let stored = match v.stored_bridge {
             Some(other) => MsgAddressInt::with_standart(None, -1, other.into()).unwrap(),
             None => bridge,
         };
         let data =
-            minter_initial_data(content.unwrap_or(expected), wallet.clone(), &stored).unwrap();
+            minter_initial_data(v.content.unwrap_or(expected), wallet.clone(), &stored).unwrap();
+        let (bridge_minter, bridge_wallet) =
+            v.bridge_codes.unwrap_or_else(|| (code.clone(), wallet.clone()));
         let params = TokenBridgeParams {
             bridge_address: origin.bridge_address.clone().into(),
             oracles_address: UInt256::default().into(),
@@ -239,25 +295,70 @@ mod tests {
             max_liability_per_actor: Coins::from(1u64),
             origin,
         };
-        Synthetic { master, asset, code, data, params }
+        Synthetic {
+            master,
+            asset,
+            code,
+            data,
+            params,
+            bridge_data: bridge_storage(bridge_minter, bridge_wallet),
+        }
     }
 
     fn check(s: &Synthetic) -> anyhow::Result<()> {
         verify_settlement_asset(
             &s.master,
             &s.asset,
-            &MasterEvidence { code: &s.code, data: &s.data, bridge_params: &s.params },
+            &MasterEvidence {
+                code: &s.code,
+                data: &s.data,
+                bridge_params: &s.params,
+                bridge_data: &s.bridge_data,
+            },
         )
     }
 
+    fn refusal(s: &Synthetic) -> String {
+        check(s).expect_err("refused").to_string()
+    }
+
     #[test]
-    fn a_consistent_synthetic_minter_verifies() {
-        check(&synthetic(1, None, None)).unwrap();
+    fn a_minter_built_with_the_bridges_own_codes_verifies() {
+        check(&synthetic(PLAIN)).unwrap();
+    }
+
+    #[test]
+    fn a_foreign_code_minter_that_names_the_real_bridge_is_refused() {
+        // The minter, its record and its data agree with each other and name the
+        // bridge, but the bridge creates its minters with other code.
+        let s = synthetic(Variation { bridge_codes: Some((leaf(7), leaf(8))), ..PLAIN });
+        assert!(refusal(&s).contains("not the bridge's minter and wallet code"));
+        let s = synthetic(Variation { bridge_codes: Some((leaf(1), leaf(8))), ..PLAIN });
+        assert!(refusal(&s).contains("not the bridge's minter and wallet code"));
+        let s = synthetic(Variation { bridge_codes: Some((leaf(7), leaf(2))), ..PLAIN });
+        assert!(refusal(&s).contains("not the bridge's minter and wallet code"));
+    }
+
+    #[test]
+    fn a_bridge_whose_storage_does_not_parse_is_refused() {
+        let mut s = synthetic(PLAIN);
+        s.bridge_data = leaf(9);
+        assert!(refusal(&s).contains("bridge"));
+        s.bridge_data = {
+            let fresh = synthetic(PLAIN);
+            let mut extra = BuilderData::from_cell(&fresh.bridge_data).unwrap();
+            extra.append_bit_zero().unwrap();
+            extra.into_cell().unwrap()
+        };
+        assert!(refusal(&s).contains("not a token bridge's storage"));
     }
 
     #[test]
     fn a_source_chain_without_a_bridge_parameter_is_refused() {
-        assert!(check(&synthetic(5, None, None)).is_err());
+        assert!(
+            refusal(&synthetic(Variation { chain: 5, ..PLAIN }))
+                .contains("no token bridge parameter")
+        );
         assert_eq!(bridge_config_param(5), None);
         assert_eq!(bridge_config_param(728126428), Some(83));
     }
@@ -268,11 +369,13 @@ mod tests {
         b.append_u32(1).unwrap();
         b.append_raw(&[0x44; 20], 160).unwrap();
         b.append_u8(18).unwrap();
-        assert!(check(&synthetic(1, Some(b.into_cell().unwrap()), None)).is_err());
+        let s = synthetic(Variation { content: Some(b.into_cell().unwrap()), ..PLAIN });
+        assert!(refusal(&s).contains("minter content"));
     }
 
     #[test]
     fn a_minter_driven_by_another_bridge_is_refused() {
-        assert!(check(&synthetic(1, None, Some(UInt256::from([0x66; 32])))).is_err());
+        let s = synthetic(Variation { stored_bridge: Some(UInt256::from([0x66; 32])), ..PLAIN });
+        assert!(refusal(&s).contains("is driven by"));
     }
 }

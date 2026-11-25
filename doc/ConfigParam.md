@@ -389,17 +389,43 @@ Each bridge parameter file also fixes the chain id its contract compares against
 |---|---|---|
 | 84 | `SettlementAssets` | the token masters that settle AI services, keyed by the master's workchain-0 account id. Each `settlement_asset_v1#01` record holds `status` (1 active, 2 admission suspended, 3 retired), `decimals`, `minter_code_hash`, `wallet_code_hash`, a non-zero `max_liability_per_actor` (`2^120 - 1`, the largest `Coins`, is no cap) and an `origin` (`kind` 1 bridged by the TOS token bridge or 2 reserved for native issuance, the bridge's masterchain account id, the source chain id and the source token). Critical (in ConfigParam 10) from genesis; not mandatory and absent at genesis, so a network starts with no recognized asset |
 
-The schema fixes only the shape: the node installs any value that matches it.
-The decoders (`block::unpack_settlement_assets`, the typed `getConfigParam`
-view, `tosctl config-param 84`) refuse every status and origin kind the schema
-does not define, a zero cap, a non-minimal `Coins` length and any trailing bit or
-reference, and `tosctl vote offer create` refuses to propose such a value.
-`tosctl vote offer settlement-assets build` writes a value from its JSON form.
-A settlement client decodes only the masters it pins and ignores every other
-entry. For a pinned master of origin kind 1 it re-derives the master's address
-from the record, the master's code and data and the bridge, the way the token
-bridge derives its minters, and refuses any mismatch
-(`tosctl vote offer settlement-assets verify --pin <master>`).
+**Rollout precondition.** Every validator must run a node whose schema has
+ConfigParam 84 before any 84 value is proposed or written into a zero state. A
+node built without it validates every configuration parameter against its
+schema, finds no constructor for 84 and refuses the whole configuration; the
+collator then stops ("attempting to install invalid new configuration"). No
+validator reports which schema its node carries, so `tosctl vote offer create
+--param 84` refuses unless the operator passes `--assume-all-validators-upgraded`.
+
+**Size.** A value holds at most 16 entries; one or two are expected. The node
+validates each parameter against a budget of 1024 cells
+(`check_one_config_param`), and a ConfigParam 84 value of 342 or more entries
+matches the schema yet exceeds that budget, so installing it would halt the
+masterchain. The decoders and the builder refuse more than 16 entries, and
+`tosctl vote offer create` refuses any parameter value whose cells exceed the
+node's budget. The configuration contract does not check either: it registers
+any value that is not deeper than 128 cells.
+
+**Decoding.** The schema fixes only the shape: the node installs any value that
+matches it. The decoders (`block::unpack_settlement_assets`, the typed
+`getConfigParam` view, `tosctl config-param 84`) refuse every status and origin
+kind the schema does not define, a zero cap, a non-minimal `Coins` length, any
+trailing bit or reference, an exotic cell and more than 16 entries, and `tosctl
+vote offer create` refuses to propose such a value.
+`tosctl vote offer settlement-assets build` writes a value from its JSON form and
+refuses a repeated field.
+
+**Verification.** A settlement client decodes only the masters it pins and
+ignores every other entry. For a pinned master of origin kind 1, `tosctl vote
+offer settlement-assets verify --pin <master>` reads, at one masterchain block,
+the bridge ConfigParam of the record's source chain, the master account and the
+bridge account. It requires the record's code hashes to be the bridge's own
+minter and wallet code (refs 0 and 1 of the bridge's storage), re-derives the
+master's address with those codes the way the bridge derives its minters, and
+refuses any mismatch. A minter that names the bridge but runs other code is
+therefore refused. Every read must report the same masterchain block id; the
+command does not check the endpoint's state or config proofs, so its answer is
+only as trustworthy as the endpoint.
 
 ## Adding or changing a parameter
 

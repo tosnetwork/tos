@@ -68,6 +68,75 @@ pub fn settlement_assets_to_json(value: &SettlementAssets) -> Value {
     json!({ "assets": assets })
 }
 
+/// A JSON value parsed so that a repeated object key is an error instead of the
+/// last occurrence silently winning.
+struct Strict(Value);
+
+struct StrictVisitor;
+
+impl<'de> serde::de::Visitor<'de> for StrictVisitor {
+    type Value = Strict;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a JSON value")
+    }
+    fn visit_bool<E>(self, v: bool) -> std::result::Result<Strict, E> {
+        Ok(Strict(Value::Bool(v)))
+    }
+    fn visit_i64<E>(self, v: i64) -> std::result::Result<Strict, E> {
+        Ok(Strict(Value::from(v)))
+    }
+    fn visit_u64<E>(self, v: u64) -> std::result::Result<Strict, E> {
+        Ok(Strict(Value::from(v)))
+    }
+    fn visit_f64<E>(self, v: f64) -> std::result::Result<Strict, E> {
+        Ok(Strict(Value::from(v)))
+    }
+    fn visit_str<E>(self, v: &str) -> std::result::Result<Strict, E> {
+        Ok(Strict(Value::String(v.to_owned())))
+    }
+    fn visit_unit<E>(self) -> std::result::Result<Strict, E> {
+        Ok(Strict(Value::Null))
+    }
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(
+        self,
+        mut seq: A,
+    ) -> std::result::Result<Strict, A::Error> {
+        let mut items = Vec::new();
+        while let Some(Strict(item)) = seq.next_element()? {
+            items.push(item);
+        }
+        Ok(Strict(Value::Array(items)))
+    }
+    fn visit_map<A: serde::de::MapAccess<'de>>(
+        self,
+        mut access: A,
+    ) -> std::result::Result<Strict, A::Error> {
+        let mut map = Map::new();
+        while let Some(key) = access.next_key::<String>()? {
+            if map.contains_key(&key) {
+                return Err(serde::de::Error::custom(format!("duplicate field {key:?}")));
+            }
+            let Strict(value) = access.next_value()?;
+            map.insert(key, value);
+        }
+        Ok(Strict(Value::Object(map)))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Strict {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        d.deserialize_any(StrictVisitor)
+    }
+}
+
+/// Parses a builder spec, refusing a repeated key anywhere in it.
+pub fn parse_settlement_assets_spec(text: &str) -> Result<Value> {
+    let Strict(value) =
+        serde_json::from_str(text).map_err(|err| error!("ConfigParam 84 spec: {err}"))?;
+    Ok(value)
+}
+
 fn object<'a>(value: &'a Value, what: &str) -> Result<&'a Map<String, Value>> {
     value.as_object().ok_or_else(|| error!("{what} must be a JSON object"))
 }

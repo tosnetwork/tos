@@ -27,6 +27,7 @@ struct Recognized {
     code: Cell,
     data: Cell,
     bridge_params: TokenBridgeParams,
+    bridge_data: Cell,
 }
 
 /// A deployed minter, its record as a vote would write it, and the evidence a
@@ -38,6 +39,12 @@ fn recognized() -> Recognized {
     let account = net.bc.get_account(&minter).expect("the mint deployed the minter");
     let code = account.get_code().expect("the minter has code");
     let data = account.get_data().expect("the minter has data");
+    let bridge_data = net
+        .bc
+        .get_account(&net.bridge)
+        .expect("the bridge is deployed")
+        .get_data()
+        .expect("the bridge has data");
     let param = match net.bc.config_params().config(CONFIG_PARAM).expect("lookup") {
         Some(ConfigParamEnum::ConfigParam79(params)) => params,
         Some(ConfigParamEnum::ConfigParamAny(_, cell)) => {
@@ -64,6 +71,7 @@ fn recognized() -> Recognized {
         code,
         data,
         bridge_params: param,
+        bridge_data,
     }
 }
 
@@ -71,7 +79,12 @@ fn verify(r: &Recognized) -> anyhow::Result<()> {
     verify_settlement_asset(
         &r.master,
         &r.asset,
-        &MasterEvidence { code: &r.code, data: &r.data, bridge_params: &r.bridge_params },
+        &MasterEvidence {
+            code: &r.code,
+            data: &r.data,
+            bridge_params: &r.bridge_params,
+            bridge_data: &r.bridge_data,
+        },
     )
 }
 
@@ -90,7 +103,12 @@ fn a_minter_the_bridge_created_verifies_from_its_record() {
     verify_settlement_asset(
         &r.master,
         listed,
-        &MasterEvidence { code: &r.code, data: &r.data, bridge_params: &r.bridge_params },
+        &MasterEvidence {
+            code: &r.code,
+            data: &r.data,
+            bridge_params: &r.bridge_params,
+            bridge_data: &r.bridge_data,
+        },
     )
     .expect("the read-back record verifies");
 }
@@ -114,6 +132,12 @@ fn every_wrong_field_of_a_record_is_refused() {
         r.asset.origin.kind = SettlementAssetOriginKind::NativeIssuance
     });
     refused("code that is not the minter's", &|r| r.code = codes().wallet.clone());
+    refused("a minter with foreign code recorded as such", &|r| {
+        r.code = codes().wallet.clone();
+        r.asset.minter_code_hash = codes().wallet.repr_hash();
+    });
+    refused("bridge storage that does not parse", &|r| r.bridge_data = Cell::default());
+    refused("another account's storage as the bridge's", &|r| r.bridge_data = r.data.clone());
     refused("data that is not a minter's", &|r| {
         r.data = cell(|b| {
             b.checked_append_reference(Cell::default()).unwrap();
