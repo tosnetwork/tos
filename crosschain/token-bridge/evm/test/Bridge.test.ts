@@ -16,6 +16,8 @@ import {
   signSwapData, signUpdateLockStatus,
   signUpdateOracleData,
   signNewGeneration,
+  signLockCap,
+  MAX_LOCK_CAP,
 } from "./utils/utils";
 import type { Bridge, TestToken, TestWrappedToken, TestTokenWithoutMetadata } from "../typechain-types";
 import {BigNumber} from "ethers";
@@ -81,7 +83,16 @@ describe("Bridge contract", () => {
     const tosBridge = "0x" + "11".repeat(32);
     await bridge.voteForNewGeneration(1, tosBridge, 1, 1, signNewGeneration(1, tosBridge, 1, 1, oracleSet, bridge.address));
 
+    // A token without lock caps cannot be locked; these tests are about other
+    // checks, so their tokens get the widest caps a vote accepts.
+    await openLocks(token.address);
+    await openLocks(tokenWithoutMetadata.address);
   });
+
+  async function openLocks(tokenAddress: string) {
+    await bridge.voteForLockCap(tokenAddress, MAX_LOCK_CAP, MAX_LOCK_CAP, MAX_LOCK_CAP, MAX_LOCK_CAP, 1,
+      signLockCap(tokenAddress, MAX_LOCK_CAP, MAX_LOCK_CAP, MAX_LOCK_CAP, MAX_LOCK_CAP, 1, oracleSet, bridge.address));
+  }
 
   // LOCK
 
@@ -198,6 +209,7 @@ describe("Bridge contract", () => {
     const TestToken = await ethers.getContractFactory("TestToken");
     const tokenBigSupply = await TestToken.deploy(BigNumber.from(2).pow(BigNumber.from(255))) as TestToken;
     await tokenBigSupply.deployed();
+    await openLocks(tokenBigSupply.address);
 
     const bridgeAllowance = BigNumber.from(2).pow(BigNumber.from(255));
     await tokenBigSupply.approve(bridge.address, bridgeAllowance);
@@ -217,6 +229,7 @@ describe("Bridge contract", () => {
     const TestToken = await ethers.getContractFactory("TestToken");
     const tokenBigSupply = await TestToken.deploy(BigNumber.from(2).pow(BigNumber.from(255))) as TestToken;
     await tokenBigSupply.deployed();
+    await openLocks(tokenBigSupply.address);
 
     const bridgeAllowance = BigNumber.from(2).pow(BigNumber.from(120));
     await tokenBigSupply.approve(bridge.address, bridgeAllowance);
@@ -236,6 +249,7 @@ describe("Bridge contract", () => {
     const TestToken = await ethers.getContractFactory("TestToken");
     const tokenBigSupply = await TestToken.deploy(BigNumber.from(2).pow(BigNumber.from(120)).sub(1)) as TestToken;
     await tokenBigSupply.deployed();
+    await openLocks(tokenBigSupply.address);
 
     const bridgeAllowance = BigNumber.from(2).pow(BigNumber.from(120)).sub(1);
     await tokenBigSupply.approve(bridge.address, bridgeAllowance);
@@ -255,6 +269,7 @@ describe("Bridge contract", () => {
     const totalSupply = BigNumber.from(2).pow(BigNumber.from(100));
     const tokenBigSupply = await TestToken.deploy(totalSupply) as TestToken;
     await tokenBigSupply.deployed();
+    await openLocks(tokenBigSupply.address);
 
     const bridgeAllowance = totalSupply;
     await tokenBigSupply.approve(bridge.address, bridgeAllowance);
@@ -468,6 +483,7 @@ describe("Bridge contract", () => {
     const totalSupply = BigNumber.from(2).pow(BigNumber.from(100));
     const tokenBigSupply = await TestToken.deploy(totalSupply) as TestToken;
     await tokenBigSupply.deployed();
+    await openLocks(tokenBigSupply.address);
 
     const bridgeAllowance = totalSupply;
     await tokenBigSupply.approve(bridge.address, bridgeAllowance);

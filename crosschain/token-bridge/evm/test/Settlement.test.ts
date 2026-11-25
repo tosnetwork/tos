@@ -8,7 +8,7 @@ import { Account } from "web3/eth/accounts";
 import * as fs from "fs";
 import * as path from "path";
 import { TOS_ADDRESS_HASH } from "./utils/constants";
-import { signNewGeneration, signRefundLock, signUpdateLockStatus } from "./utils/utils";
+import { MAX_LOCK_CAP, signLockCap, signNewGeneration, signRefundLock, signUpdateLockStatus } from "./utils/utils";
 import type { Bridge, TestToken } from "../typechain-types";
 
 const web3 = new Web3();
@@ -50,6 +50,13 @@ describe("Bridge source generations, lock nonces and refunds", () => {
     return b.voteForNewGeneration(generation, tos, life, nonce, signNewGeneration(generation, tos, life, nonce, oracles, b.address));
   }
 
+  // A token without lock caps cannot be locked; these tests are about
+  // generations and nonces, so their tokens get the widest caps.
+  async function openLocks(b: Bridge, tokenAddress: string) {
+    const m = MAX_LOCK_CAP;
+    return b.voteForLockCap(tokenAddress, m, m, m, m, 1, signLockCap(tokenAddress, m, m, m, m, 1, oracles, b.address));
+  }
+
   async function lockOne(amount = parseUnits("1")) {
     await token.approve(bridge.address, amount);
     const tx = await bridge.lock(token.address, amount, TOS_ADDRESS_HASH);
@@ -69,6 +76,7 @@ describe("Bridge source generations, lock nonces and refunds", () => {
     const TestToken = await ethers.getContractFactory("TestToken");
     token = (await TestToken.deploy(parseUnits("1000000"))) as TestToken;
     await token.deployed();
+    await openLocks(bridge, token.address);
   });
 
   it("refuses every lock until a generation is active", async () => {
@@ -189,6 +197,7 @@ describe("Bridge source generations, lock nonces and refunds", () => {
     const TestToken = await ethers.getContractFactory("TestToken", deployer);
     const t = (await TestToken.deploy(parseUnits("1000000"))) as TestToken;
     await t.deployed();
+    await openLocks(b, t.address);
     expect(b.address).to.equal(ethers.utils.getAddress(VECTORS.evm_bridge));
     expect(t.address).to.equal(ethers.utils.getAddress(VECTORS.token));
     expect((await ethers.provider.getNetwork()).chainId).to.equal(VECTORS.evm_chain_id);

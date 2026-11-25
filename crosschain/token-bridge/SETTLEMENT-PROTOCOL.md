@@ -1019,6 +1019,16 @@ event.
   increase.
 - `lock` records `locks[n].generation = generation` and refuses while no
   generation is active. Locking already starts disabled.
+- per-token lock caps `lockCaps[token] = (total, perLock, hourly, daily)`,
+  set only by `voteForLockCap(token, total, perLock, hourly, daily, nonce,
+  signatures)`, an oracle-quorum vote whose nonce strictly increases per
+  token. `lock` charges the received amount to them: the bridge's balance of
+  the token after the lock is at most `total`, one lock at most `perLock`,
+  and the fixed UTC hour and day buckets (`lockUsage[token]`) at most
+  `hourly` and `daily`. A token without caps, or with all four zero, cannot
+  be locked, so **every deployment must vote caps per token before its first
+  lock**. `unlock` and `refundLock` never read the caps. `getLockCapState`
+  returns the caps, the current usage and the room left.
 
 The TOS bridge enforces its generation:
 

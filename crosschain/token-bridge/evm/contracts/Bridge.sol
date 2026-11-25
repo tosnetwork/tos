@@ -64,6 +64,53 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
 
     mapping(uint64 => LockRecord) public locks;
 
+    // Lock caps. Every amount below is a received amount, the balance delta
+    // that lock credits, so a fee-on-transfer token is capped by what the
+    // bridge actually received, never by what was requested.
+    //
+    // - total: the bridge's balance of the token after a lock may not exceed
+    //   it. That balance is the exposure: it backs the wrapped supply and the
+    //   open locks, and unlocks and refunds lower it. Measuring it by the
+    //   balance has two consequences. A direct transfer to the bridge fills
+    //   the room left and blocks locks until the oracles vote a higher cap;
+    //   it costs the sender those tokens, which stay as unswept extra
+    //   backing. An issuer burn or freeze of the bridge's balance lowers the
+    //   balance without lowering the wrapped supply, so the total cap then
+    //   undercounts exposure; the control for that is the disable-token vote.
+    //   Payouts (unlock, refundLock) never read the caps.
+    // - perLock: one lock may not receive more.
+    // - hourly, daily: the sum received by the locks of one fixed UTC hour
+    //   (block.timestamp / 1 hours) or one fixed UTC day (/ 1 days) may not
+    //   exceed it. Unlocks and refunds do not give rate back.
+    //
+    // The windows are fixed buckets, not sliding windows. Two adjacent
+    // buckets can each be filled, so any span of one hour admits at most
+    // 2 * hourly, any span of one day at most 2 * daily, and any span of k
+    // whole periods at most (k + 1) times that period's cap. The total cap
+    // holds at every instant regardless. A rate cap is therefore set to half
+    // the burst that can be tolerated before a pause lands.
+    //
+    // A token whose caps were never set, or were set to zero, cannot be
+    // locked, so the caps are also the source-side token allowlist. They
+    // change only by an oracle vote (voteForLockCap).
+    struct LockCap {
+        uint128 total;
+        uint128 perLock;
+        uint128 hourly;
+        uint128 daily;
+    }
+
+    struct LockUsage {
+        uint128 hourUsed;
+        uint64 hour;
+        uint128 dayUsed;
+        uint64 day;
+    }
+
+    mapping(address => LockCap) public lockCaps;
+    mapping(address => LockUsage) public lockUsage;
+    mapping(address => uint256) public lastLockCapNonce;
+
     event Lock(
         address indexed from,
         address indexed token,
@@ -86,6 +133,14 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
         uint256 new_bridge_balance
     );
     event NewOracleSet(uint256 oracleSetHash, address[] newOracles);
+    event LockCapSet(
+        address indexed token,
+        uint256 total,
+        uint256 perLock,
+        uint256 hourly,
+        uint256 daily,
+        uint256 nonce
+    );
 
     // initiallyDisabledTokens must name this deployment's coin-bridge wrapped
     // token, so the token bridge cannot wrap what the coin bridge already
@@ -131,6 +186,7 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
         require(lockNonce <= MAX_LOCK_NONCE, "Lock nonces exhausted");
         require(!disabledTokens[token], "lock: disabled token");
         require(!checkTokenIsWrappedToken(token), "lock wrapped token");
+        require(lockCaps[token].total != 0, "lock: token has no lock cap");
 
         uint256 oldBalance = IERC20(token).balanceOf(address(this));
 
@@ -145,6 +201,7 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
         uint64 n = lockNonce;
         lockNonce = n + 1;
         uint256 received = newBalance - oldBalance;
+        _consumeLockCap(token, received, newBalance);
         locks[n] = LockRecord(msg.sender, token, received, generation, LOCK_OPEN);
 
         emit Lock(
@@ -157,6 +214,61 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
             n,
             generation
         );
+    }
+
+    // Charges one lock's received amount to its token's caps, or refuses the
+    // lock. Every operand is at most 2 ** 120 - 1 (the supply bound in lock
+    // and the bound voteForLockCap places on every cap), so the checked sums
+    // cannot overflow and the narrowing casts are exact.
+    function _consumeLockCap(address token, uint256 received, uint256 newBalance) internal {
+        LockCap memory cap = lockCaps[token];
+        require(received <= cap.perLock, "lock: over the per-lock cap");
+        require(newBalance <= cap.total, "lock: over the token cap");
+        (uint64 hour, uint64 day, uint256 hourUsed, uint256 dayUsed) = _currentLockUsage(token);
+        hourUsed += received;
+        dayUsed += received;
+        require(hourUsed <= cap.hourly, "lock: over the hourly cap");
+        require(dayUsed <= cap.daily, "lock: over the daily cap");
+        lockUsage[token] = LockUsage(uint128(hourUsed), hour, uint128(dayUsed), day);
+    }
+
+    // The current hour and day buckets and what the token's locks have used
+    // in each. A bucket recorded for an earlier hour or day counts as empty.
+    function _currentLockUsage(address token)
+        internal
+        view
+        returns (uint64 hour, uint64 day, uint256 hourUsed, uint256 dayUsed)
+    {
+        LockUsage memory usage = lockUsage[token];
+        hour = uint64(block.timestamp / 1 hours);
+        day = uint64(block.timestamp / 1 days);
+        hourUsed = usage.hour == hour ? usage.hourUsed : 0;
+        dayUsed = usage.day == day ? usage.dayUsed : 0;
+    }
+
+    // What an oracle reads before it votes: the token's caps, what the
+    // current hour and day buckets have used, and the largest amount one lock
+    // could receive now under the caps alone (0 for a token without caps).
+    // allowLock, the generation and the disabled list are separate checks.
+    function getLockCapState(address token)
+        external
+        view
+        returns (LockCap memory cap, uint256 hourUsed, uint256 dayUsed, uint256 available)
+    {
+        cap = lockCaps[token];
+        (, , hourUsed, dayUsed) = _currentLockUsage(token);
+        if (cap.total == 0) {
+            return (cap, hourUsed, dayUsed, 0);
+        }
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        available = cap.perLock;
+        available = _min(available, cap.hourly > hourUsed ? cap.hourly - hourUsed : 0);
+        available = _min(available, cap.daily > dayUsed ? cap.daily - dayUsed : 0);
+        available = _min(available, cap.total > balance ? cap.total - balance : 0);
+    }
+
+    function _min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
     }
 
     // Returns lock n to its locker. Oracles sign this only after observing the
@@ -255,6 +367,36 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
         } else {
             delete disabledTokens[tokenAddress];
         }
+    }
+
+    // Sets a token's lock caps. All four zero closes the token to locks.
+    // Otherwise every cap is non-zero, perLock <= hourly <= daily, and each is
+    // within the supply bound. The nonce strictly increases per token, as for
+    // voteForDisableToken, so a signed but unexecuted older vote can never
+    // undo a newer one. What the current buckets have already used stays
+    // charged, so a lowered rate cap takes effect at once.
+    function voteForLockCap(
+        address token,
+        uint256 total,
+        uint256 perLock,
+        uint256 hourly,
+        uint256 daily,
+        uint256 nonce,
+        Signature[] calldata signatures
+    ) external {
+        bytes32 _id = getNewLockCapId(token, total, perLock, hourly, daily, nonce);
+        _generalVote(_id, signatures);
+        require(nonce > lastLockCapNonce[token], "Stale lock cap nonce");
+        require(token != address(0), "Lock cap names no token");
+        if (total != 0 || perLock != 0 || hourly != 0 || daily != 0) {
+            require(total != 0 && perLock != 0, "Lock cap is partly zero");
+            require(perLock <= hourly && hourly <= daily, "Lock caps are not ordered");
+            require(total <= 2 ** 120 - 1 && daily <= 2 ** 120 - 1, "Lock cap over the supply bound");
+        }
+        lastLockCapNonce[token] = nonce;
+        finishedVotings[_id] = true;
+        lockCaps[token] = LockCap(uint128(total), uint128(perLock), uint128(hourly), uint128(daily));
+        emit LockCapSet(token, total, perLock, hourly, daily, nonce);
     }
 
     function _updateOracleSet(uint256 oracleSetHash, address[] memory newOracles)

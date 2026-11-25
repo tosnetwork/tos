@@ -25,6 +25,27 @@ async function main() {
   const bridge = await ethers.getContractAt("Bridge", bridgeAddress);
   const token = await ethers.getContractAt("TestToken", tokenAddress);
 
+  // A token without lock caps cannot be locked: the oracles must first vote
+  // its caps (voteForLockCap). Refuse before spending gas on an approval.
+  const capState = await bridge.getLockCapState(tokenAddress);
+  if (capState.cap.total.isZero()) {
+    throw new Error(
+      `token ${tokenAddress} has no lock caps on bridge ${bridgeAddress}; ` +
+      "the oracles must vote its caps (voteForLockCap) before the first lock"
+    );
+  }
+  // The bridge charges the caps with the amount it actually receives, which
+  // for a fee-on-transfer token is less than the amount requested. This
+  // script cannot know that amount in advance, so it only warns and leaves
+  // the decision to the bridge.
+  if (amount.gt(capState.available)) {
+    console.warn(
+      `requested ${amount.toString()} is above the ${capState.available.toString()} ` +
+      "the token's lock caps allow now (getLockCapState); the bridge refuses " +
+      "the lock unless the amount it receives is within the caps"
+    );
+  }
+
   console.log(await token.balanceOf(owner.address));
   console.log(`approve ${formatEther(amount)} tokens to bridge`);
   let tx = await token.approve(bridge.address, amount);

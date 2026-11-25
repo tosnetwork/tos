@@ -234,6 +234,26 @@ class BridgeCI(unittest.TestCase):
         self.assertLess(step.index(producer), step.index(consumer))
         self.assertIn("python3 scripts/test_replay_token_bridge_trace.py\n", step)
 
+    def test_the_token_rail_actor_population_is_mandatory_in_its_own_job(self):
+        workflow = (replay.ROOT / ".github/workflows/contract-sandboxes.yml").read_text()
+        job = workflow.split("\n  service-actor-token:\n", 1)[1].split("\n  # ", 1)[0]
+        self.assertIn("timeout-minutes:", job)
+        self.assertIn("--target func fift emulator", job)
+        step = job.split(
+            "- name: Token-rail Service Actor transactions agree with the native engine\n", 1
+        )[1]
+        step = step.split("\n      - name:", 1)[0]
+        fresh = 'test ! -e "$TOKEN_BRIDGE_TRACE_DIR"'
+        producer = "cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test service_actor_token_sandbox"
+        consumer = 'python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR" --expected-records 15900'
+        for command in (fresh, producer, consumer):
+            self.assertIn(command + "\n", step)
+        self.assertLess(step.index(fresh), step.index(producer))
+        self.assertLess(step.index(producer), step.index(consumer))
+        # The suites job no longer carries the traced step.
+        suites = workflow.split("\n  suites:\n", 1)[1].split("\n  service-actor-token:\n", 1)[0]
+        self.assertNotIn("service-actor-token-trace", suites)
+
 
 if __name__ == "__main__":
     unittest.main()
