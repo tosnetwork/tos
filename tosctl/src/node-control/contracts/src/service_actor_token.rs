@@ -875,8 +875,7 @@ impl ServiceActorTokenContract {
     }
 
     /// The SRP2 response domain a signed `respond` to `request` signs, as the
-    /// native rail computes it. The token price is in atomic units; a price
-    /// above 64 bits is refused rather than truncated.
+    /// native rail computes it, with the price in the asset's atomic units.
     pub fn respond_domain_hash(
         global_id: i32,
         actor: &MsgAddressInt,
@@ -884,10 +883,7 @@ impl ServiceActorTokenContract {
         request: &TokenPendingRequest,
         response_hash: [u8; 32],
     ) -> anyhow::Result<[u8; 32]> {
-        let price = u64::try_from(request.price).map_err(|_| {
-            anyhow::anyhow!("request {request_id}: a price above 64 bits cannot be signed here")
-        })?;
-        crate::attestation::service_respond_domain_hash(
+        crate::attestation::service_respond_domain_hash_coins(
             global_id,
             actor,
             &request.caller,
@@ -895,10 +891,75 @@ impl ServiceActorTokenContract {
             &request.request_hash,
             &response_hash,
             &request.terms_hash,
-            price,
+            request.price,
             request.response_deadline,
             request.refund_claim_deadline,
         )
+    }
+
+    /// `get_refund(request_id)`; `None` when no unclaimed refund exists.
+    pub fn decode_refund(stack: &TvmStackParser) -> anyhow::Result<Option<TokenRefund>> {
+        if !stack.bool(0)? {
+            return Ok(None);
+        }
+        let mut s = stack.slice(1)?;
+        Ok(Some(TokenRefund {
+            caller: MsgAddressInt::construct_from(&mut s)?,
+            price: u128_at(stack, 2)?,
+            storage_fee: stack.u64(3)?,
+            cleanup_bounty: stack.u64(4)?,
+            refund_claim_deadline: stack.u64(5)?,
+        }))
+    }
+
+    /// `get_request_attestor_key(request_id)`: the ML-DSA-44 public key the
+    /// request snapshotted, in its canonical stored form.
+    pub fn decode_attestor_key(stack: &TvmStackParser) -> anyhow::Result<Vec<u8>> {
+        let stored = stack.cell(0)?;
+        crate::native_registry::read_stored_bytes(
+            &stored,
+            crate::native_registry::NATIVE_REGISTRY_PUBLIC_KEY_BYTES,
+        )
+    }
+
+    /// Whether the actor's data holds `key_id` among the attestor keys its
+    /// pending requests name (`attestor_key_of`). Admission refuses a new key
+    /// with 1944 while the store is full; a key already stored is admitted.
+    pub fn attestor_key_stored(data: &Cell, key_id: &[u8; 32]) -> anyhow::Result<bool> {
+        let mut root = SliceData::load_cell_ref(data)?;
+        MsgAddressInt::construct_from(&mut root)?;
+        root.get_next_bits(1 + 64 + 32 + 32 + 64)?;
+        anyhow::ensure!(root.remaining_references() == 4, "actor data has another layout");
+        let requests = root.reference(2)?;
+        let mut rs = SliceData::load_cell(requests)?;
+        for _ in 0..3 {
+            rs.get_next_dictionary()?;
+        }
+        let keys = chain_block::HashmapE::with_hashmap(256, rs.get_next_dictionary()?);
+        exhausted(&rs, "actor request dictionaries")?;
+        Ok(keys.get(SliceData::from_raw(key_id.to_vec(), 256))?.is_some())
+    }
+
+    /// The asset's bridge wallet gas and storage reserve, read from a token
+    /// bridge ConfigParam as the bridge wallet reads it
+    /// (`get_token_bridge_config`): the prefix, the two addresses, the oracle
+    /// dictionary and the state flags are skipped, and the prices are the
+    /// third and fourth Coins of the prices reference. Anything after them is
+    /// not read. Returns (`wallet_gas_consumption`,
+    /// `wallet_min_tos_for_storage`).
+    pub fn bridge_wallet_terms(param: &Cell) -> anyhow::Result<(u128, u128)> {
+        let mut s = SliceData::load_cell_ref(param)?;
+        s.get_next_bits(8 + 256 + 256)?;
+        if s.get_next_bit()? {
+            s.checked_drain_reference()?;
+        }
+        s.get_next_bits(8)?;
+        let mut prices = SliceData::load_cell(s.checked_drain_reference()?)?;
+        Coins::construct_from(&mut prices)?;
+        Coins::construct_from(&mut prices)?;
+        let reserve = Coins::construct_from(&mut prices)?.as_u128();
+        let gas = Coins::construct_from(&mut prices)?.as_u128();
+        Ok((gas, reserve))
     }
 
     /// The destination check of `claim_refund` and `claim_returned`
@@ -1000,6 +1061,16 @@ pub struct TokenPendingRequest {
     pub request_hash: [u8; 32],
     pub terms_hash: [u8; 32],
     pub attestor_key_id: Option<[u8; 32]>,
+}
+
+/// An unclaimed refund (`get_refund`), its price in the asset's atomic units.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TokenRefund {
+    pub caller: MsgAddressInt,
+    pub price: u128,
+    pub storage_fee: u64,
+    pub cleanup_bounty: u64,
+    pub refund_claim_deadline: u64,
 }
 
 /// The token ledger, in the asset's atomic units.

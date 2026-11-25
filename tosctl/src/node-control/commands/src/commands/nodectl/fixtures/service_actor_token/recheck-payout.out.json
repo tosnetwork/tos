@@ -6,7 +6,8 @@
   "actor": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
   "read_at": {
     "seqno": 4242,
-    "root_hash": "abababababababababababababababababababababababababababababababab"
+    "root_hash": "abababababababababababababababababababababababababababababababab",
+    "gen_utime": 1800000000
   },
   "sender": "0:d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
   "destination": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
@@ -15,7 +16,7 @@
   "body_boc": "te6ccgEBAQEAFgAAKFNUQw8AAAAAAAAAAwAAAAAAAAAL",
   "body_hash": "390548b56aa98bcc51231a89c098278c565aeb7f40ed5460da1bf519029722be",
   "details": {
-    "created_at": "1800000000",
+    "created_at": "1797407999",
     "id": "11",
     "kind": "1",
     "minimum_value": "200000000",
