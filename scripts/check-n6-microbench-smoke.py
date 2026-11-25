@@ -105,6 +105,10 @@ ratios = {
     "lite_verify_21_per_signature_over_single_verify_p95": p95("lite_verify_21")
     / (21 * single_verify),
 }
+# Printed on success too: a shared runner's margin to each bound is the evidence
+# for whether the bound fits there.
+for name, ratio in ratios.items():
+    print(f"N6_MICROBENCH_SMOKE_RATIO {name}={ratio:.3f} bound={timing[name]:.3f}")
 for name, ratio in ratios.items():
     if ratio > timing[name]:
         fail(
