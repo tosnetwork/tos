@@ -1129,6 +1129,18 @@ pub(crate) fn plan_call(
         args.request_hash,
         args.expected_terms_hash,
     )?;
+    // amount_range: the stored sums must stay below 2^120, the Coins range.
+    let coins_limit =
+        NO_TOKEN_CAP.checked_add(1).ok_or_else(|| anyhow::anyhow!("the Coins limit overflows"))?;
+    let fee = u128::from(data.storage_fee);
+    let below_limit = |a: u128, b: u128| a.checked_add(b).is_some_and(|sum| sum < coins_limit);
+    anyhow::ensure!(
+        below_limit(view.token.pending, price)
+            && below_limit(u128::from(view.native.locked_storage_fees), fee)
+            && below_limit(u128::from(view.balance), fee),
+        "the call would take a stored amount past the Coins range (refused with {})",
+        err::AMOUNT_RANGE
+    );
     anyhow::ensure!(
         data.live_count < MAX_LIVE_GLOBAL,
         "the actor holds {MAX_LIVE_GLOBAL} live requests (refused with {})",

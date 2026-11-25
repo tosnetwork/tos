@@ -80,6 +80,7 @@ The checks follow the actor's admission order, so the reason given is the one th
 | 1923 | the actor admits only another caller |
 | — | `get_accepting_tokens` is false (the SDK's `funding_transfer`) |
 | — | the forward is below `storage_fee + min_funding_value` (the SDK's `funding_transfer`) |
+| 1927 | `pending_liability + price`, `locked_storage_fees + storage_fee` or the balance plus `storage_fee` reaches 2^120 |
 | 1907 | `live_count` is at `MAX_LIVE_GLOBAL` |
 | 1908 | `get_caller_live_count(sender)` is at 1,000 |
 | 1909 | no request id is left |
@@ -91,6 +92,21 @@ The checks follow the actor's admission order, so the reason given is the one th
 | — | the sender has no token wallet, or its balance is below the price |
 | — | the bridge parameter and its negative slot are both absent (the bridge wallet would fail) |
 | — | ConfigParam 25 is absent |
+
+**Not prechecked.** Some admission refusals can arise only from deploy data that the SDK's `validate` and the actor's `update_policy` never write, so `call` does not check them:
+
+- 1902 for a zero price or a zero `max_token_liability`;
+- 1903–1906 for a response SLA, refund window, cleanup bounty or storage fee outside its bounds;
+- 1925 for an attestor key that does not match its key id.
+
+The actor still refuses these, and the tokens come back as a funding return.
+
+**Warned, not refused.** These refusals depend on the time of execution, or on a state that has no getter:
+
+- 1914 (`expire` too early), 1919 (a sweep too early), 1938 (`abandon-payout` too early) and 1942 (`recheck-payout` too early) are warned about on stderr when the read block's time is before the threshold;
+- 1943, a balance query younger than its TTL, is neither checked nor warned about.
+
+The actor refuses such a message, and the bounce returns its value.
 
 **The value of the wallet message.** The wallet message to the sender's token wallet must exceed the bridge wallet's own need. That need is `send_tokens`' check:
 

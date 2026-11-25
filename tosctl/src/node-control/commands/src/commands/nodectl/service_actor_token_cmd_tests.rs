@@ -1122,6 +1122,15 @@ fn every_admission_refusal_visible_at_the_read_is_refused_before_signing() {
         },
         "1923",
     );
+    // 1927 comes before the capacity checks, as in the actor.
+    refused(
+        &|v, r, _| {
+            v.token.pending = NO_TOKEN_CAP + 1 - PRICE;
+            v.data.live_count = MAX_LIVE_GLOBAL;
+            r.asset.as_mut().unwrap().max_liability_per_actor = NO_TOKEN_CAP;
+        },
+        "1927",
+    );
     refused(&|v, _, _| v.data.live_count = MAX_LIVE_GLOBAL, "1907");
     refused(&|_, r, _| r.caller_live = MAX_LIVE_PER_CALLER, "1908");
     refused(&|v, _, _| v.data.next_request_id = u64::MAX, "1909");
@@ -1156,6 +1165,13 @@ fn every_admission_refusal_visible_at_the_read_is_refused_before_signing() {
     });
     admitted(&|v, _, _| v.data.rate_limit_per_day = 4);
     admitted(&|_, r, _| r.caller_returned = MAX_RETURNED_PER_CALLER - 1);
+    // One below the Coins range passes 1927 and stops at the exposure cap.
+    let error = error_of(call_with(&|v, r, _| {
+        v.token.pending = NO_TOKEN_CAP - PRICE;
+        r.asset.as_mut().unwrap().max_liability_per_actor = NO_TOKEN_CAP;
+    }));
+    assert!(error.contains("1937") || error.contains("overflows"), "{error}");
+    assert!(!error.contains("1927"), "{error}");
     admitted(&|v, _, _| {
         v.data.rate_limit_per_day = 3;
         v.native.call_day -= 1;
