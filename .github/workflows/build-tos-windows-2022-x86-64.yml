@@ -48,11 +48,13 @@ jobs:
       run: |
         for ($attempt = 1; $attempt -le 3; $attempt++) {
           choco install -y --no-progress ninja nasm
-          if (Test-Path "C:\Program Files\NASM\nasm.exe") { exit 0 }
-          Write-Host "NASM is not installed after attempt $attempt"
+          $nasm = Test-Path "C:\Program Files\NASM\nasm.exe"
+          $ninja = $null -ne (Get-Command ninja -ErrorAction SilentlyContinue)
+          if ($nasm -and $ninja) { exit 0 }
+          Write-Host "after attempt ${attempt}: nasm present=$nasm, ninja present=$ninja"
           if ($attempt -lt 3) { Start-Sleep -Seconds (60 * $attempt) }
         }
-        Write-Error "NASM could not be installed from Chocolatey after 3 attempts"
+        Write-Error "ninja or NASM could not be installed from Chocolatey after 3 attempts"
         exit 1
 
     # Packaged in the same step, because dumpbin, which checks every file's
