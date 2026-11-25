@@ -227,7 +227,7 @@ class BridgeCI(unittest.TestCase):
         step = step.split("\n      - name:", 1)[0]
         fresh = 'test ! -e "$TOKEN_BRIDGE_TRACE_DIR"'
         producer = "cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test token_bridge_sandbox"
-        consumer = 'python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR" --expected-records 6555'
+        consumer = 'python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR" --expected-records 6779'
         for command in (fresh, producer, consumer):
             self.assertIn(command + "\n", step)
         self.assertLess(step.index(fresh), step.index(producer))
