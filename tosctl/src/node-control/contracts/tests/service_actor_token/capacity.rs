@@ -185,8 +185,11 @@ fn worst_state(returns_free: u32) -> World {
         let mut s = SliceData::load_cell(d.policy.clone()).unwrap();
         let mut c = SliceData::load_cell(s.checked_drain_reference().unwrap()).unwrap();
         c.get_next_bits(256 + 256 + 1 + 256).unwrap();
-        let key =
-            if c.get_next_bit().unwrap() { Some(c.checked_drain_reference().unwrap()) } else { None };
+        let key = if c.get_next_bit().unwrap() {
+            Some(c.checked_drain_reference().unwrap())
+        } else {
+            None
+        };
         let mut payouts: Vec<(u64, Cell)> = Vec::new();
         // Live entries, each being swept: the entry is in its payout's undo.
         for i in 0..l {
@@ -329,5 +332,8 @@ fn surplus_payouts_in_flight_are_capped() {
     w.patch(|d| d.surplus_payouts_in_flight = pc::MAX_SURPLUS_PAYOUTS as u8);
     let owner = w.owner.clone();
     let funding = 2 * w.payout_funding();
-    refused_with(&w.op(&owner, Actor::recover_surplus(1, 1).unwrap(), funding), err::PAYOUT_IN_FLIGHT);
+    refused_with(
+        &w.op(&owner, Actor::recover_surplus(1, 1).unwrap(), funding),
+        err::PAYOUT_IN_FLIGHT,
+    );
 }

@@ -841,9 +841,17 @@ fn conformance_vectors_come_from_contract_execution() {
     let buyer = w.user(0);
     let terms = w.terms_cell();
     let forward = w.call_forward();
-    let funding =
-        Actor::funding_transfer(41, PRICE, &w.actor, &buyer, forward, [0xA7; 32], w.terms_hash())
-            .unwrap();
+    let funding = Actor::funding_transfer(
+        41,
+        PRICE,
+        &w.actor,
+        &buyer,
+        forward,
+        &w.funding_prices(),
+        [0xA7; 32],
+        w.terms_hash(),
+    )
+    .unwrap();
     let mut outcomes = serde_json::Map::new();
     let mut log_bodies = |w: &World, start: usize, tag: u32| -> Vec<String> {
         w.actor_txs_since(start)

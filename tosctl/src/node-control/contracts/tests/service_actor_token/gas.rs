@@ -98,7 +98,7 @@ fn no_handler_lets_a_forged_or_underfunded_message_spend_the_actors_tos() {
             small,
         ),
         (
-            "delivered, genuine shape, underfunded",
+            "delivered, forged shape, underfunded",
             stranger.clone(),
             delivered(payout, PRICE, &buyer),
             1_000_000,
@@ -129,7 +129,7 @@ fn no_handler_lets_a_forged_or_underfunded_message_spend_the_actors_tos() {
             small,
         ),
         (
-            "refused, genuine shape, underfunded",
+            "refused, forged shape, underfunded",
             stranger.clone(),
             refused(OP_TRANSFER_REFUSED, payout, PRICE),
             1_000_000,
@@ -347,9 +347,11 @@ fn measure(code: Option<Cell>) -> BTreeMap<String, u64> {
             gas.take(&w, start, &format!("kind {k} way {way}"));
         }
     }
-    // The lifecycle ops and the absent-payout answers.
+    // The lifecycle ops and the absent-payout answers, with ConfigParam 84 at
+    // its 16-entry cap and the actor's master its last entry.
     let mut w = populated(code.clone());
     at_capacity(&mut w);
+    w.recognize_among(15);
     let buyer = w.user(0);
     let owner = w.owner.clone();
     let start = w.net.delivered.len();
@@ -507,4 +509,29 @@ fn pre_accept_gas_at_capacity_is_within_its_constant() {
         w.send(report);
     }
     assert!(2 * most <= actor_constant("PRE_ACCEPT_GAS") as u64, "PRE_ACCEPT_GAS: {most} measured");
+}
+
+#[test]
+fn an_authenticated_underfunded_notification_spends_none_of_the_actors_tos() {
+    // The real wallet path: a buyer's transfer whose notification carries too
+    // little. The actor's balance never falls below its value before the
+    // message, and the log is sent only when the message pays for it.
+    let mut w = World::new();
+    let buyer = w.user(0);
+    w.call(&buyer);
+    let allowance = w.prices().1;
+    for (forward, logged) in [
+        (1u128, false),
+        (allowance / 2, false),
+        (allowance - 1, false),
+        (allowance, true),
+        (w.min_funding() - 1, true),
+    ] {
+        let balance = w.balance(&w.actor);
+        let start = w.fund(&buyer, PRICE, forward, Some(w.token_call([1; 32])));
+        let txs = w.actor_txs_since(start);
+        assert_eq!(txs.len(), 1, "forward {forward}: the notification reached the actor");
+        assert!(w.balance(&w.actor) >= balance, "forward {forward}: the actor paid for it");
+        assert_eq!(!w.funding_logs_since(start).is_empty(), logged, "forward {forward}");
+    }
 }

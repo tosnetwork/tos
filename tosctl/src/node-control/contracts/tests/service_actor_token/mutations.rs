@@ -138,21 +138,17 @@ fn forged_message(w: &World, payout: u64, handler: Handler, forgery: Forgery, ga
     let actor = w.actor.clone();
     // Four fifths of the gas the release spends on this path: reaches the
     // handler's raise, not its end.
-    let underfunded = w
-        .net
-        .bc
-        .config_params()
-        .gas_prices(false)
-        .unwrap()
-        .calc_gas_fee(gas * 4 / 5)
-        .unwrap() as u64;
+    let underfunded =
+        w.net.bc.config_params().gas_prices(false).unwrap().calc_gas_fee(gas * 4 / 5).unwrap()
+            as u64;
     let value = if matches!(forgery, Forgery::Underfunded) { underfunded } else { TOS };
     let wrong = matches!(forgery, Forgery::WrongFields);
     let amount = if wrong { p.amount + 1 } else { p.amount };
     match handler {
         Handler::Delivered => {
             let from = if wrong { p.recipient_wallet.clone() } else { stranger };
-            let recipient: MsgAddressInt = if wrong { w.owner.clone() } else { p.recipient.clone() };
+            let recipient: MsgAddressInt =
+                if wrong { w.owner.clone() } else { p.recipient.clone() };
             let body = cell(|b| {
                 b.append_u32(OP_TRANSFER_DELIVERED).unwrap().append_u64(payout).unwrap();
                 coins(b, amount);
@@ -174,7 +170,9 @@ fn forged_message(w: &World, payout: u64, handler: Handler, forgery: Forgery, ga
                 b.append_u32(OP_REPORTED_TRANSFER).unwrap().append_u64(payout).unwrap();
                 coins(b, amount);
             });
-            let mut m = bounced_copy(&MessageBuilder::internal(&actor, &from, value).body(original).build());
+            let mut m = bounced_copy(
+                &MessageBuilder::internal(&actor, &from, value).body(original).build(),
+            );
             if let Some(h) = m.int_header_mut() {
                 h.value = chain_block::CurrencyCollection::with_coins(value);
             }
@@ -190,7 +188,14 @@ fn exposed(w: &mut World, msg: Message) -> bool {
     let value = value_of(&msg);
     let d = w.execute(msg);
     let o = outcome(&d.tx);
-    println!("  exposed? value {value} gas {} exit {:?} aborted {} balance {} -> {}", o.gas_used, o.exit_code, o.aborted, balance, w.balance(&w.actor));
+    println!(
+        "  exposed? value {value} gas {} exit {:?} aborted {} balance {} -> {}",
+        o.gas_used,
+        o.exit_code,
+        o.aborted,
+        balance,
+        w.balance(&w.actor)
+    );
     w.net.queue.clear();
     w.data_hash() != data || w.balance(&w.actor) < balance
 }
@@ -200,7 +205,12 @@ fn every_outcome_guard_and_the_gas_rule_are_held_by_a_test() {
     let source = std::fs::read_to_string(actor_source()).unwrap();
     let _ = SET_GAS;
     for row in ROWS {
-        assert_eq!(source.matches(row.from).count(), 1, "{}: the guard text is found once", row.name);
+        assert_eq!(
+            source.matches(row.from).count(),
+            1,
+            "{}: the guard text is found once",
+            row.name
+        );
         // The release code refuses the forgery.
         let (mut w, payout) = with_live_payout(None);
         w.checking = false;

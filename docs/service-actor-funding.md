@@ -290,6 +290,14 @@ time from the basechain's gas and forwarding prices, and the getter
 `ADMISSION_GAS_ALLOWANCE`, `RETURN_BUDGET`, `report_tos_amount`,
 `outcome_fee_lock` and the payout op minimum.
 
+The token wallet's own value check also prices ConfigParam 79's
+`wallet_gas_consumption` and `wallet_min_tos_for_storage`. The actor reads them
+at run time, taking the largest of each over every token bridge parameter (79,
+81, 82, 83 and their negative slots). A vote that raises them therefore raises
+the actor's budgets with it and never makes a payout bounce. When no bridge
+parameter parses, the reserve is priced at 0.3 TOS. This is a bridge parameter,
+not recognition, so no payout reads ConfigParam 84.
+
 A payout reserves its `outcome_fee_lock` from the requester's value. Everything
 above the actor's backing and that lock goes to the actor's wallet with the
 reported transfer. What the wallets do not spend returns to the requester as
@@ -306,8 +314,8 @@ transaction and reports the same gas.
 | Constant | Value | Most measured | Bounds |
 | --- | --- | --- | --- |
 | `PRE_ACCEPT_GAS` | 20,000 | 9,675 | an outcome handler up to its `set_gas_limit` |
-| `OUTCOME_HANDLER_GAS` | 240,000 | 116,038 | a whole outcome handler (a refund or sweep refused at R) |
-| `ADMISSION_GAS` | 260,000 | 126,285 | the notification handler |
+| `OUTCOME_HANDLER_GAS` | 240,000 | 116,475 | a whole outcome handler (a refund or sweep refused at R) |
+| `ADMISSION_GAS` | 300,000 | 145,646 | the notification handler, with a 16-entry ConfigParam 84 whose last entry is the actor's master |
 | `ABSENT_REPORT_GAS` | 20,000 | 7,934 | the answer to a report of an absent payout |
 
 A re-reporter sends `rereport_refusal` to the actor's wallet with at least
@@ -317,3 +325,37 @@ legs and two forwardings:
 - S's re-report (`S_REREPORT_GAS`, 19,042);
 - the actor's absent-payout answer (`ABSENT_REPORT_GAS`);
 - S's `clear_refusal` (`CLEAR_REFUSAL_GAS`, 52,000).
+
+### State bound
+
+A basechain account holds at most ConfigParam 43's `max_acc_state_cells`
+(65,536 at genesis). A state over it fails the action phase, and a failed
+notification leaves its tokens unattributed. Every structure that grows is
+therefore capped, and the caps keep the worst state at 80% of the limit
+(52,428 cells).
+
+| Part | Cells each | Count | Cells |
+| --- | --- | --- | --- |
+| base: code, policy, attestor key, route | | | 320 |
+| live entry being swept, with its caller's counter | 9 | `MAX_LIVE_GLOBAL` = 1,500 | 13,500 |
+| returned entry being paid, with its caller's counter | 10 | 1,500 + 1,500 + 512 | 35,120 |
+| funding return in flight | 5 | `MAX_RETURNS_IN_FLIGHT` = 512 | 2,560 |
+| owner payout in flight | 5 | 4 revenue + 4 surplus | 40 |
+| one notification in flight | | | 10 |
+| total | | | 51,550 |
+
+The returned count is `MAX_RETURNED_GLOBAL` plus every live entry and funding
+return, because a payout refused in flight still creates its returned entry.
+That over-counts, since a live entry refused in flight stops being live.
+
+Each dictionary entry adds at most two cells, a leaf and a fork, whatever the
+dictionary's shape. `tests/service_actor_token/capacity.rs` builds this worst
+state with every cell distinct and counts it: 46,975 cells. The same file shows
+three things:
+- a further funding is refused (1907) and returned;
+- with ConfigParam 43 lowered below the bound, the same funding fails;
+- the genesis limit is read from `gen-zerostate.fif`.
+
+At `MAX_RETURNS_IN_FLIGHT` unresolved funding returns, a further refused funding
+makes no return. Its SAF1 names it with payout id 0, and its tokens are surplus.
+Only a flood of refused fundings faster than their returns resolve reaches this.

@@ -565,7 +565,7 @@ fn accepting_tokens_is_false_at_the_global_returned_cap_and_reclassifies_nothing
 }
 
 #[test]
-fn a_sender_off_workchain_0_is_refused_and_its_return_becomes_a_returned_entry() {
+fn a_sender_off_workchain_0_is_refused_and_its_tokens_are_logged_surplus() {
     let mut w = World::new();
     // A wallet whose owner is a masterchain address, holding tokens.
     w.net.model.enabled = false;
@@ -577,8 +577,17 @@ fn a_sender_off_workchain_0_is_refused_and_its_return_becomes_a_returned_entry()
     let actor = w.actor.clone();
     let terms = w.terms_hash();
     let forward = w.call_forward();
-    let body =
-        Actor::funding_transfer(3, PRICE, &actor, &mc_owner, forward, [1; 32], terms).unwrap();
+    let body = Actor::funding_transfer(
+        3,
+        PRICE,
+        &actor,
+        &mc_owner,
+        forward,
+        &w.funding_prices(),
+        [1; 32],
+        terms,
+    )
+    .unwrap();
     let msg = MessageBuilder::internal(&mc_owner, &wallet, forward as u64 + TOS)
         .bounce(true)
         .body(body)
@@ -588,18 +597,12 @@ fn a_sender_off_workchain_0_is_refused_and_its_return_becomes_a_returned_entry()
     let logs = w.funding_logs_since(start);
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].reason as i32, err::INVALID_DESTINATION);
-    // S refuses a destination off workchain 0: the return bounces and the
-    // amount becomes a returned entry for its sender, never surplus.
-    let outcomes = w.outcome_logs_since(start);
-    assert_eq!(outcomes.len(), 1);
-    assert_eq!((outcomes[0].kind, outcomes[0].outcome), (kind::FUNDING_RETURN, outcome::BOUNCED));
-    let entry = w.returned(logs[0].payout_id).expect("a returned entry");
-    assert_eq!((entry.caller, entry.amount, entry.paying), (mc_owner.clone(), PRICE, 0));
-    assert_eq!(w.ledger().returned, PRICE);
-    assert_eq!(w.surplus(), 0);
-    // Its sender, off workchain 0, cannot claim it (1934).
-    let funding = w.payout_funding();
-    let tx =
-        w.op(&mc_owner, Actor::claim_returned(1, logs[0].payout_id, &w.user(0)).unwrap(), funding);
-    refused_with(&tx, err::INVALID_DESTINATION);
+    // No wallet can pay a sender off workchain 0, so no return is made: no
+    // returned entry outside the caps can arise. The tokens are surplus,
+    // recoverable by the owner, and the log names the funding.
+    assert_eq!(logs[0].payout_id, 0, "no funding return");
+    assert!(w.outcome_logs_since(start).is_empty());
+    assert_eq!(w.ledger(), Default::default());
+    assert_eq!(w.native().returned_count, 0);
+    assert_eq!(w.surplus(), PRICE as i128);
 }

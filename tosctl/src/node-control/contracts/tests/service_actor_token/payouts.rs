@@ -732,3 +732,32 @@ fn a_failing_in_handler_send_leaves_the_outcome_committed() {
         }
     }
 }
+
+#[test]
+fn payouts_still_deliver_after_a_bridge_parameter_vote_raises_the_wallet_terms() {
+    let mut w = World::new();
+    let buyer = w.user(0);
+    let id = expired(&mut w, &buyer);
+    let before = w.payout_funding();
+    // A ConfigParam 79 vote raises the wallet's gas and its storage reserve.
+    w.net.wallet_gas = 4 * TOS / 10;
+    w.net.wallet_min_storage = 2 * TOS;
+    w.net.configure();
+    let after = w.payout_funding();
+    assert!(after >= before + 4 * TOS, "the payout budget follows the vote: {before} -> {after}");
+    // The old budget is refused by the actor itself, before any payout.
+    refused_with(
+        &w.op(&buyer, Actor::claim_refund(1, id, &buyer).unwrap(), before),
+        err::INSUFFICIENT_EXECUTION_PAYMENT,
+    );
+    let tokens = w.tokens(&buyer);
+    let start = w.net.delivered.len();
+    succeeded(&w.op(&buyer, Actor::claim_refund(2, id, &buyer).unwrap(), after));
+    let outcomes = w.outcome_logs_since(start);
+    assert_eq!(
+        outcomes[0].outcome,
+        outcome::DELIVERED,
+        "S's value check holds under the new terms"
+    );
+    assert_eq!(w.tokens(&buyer), tokens + PRICE);
+}

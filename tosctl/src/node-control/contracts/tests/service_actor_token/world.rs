@@ -252,6 +252,26 @@ impl World {
         self.set_param_84(Some(assets.to_cell().unwrap()));
     }
 
+    /// ConfigParam 84 with `others` further records, all keyed below the
+    /// actor's master, so the master is the last entry a lookup reaches.
+    pub fn recognize_among(&mut self, others: usize) {
+        let master = account_hash(&self.net.minter());
+        let record = self.asset_record(
+            SettlementAssetStatus::Active,
+            protocol_constants::NO_TOKEN_CAP,
+            None,
+        );
+        let mut assets = SettlementAssets::new();
+        for i in 0..others {
+            let mut key = [0u8; 32];
+            key[31] = i as u8 + 1;
+            assert!(key.as_slice() < master.as_slice(), "the master is the last key");
+            assets.insert(UInt256::from(key), record.clone()).unwrap();
+        }
+        assets.insert(UInt256::from_slice(&master), record).unwrap();
+        self.set_param_84(Some(assets.to_cell().unwrap()));
+    }
+
     /// Sets ConfigParam 84 to `value` exactly, or removes it.
     pub fn set_param_84(&mut self, value: Option<Cell>) {
         let mut config = self.net.bc.config_params().clone();
@@ -355,6 +375,14 @@ impl World {
             r.int_at(4) as u128,
             r.int_at(5) as u128,
         )
+    }
+
+    /// The prices a funding transfer is built against.
+    pub fn funding_prices(&self) -> contracts::service_actor_token::FundingPrices {
+        contracts::service_actor_token::FundingPrices {
+            storage_fee: self.get("get_service_data", vec![]).int_at(4) as u64,
+            min_funding_value: self.min_funding(),
+        }
     }
 
     pub fn min_funding(&self) -> u128 {

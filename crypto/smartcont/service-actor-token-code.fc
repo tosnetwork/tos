@@ -259,7 +259,7 @@ const int MAX_REFUND_CLAIM_WINDOW = 2592000; ;; 30 days
 ;; funding returns refused in flight; the bound counts those as both, which
 ;; over-counts. Each dictionary entry adds at most two cells (a leaf and a fork)
 ;; whatever the dictionary's shape. tests/service_actor_token/capacity.rs builds
-;; this worst state with every cell distinct and counts it: 46,969 cells.
+;; this worst state with every cell distinct and counts it: 46,975 cells.
 const int MAX_LIVE_GLOBAL = 1500;
 const int MAX_LIVE_PER_CALLER = 1000;
 
@@ -307,13 +307,15 @@ const int S_REREPORT_GAS = 19042;
 ;; handler, ABSENT_REPORT_GAS the answer to a report of an absent payout.
 const int PRE_ACCEPT_GAS = 20000;
 const int OUTCOME_HANDLER_GAS = 240000;
-const int ADMISSION_GAS = 260000;
+const int ADMISSION_GAS = 300000;
 const int ABSENT_REPORT_GAS = 20000;
 
-;; What the paying wallet's value check needs beyond the network-priced legs
-;; this actor can compute: ConfigParam 79's wallet_min_tos_for_storage and any
-;; excess of its wallet_gas_consumption over R_GAS_LIMIT's price. Unused value
-;; returns to the requester as R's excess.
+;; The bridge wallet's value check also prices ConfigParam 79's
+;; wallet_gas_consumption and wallet_min_tos_for_storage. They are read at run
+;; time from every token bridge parameter (79, 81, 82, 83, and the negative
+;; slots the bridge falls back to), the largest of each, so a vote raising them
+;; never makes a payout bounce. When none parses, the reserve is priced at this
+;; conservative constant. Unused value returns to the requester as R's excess.
 const int TOKEN_WALLET_ALLOWANCE = 300000000; ;; 0.3 TOS
 
 const int domain::respond = 0x53525032; ;; "SRP2"
@@ -620,23 +622,78 @@ int outcome_fee_lock() inline {
     + 4 * max_fwd_fee());
 }
 
+;; One token bridge parameter's wallet gas and storage reserve, or nothing.
+;; A bridge parameter, not recognition; it never throws.
+(int, int, int) bridge_wallet_terms_of(int id) inline {
+  int ok = false;
+  int gas = 0;
+  int reserve = 0;
+  try {
+    slice s = config_param(id).begin_parse();
+    s~skip_bits(8 + 256 + 256);
+    s~load_dict();
+    s~skip_bits(8);
+    slice prices = s~load_ref().begin_parse();
+    prices~load_coins();
+    prices~load_coins();
+    reserve = prices~load_coins();
+    gas = prices~load_coins();
+    ok = true;
+  } catch (_, _) {
+    ok = false;
+  }
+  return (ok, gas, reserve);
+}
+
+;; The largest wallet gas and storage reserve any token bridge parameter names,
+;; and whether any parsed.
+(int, int, int) bridge_wallet_terms() inline {
+  int any = false;
+  int gas = 0;
+  int reserve = 0;
+  int id = 79;
+  while (id <= 83) {
+    if (id != 80) {
+      (int ok, int g, int r) = bridge_wallet_terms_of(id);
+      if (ok) {
+        any = true;
+        gas = max(gas, g);
+        reserve = max(reserve, r);
+      }
+      (ok, g, r) = bridge_wallet_terms_of(- id);
+      if (ok) {
+        any = true;
+        gas = max(gas, g);
+        reserve = max(reserve, r);
+      }
+    }
+    id += 1;
+  }
+  return (any, gas, reserve);
+}
+
 ;; The value a payout's reported transfer carries beyond its lock: the report,
 ;; this actor's send to S, S's compute, S's message to R with the wallet's
-;; StateInit, R's compute, bounce and action fine at REPORT_MARGIN (as the
-;; wallet's own reported_need), and the allowance for the bridge parameters.
+;; StateInit, R's compute (never less than the bridge's wallet gas), bounce and
+;; action fine at REPORT_MARGIN, and R's storage reserve, as the wallet's own
+;; reported_need prices them.
 int transfer_budget(cell code) inline {
   (int cells, int bits, _, int fits) = compute_data_size?(code, 8192);
   if (~ fits) {
     cells = 8192;
     bits = 8192 * 1023;
   }
+  (int any, int wallet_gas, int reserve) = bridge_wallet_terms();
+  if (~ any) {
+    reserve = TOKEN_WALLET_ALLOWANCE;
+  }
   return report_tos_amount()
     + max_fwd_fee()
     + gas_fee(S_TRANSFER_GAS)
     + get_forward_fee(false, bits + 4 * 1023, cells + 4)
-    + REPORT_MARGIN * (gas_fee(R_GAS_LIMIT) + get_forward_fee(false, 32 + 256, 1)
+    + REPORT_MARGIN * (max(gas_fee(R_GAS_LIMIT), wallet_gas) + get_forward_fee(false, 32 + 256, 1)
       + get_forward_fee(false, 0, 3))
-    + TOKEN_WALLET_ALLOWANCE;
+    + reserve;
 }
 
 ;; RETURN_BUDGET: one funding return's transfer, its outcome lock and its log.
@@ -1231,7 +1288,10 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     if (reported_amount != amount) {
       ;; Query ids are never reused, so this cannot arise; keep both the payout
       ;; and the record, and log it.
-      emit_outcome(query_id, kind, request_id, recipient, reported_amount, outcome::mismatch, 1);
+      ;; Logged only on this message's own value.
+      if (msg_value >= gas_fee(PRE_ACCEPT_GAS) + max_fwd_fee()) {
+        emit_outcome(query_id, kind, request_id, recipient, reported_amount, outcome::mismatch, 1);
+      }
       return ();
     }
     set_gas_limit(OUTCOME_HANDLER_GAS);
@@ -1265,7 +1325,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     int payout_id = 0;
     if (q_purpose == purpose::surplus) {
       surplus = max(balance - q_delivered - others - in_flight, 0);
-      if ((q_amount > 0) & (q_amount <= surplus)) {
+      if ((q_amount > 0) & (q_amount <= surplus) & (next_payout_id < (1 << 64) - 1)) {
         result = 0;
         (payout_id, int lock) = create_payout(kind::surplus, 0, owner, q_requester, q_amount,
           own_wallet, undo_cell(source::none, null()));
@@ -1344,8 +1404,11 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     load_state();
     (slice master, int route_code_hash, cell code) = unpack_route(route_cell);
     if (msg_value < min_funding_value(code)) {
-      ;; Underfunded: nothing is stored and the tokens are surplus.
-      emit_funding(query_id, from, amount, err::insufficient_execution_payment, 0, 1);
+      ;; Underfunded: nothing is stored and the tokens are surplus. The log is
+      ;; sent only when this message's own value pays for it.
+      if (msg_value >= admission_gas_allowance()) {
+        emit_funding(query_id, from, amount, err::insufficient_execution_payment, 0, 1);
+      }
       return ();
     }
 
@@ -1506,9 +1569,11 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     ;; Refused: the tokens go back to their sender as a funding return, paid
     ;; from its RETURN_BUDGET. No cap applies to it.
     if ((amount <= 0) | (next_payout_id >= (1 << 64) - 1)
-        | (returns_in_flight >= MAX_RETURNS_IN_FLIGHT)) {
-      ;; No token to return, no payout id left, or MAX_RETURNS_IN_FLIGHT returns
-      ;; already unresolved: nothing is stored, and the log names the reason.
+        | (returns_in_flight >= MAX_RETURNS_IN_FLIGHT) | (~ canonical_basechain?(from))) {
+      ;; No token to return, no payout id left, MAX_RETURNS_IN_FLIGHT returns
+      ;; already unresolved, or a sender no wallet can pay (off workchain 0, or
+      ;; not canonical): nothing is stored, the tokens are surplus and the log
+      ;; names the funding.
       emit_funding(query_id, from, amount, reason, 0, 1);
       return ();
     }
@@ -1587,6 +1652,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     (slice caller, int price, _, _, int refund_claim_deadline) = unpack_refund(entry);
     throw_unless(err::not_refund_caller, equal_slice_bits(sender, caller));
     throw_unless(err::refund_claim_expired, now() < refund_claim_deadline);
+    throw_unless(err::request_id_overflow, next_payout_id < (1 << 64) - 1);
     throw_unless(err::invalid_destination, valid_destination?(destination));
     throw_unless(err::insufficient_execution_payment, msg_value >= payout_funding(code));
     int backing = get_balance().pair_first() - msg_value;
@@ -1618,6 +1684,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
       (_, _, _, _, int deadline) = unpack_refund(entry);
       refund_claim_deadline = deadline;
     }
+    throw_unless(err::request_id_overflow, next_payout_id < (1 << 64) - 1);
     throw_unless(err::sweep_too_early, now() >= refund_claim_deadline);
     throw_unless(err::insufficient_execution_payment, msg_value >= payout_funding(code));
     int backing = get_balance().pair_first() - msg_value;
@@ -1647,6 +1714,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     (slice caller, int amount, int paying, int return_deadline) = unpack_returned(entry);
     throw_unless(err::not_refund_caller, equal_slice_bits(sender, caller));
     throw_unless(err::payout_in_flight, paying == 0);
+    throw_unless(err::request_id_overflow, next_payout_id < (1 << 64) - 1);
     throw_unless(err::invalid_destination, valid_destination?(destination));
     throw_unless(err::insufficient_execution_payment, msg_value >= payout_funding(code));
     int backing = get_balance().pair_first() - msg_value;
@@ -1668,6 +1736,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     (cell entry, int found) = returned.udict_get_ref?(64, id);
     throw_unless(err::returned_not_found, found);
     (slice caller, int amount, int paying, int return_deadline) = unpack_returned(entry);
+    throw_unless(err::request_id_overflow, next_payout_id < (1 << 64) - 1);
     throw_unless(err::sweep_too_early, now() >= return_deadline);
     throw_unless(err::payout_in_flight, paying == 0);
     throw_unless(err::insufficient_execution_payment, msg_value >= payout_funding(code));
@@ -1785,6 +1854,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     if (token_amount > 0) {
       throw_unless(err::payout_in_flight, revenue_payouts_in_flight < MAX_REVENUE_PAYOUTS);
       throw_unless(err::invalid_destination, canonical_basechain?(owner));
+      throw_unless(err::request_id_overflow, next_payout_id < (1 << 64) - 1);
       throw_unless(err::insufficient_execution_payment, msg_value >= payout_funding(code));
     } else {
       throw_unless(err::insufficient_execution_payment, msg_value >= PAYOUT_GAS_ALLOWANCE);
