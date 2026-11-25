@@ -19,8 +19,8 @@ from root_cells import from_boc
 from transaction_roots import compare, expected_row
 
 NOW = 1_789_437_600
-CONFIG_ROOT = "65331f7022fe3173b4aebad27bef02f8027c25f8643a2265811293130d7bb23b"
-DICTIONARY_ROOT = "d19d22b1bca12dc5a73a04cac7fa3cea7e6eb7bcd059af42803c18659c31cd37"
+CONFIG_ROOT = "42ed2f3c7b43acb2c800cd1579f0ec22113bebf2435743603d26dfae1e21a7bd"
+DICTIONARY_ROOT = "3689c2fa452f2164b57adc2784f90e7fbf166e9d6035e310df8513c90735770e"
 RELEASE = "generated-release-config"
 POST = "generated-post-accept"
 PROFILES = {

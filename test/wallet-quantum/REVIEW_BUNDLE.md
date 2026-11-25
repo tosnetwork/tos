@@ -10,11 +10,9 @@ or an approved production release.
 The frozen configuration uses the public test namespace `0x42` repeated 32
 times, global ID 1, version 16, basechain credit 20,000 and masterchain credit
 10,000. Its ConfigParams SHA-256 (of `config.boc`) is
-`eb7abf8cc485807ea86f75fa9ac1a2b91736ce3bcccc906813eb52e6d51633d1`.
-It was last refreshed for the epoch-6 genesis template: ConfigParam 5 is new
-(blackhole -1:ffff...ffff, no fee burning), ConfigParam 10 adds 5 to the critical
-set, ConfigParam 13 lowers the complaint deposit from 100 to 1 TOS and
-ConfigParam 18 sets basechain rent to 0 per bit and 135 per cell. No other
+`28a0fd4b11f59a50e15a7631a861cd3001644e83d221470c9f7b3082cae5e669`.
+It was last refreshed when the genesis template added ConfigParam 84
+(recognized settlement assets) to the ConfigParam 10 critical set. No other
 parameter changed, and the code identities below did not change.
 The wallet code embeds this namespace; a deployment under another namespace
 needs its own reviewed code/configuration identities.
