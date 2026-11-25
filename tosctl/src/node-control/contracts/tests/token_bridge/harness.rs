@@ -46,6 +46,17 @@ pub const OP_EXCESSES: u32 = 0xd532_76db;
 pub const OP_BURN: u32 = 0x595f_07bc;
 pub const OP_TRANSFER: u32 = 0x0f8a_7ea5;
 pub const OP_INTERNAL_TRANSFER: u32 = 0x178d_4519;
+pub const OP_TRANSFER_NOTIFICATION: u32 = 0x7362_d09c;
+/// The reported transfer and the balance report (op-codes.fc).
+pub const OP_REPORTED_TRANSFER: u32 = 0x5254_5231;
+pub const OP_INTERNAL_TRANSFER_REPORTED: u32 = 0x5254_4931;
+pub const OP_TRANSFER_DELIVERED: u32 = 0x5254_4431;
+pub const OP_TRANSFER_REFUSED: u32 = 0x5254_4631;
+pub const OP_TRANSFER_REREPORTED: u32 = 0x5254_5232;
+pub const OP_REREPORT_REFUSAL: u32 = 0x5254_5131;
+pub const OP_CLEAR_REFUSAL: u32 = 0x5254_4331;
+pub const OP_PROVIDE_BALANCE: u32 = 0x5254_4231;
+pub const OP_TAKE_BALANCE: u32 = 0x5254_4232;
 pub const LOG_BURN: u32 = 0xc047_0ccf;
 
 /// Every settlement opcode, from settlement.fc.
@@ -149,10 +160,11 @@ pub fn contracts_dir() -> PathBuf {
     repo_root().join("crosschain/token-bridge/tvm/contracts")
 }
 
-/// A constant as settlement.fc or errors.fc declares it. The tests read limits,
-/// windows, gas and error codes from the contract sources, never from a copy.
+/// A constant as settlement.fc, errors.fc, op-codes.fc or token-wallet.fc
+/// declares it. The tests read limits, windows, gas, opcodes and error codes
+/// from the contract sources, never from a copy.
 pub fn declared(name: &str) -> i128 {
-    for file in ["settlement.fc", "errors.fc"] {
+    for file in ["settlement.fc", "errors.fc", "op-codes.fc", "token-wallet.fc"] {
         let source = std::fs::read_to_string(contracts_dir().join(file)).expect("a source");
         let prefix = format!("const int {name} = ");
         if let Some(line) = source.lines().find(|line| line.trim_start().starts_with(&prefix)) {
@@ -182,8 +194,60 @@ pub struct Codes {
     pub wallet: Cell,
 }
 
+thread_local! {
+    /// A test-only build this thread's network runs instead of the sources.
+    static CODES_OVERRIDE: std::cell::Cell<Option<&'static Codes>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Makes every network this thread builds run `codes` until the returned
+/// guard is dropped.
+#[must_use]
+pub fn use_codes(codes: &'static Codes) -> CodesGuard {
+    CODES_OVERRIDE.with(|o| o.set(Some(codes)));
+    CodesGuard
+}
+
+pub struct CodesGuard;
+
+impl Drop for CodesGuard {
+    fn drop(&mut self) {
+        CODES_OVERRIDE.with(|o| o.set(None));
+    }
+}
+
+/// The three contracts compiled after `edit` has rewritten the staged wallet
+/// source: a test-only build, never the release.
+pub fn wallet_variant(tag: &str, edit: impl Fn(String) -> String) -> &'static Codes {
+    let stage = std::env::temp_dir().join(format!(
+        "tos-token-bridge-variant-{tag}-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    stage_sources(&stage);
+    let wallet = stage.join("token-wallet.fc");
+    let source = std::fs::read_to_string(&wallet).expect("the staged wallet");
+    let edited = edit(source.clone());
+    assert_ne!(edited, source, "the variant {tag} changes the wallet");
+    std::fs::write(&wallet, edited).expect("the variant wallet");
+    let compile = |name: &str| {
+        tos_sandbox::compile_func(&[stage.join(name)])
+            .unwrap_or_else(|e| panic!("{name} ({tag}) compiles: {e}"))
+    };
+    let codes = Codes {
+        bridge: compile("token-bridge.fc"),
+        minter: compile("token-minter.fc"),
+        wallet: compile("token-wallet.fc"),
+    };
+    let _ = std::fs::remove_dir_all(&stage);
+    Box::leak(Box::new(codes))
+}
+
 /// The three contracts, compiled from source for the Ethereum parameters.
 pub fn codes() -> &'static Codes {
+    if let Some(variant) = CODES_OVERRIDE.with(|o| o.get()) {
+        return variant;
+    }
     static CODES: OnceLock<Codes> = OnceLock::new();
     CODES.get_or_init(|| {
         let stage =
@@ -430,6 +494,9 @@ pub struct Net {
     pub burn_fee: u64,
     pub mint_fee: u64,
     pub state_flags: u8,
+    /// ConfigParam 79's wallet_min_tos_for_storage and wallet_gas_consumption.
+    pub wallet_min_storage: u64,
+    pub wallet_gas: u64,
 }
 
 /// How the bridge account comes to exist.
@@ -532,6 +599,8 @@ impl Net {
             burn_fee: BURN_FEE,
             mint_fee: MINT_FEE,
             state_flags: 0,
+            wallet_min_storage: TOS / 20,
+            wallet_gas: TOS / 50,
         };
         net.configure();
         net.configure_limits(65_536, 65_536);
@@ -577,6 +646,7 @@ impl Net {
         external: Option<[u8; 20]>,
     ) {
         let oracles = self.oracles.address().clone();
+        let (wallet_min_storage, wallet_gas) = (self.wallet_min_storage, self.wallet_gas);
         let param = cell(|b| {
             b.append_u8(0).unwrap();
             b.append_raw(&account_hash(bridge), 256).unwrap();
@@ -586,8 +656,8 @@ impl Net {
             b.checked_append_reference(cell(|p| {
                 coins(p, burn_fee.into());
                 coins(p, mint_fee.into());
-                coins(p, (TOS / 20).into());
-                coins(p, (TOS / 50).into());
+                coins(p, wallet_min_storage.into());
+                coins(p, wallet_gas.into());
                 coins(p, (TOS / 10).into());
                 coins(p, (TOS / 100).into());
             }))
@@ -665,6 +735,53 @@ impl Net {
             ConfigParamEnum::ConfigParam21(prices)
         };
         config.set_config(param).expect("gas prices");
+        self.bc.set_config(config).expect("the chain adopts it");
+    }
+
+    /// ConfigParam 25 (or 24): the basechain's (or masterchain's) forwarding
+    /// prices, scaled by `numerator / denominator`.
+    pub fn scale_forward_prices(&mut self, masterchain: bool, numerator: u64, denominator: u64) {
+        let mut config = self.bc.config_params().clone();
+        let mut prices = config.fwd_prices(masterchain).expect("forward prices");
+        prices.lump_price = prices.lump_price * numerator / denominator;
+        prices.bit_price = prices.bit_price * numerator / denominator;
+        prices.cell_price = prices.cell_price * numerator / denominator;
+        let param = if masterchain {
+            ConfigParamEnum::ConfigParam24(prices)
+        } else {
+            ConfigParamEnum::ConfigParam25(prices)
+        };
+        config.set_config(param).expect("forward prices");
+        self.bc.set_config(config).expect("the chain adopts it");
+    }
+
+    /// ConfigParam 43's outbound message cell limit.
+    pub fn set_max_msg_cells(&mut self, cells: u32) {
+        let mut config = self.bc.config_params().clone();
+        let mut limits = config.size_limits_config().expect("size limits");
+        limits.max_msg_cells = cells;
+        config.set_config(ConfigParamEnum::ConfigParam43(limits)).expect("param 43");
+        self.bc.set_config(config).expect("the chain adopts it");
+    }
+
+    pub fn max_msg_cells(&self) -> u32 {
+        self.bc.config_params().size_limits_config().expect("size limits").max_msg_cells
+    }
+
+    /// ConfigParam 8's capabilities with `capability` set or cleared.
+    pub fn set_capability(&mut self, capability: u64, on: bool) {
+        let mut config = self.bc.config_params().clone();
+        let mut gv = config.get_global_version().expect("param 8");
+        if on {
+            gv.capabilities |= capability;
+        } else {
+            gv.capabilities &= !capability;
+        }
+        config
+            .set_config(ConfigParamEnum::ConfigParam8(chain_block::ConfigParam8 {
+                global_version: gv,
+            }))
+            .expect("param 8");
         self.bc.set_config(config).expect("the chain adopts it");
     }
 
@@ -756,11 +873,40 @@ impl Net {
     /// prices into every budget; a step over it would leave its successor
     /// underfunded at worst-case occupancy.
     fn check_gas(&mut self, addr: &MsgAddressInt, msg: &Message, tx: &Transaction) {
+        let code = self.bc.get_account(addr).and_then(|a| a.get_code());
+        let is_wallet = code.as_ref().is_some_and(|c| c.repr_hash() == codes().wallet.repr_hash());
+        // The reported legs are capped by the wallet's own gas constants, each
+        // twice the most any leg may use.
+        let reported = if crate::model::reported_bounce(msg).is_some() {
+            Some(("S_BOUNCE_GAS", "S bounce"))
+        } else if !msg.int_header().is_some_and(|h| h.bounced)
+            && body_op(msg) == Some(OP_INTERNAL_TRANSFER_REPORTED)
+        {
+            Some(("R_GAS_LIMIT", "R"))
+        } else if !msg.int_header().is_some_and(|h| h.bounced)
+            && body_op(msg) == Some(OP_REPORTED_TRANSFER)
+        {
+            Some(("S_TRANSFER_GAS", "S"))
+        } else {
+            None
+        };
+        if let (true, Some((constant, leg))) = (is_wallet, reported) {
+            let gas = outcome(tx).gas_used;
+            let entry = self.gas_seen.entry((leg, OP_INTERNAL_TRANSFER_REPORTED, 0)).or_insert(0);
+            *entry = (*entry).max(gas);
+            let cap = declared(constant) as u64;
+            if !self.gas_measuring {
+                assert!(
+                    gas * 2 <= cap,
+                    "the {leg} leg used {gas} gas, more than half of its {constant} {cap}"
+                );
+            }
+            return;
+        }
         if msg.int_header().is_some_and(|h| h.bounced) {
             return;
         }
         let Some(op) = body_op(msg) else { return };
-        let code = self.bc.get_account(addr).and_then(|a| a.get_code());
         let Some(code) = code else { return };
         let codes = codes();
         let kind = if code.repr_hash() == codes.bridge.repr_hash() {
@@ -1438,6 +1584,55 @@ impl Net {
             .build()
     }
 
+    /// The value a reported transfer with this body must exceed, from the
+    /// paying wallet's own get-method.
+    pub fn reported_need(&self, owner: &MsgAddressInt, r: &Reported) -> u128 {
+        let wallet = self.wallet_of(owner);
+        self.get(&wallet, "get_reported_transfer_need", vec![StackItem::cell(r.body())]).int_at(0)
+            as u128
+    }
+
+    /// `sender`'s reported transfer through `owner`'s wallet, carrying `value`.
+    pub fn reported_message(
+        &self,
+        sender: &MsgAddressInt,
+        owner: &MsgAddressInt,
+        r: &Reported,
+        value: u128,
+    ) -> Message {
+        let wallet = self.wallet_of(owner);
+        MessageBuilder::internal(sender, &wallet, value as u64).bounce(true).body(r.body()).build()
+    }
+
+    /// An owner-only or permissionless wallet op that carries only a query id.
+    pub fn wallet_query(
+        &self,
+        sender: &MsgAddressInt,
+        owner: &MsgAddressInt,
+        op: u32,
+        query_id: u64,
+        value: u64,
+    ) -> Message {
+        let wallet = self.wallet_of(owner);
+        MessageBuilder::internal(sender, &wallet, value)
+            .bounce(true)
+            .body(cell(|b| {
+                b.append_u32(op).unwrap().append_u64(query_id).unwrap();
+            }))
+            .build()
+    }
+
+    /// The refused amount `owner`'s wallet records for `query_id`, or -1.
+    pub fn refusal(&self, owner: &MsgAddressInt, query_id: u64) -> i128 {
+        let wallet = self.wallet_of(owner);
+        self.get(&wallet, "get_refusal", vec![int_arg(query_id)]).int_at(0)
+    }
+
+    pub fn refusals_count(&self, owner: &MsgAddressInt) -> i128 {
+        let wallet = self.wallet_of(owner);
+        self.try_get(&wallet, "get_refusals_count", vec![]).map(|r| r.int_at(0)).unwrap_or(0)
+    }
+
     /// Removes an account, as the chain does when it deletes one for storage debt.
     pub fn delete_account(&mut self, addr: &MsgAddressInt) {
         let mut model = std::mem::take(&mut self.model);
@@ -1557,7 +1752,8 @@ pub fn trace_dir() -> Option<PathBuf> {
 }
 
 /// The initial state of `owner`'s wallet under `minter`: token-wallet.fc's
-/// layout with an empty settlement half (utils.fc, pack_token_wallet_data).
+/// layout with an empty settlement half and no refusals (utils.fc,
+/// pack_token_wallet_data).
 pub fn wallet_state_init(minter: &MsgAddressInt, owner: &MsgAddressInt) -> StateInit {
     let data = cell(|b| {
         coins(b, 0);
@@ -1571,8 +1767,92 @@ pub fn wallet_state_init(minter: &MsgAddressInt, owner: &MsgAddressInt) -> State
             s.append_bit_zero().unwrap();
         }))
         .unwrap();
+        b.append_raw(&[0u8; 2], 16).unwrap(); // refusals_count
+        b.append_bit_zero().unwrap(); // refusals
     });
     StateInit::with_code_and_data(codes().wallet.clone(), data)
+}
+
+/// A forward payload: in the body after its Either bit, or in a referenced
+/// chain of cells.
+#[derive(Clone, Debug)]
+pub enum Payload {
+    Inline(usize),
+    Chain(usize),
+    /// No Either bit at all: a body the wallet must refuse.
+    Absent,
+}
+
+/// A chain of `cells` cells, each holding a byte and the next.
+pub fn payload_chain(cells: usize) -> Cell {
+    let mut next: Option<Cell> = None;
+    for i in 0..cells {
+        let c = cell(|b| {
+            b.append_u8(i as u8).unwrap();
+            if let Some(n) = next.take() {
+                b.checked_append_reference(n).unwrap();
+            }
+        });
+        next = Some(c);
+    }
+    next.expect("at least one cell")
+}
+
+/// A reported_transfer, as its owner sends it to the paying wallet.
+#[derive(Clone)]
+pub struct Reported {
+    pub query_id: u64,
+    pub amount: u128,
+    /// The destination as written: any MsgAddress, so a test can name one the
+    /// wallet must refuse.
+    pub destination: Cell,
+    pub response: Option<MsgAddressInt>,
+    pub report_tos_amount: u128,
+    pub forward_tos_amount: u128,
+    pub payload: Payload,
+}
+
+impl Reported {
+    pub fn to(owner: &MsgAddressInt, query_id: u64, amount: u128) -> Self {
+        Self {
+            query_id,
+            amount,
+            destination: cell(|b| owner.write_to(b).unwrap()),
+            response: None,
+            report_tos_amount: (TOS / 100).into(),
+            forward_tos_amount: 0,
+            payload: Payload::Inline(0),
+        }
+    }
+
+    pub fn body(&self) -> Cell {
+        cell(|b| {
+            b.append_u32(OP_REPORTED_TRANSFER).unwrap().append_u64(self.query_id).unwrap();
+            coins(b, self.amount);
+            b.append_bytestring(&SliceData::load_cell(self.destination.clone()).unwrap()).unwrap();
+            match &self.response {
+                Some(r) => r.write_to(b).unwrap(),
+                None => {
+                    b.append_bits(0, 2).unwrap();
+                }
+            }
+            coins(b, self.report_tos_amount);
+            coins(b, self.forward_tos_amount);
+            match &self.payload {
+                Payload::Inline(bits) => {
+                    b.append_bit_zero().unwrap();
+                    for i in 0..*bits {
+                        b.append_bit_bool(i % 3 == 0).unwrap();
+                    }
+                }
+                Payload::Chain(cells) => {
+                    b.append_bit_one().unwrap();
+                    b.checked_append_reference(payload_chain(*cells)).unwrap();
+                }
+                Payload::Absent => {}
+            }
+        })
+    }
 }
 
 /// A message from `from` to `to` carrying `body`, as a contract would send it.
