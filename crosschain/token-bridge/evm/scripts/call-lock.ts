@@ -34,10 +34,15 @@ async function main() {
       "the oracles must vote its caps (voteForLockCap) before the first lock"
     );
   }
+  // The bridge charges the caps with the amount it actually receives, which
+  // for a fee-on-transfer token is less than the amount requested. This
+  // script cannot know that amount in advance, so it only warns and leaves
+  // the decision to the bridge.
   if (amount.gt(capState.available)) {
-    throw new Error(
-      `lock of ${amount.toString()} exceeds the ${capState.available.toString()} ` +
-      "the token's lock caps allow now (getLockCapState)"
+    console.warn(
+      `requested ${amount.toString()} is above the ${capState.available.toString()} ` +
+      "the token's lock caps allow now (getLockCapState); the bridge refuses " +
+      "the lock unless the amount it receives is within the caps"
     );
   }
 
