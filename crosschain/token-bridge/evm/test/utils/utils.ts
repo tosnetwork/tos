@@ -215,3 +215,32 @@ export let signNewGeneration = (
   accounts: Account[],
   target: any
 ) => signEncoded(encodeNewGeneration(generation, tosBridge, tosLife, nonce, target), accounts);
+
+export let encodeLockCap = (
+  token: string,
+  total: any,
+  perLock: any,
+  hourly: any,
+  daily: any,
+  nonce: any,
+  target: any
+) => {
+  return ethers.utils.defaultAbiCoder.encode(
+    ["int", "address", "uint256", "address", "uint256", "uint256", "uint256", "uint256", "uint256"],
+    [0xca95, target, CHAIN_ID, token, total, perLock, hourly, daily, nonce]
+  );
+};
+
+export let signLockCap = (
+  token: string,
+  total: any,
+  perLock: any,
+  hourly: any,
+  daily: any,
+  nonce: any,
+  accounts: Account[],
+  target: any
+) => signEncoded(encodeLockCap(token, total, perLock, hourly, daily, nonce, target), accounts);
+
+// The largest cap a vote accepts: the bridge's supply bound, 2 ** 120 - 1.
+export const MAX_LOCK_CAP = ethers.BigNumber.from(2).pow(120).sub(1);
