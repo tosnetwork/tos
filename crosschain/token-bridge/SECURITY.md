@@ -121,7 +121,7 @@ What remains:
 - [ ] Two independent audits covering FunC/Fift, Solidity, deployment/config scripts, compiler output, and oracle protocol.
 - [ ] Property/fuzz tests and adversarial cross-chain state-machine tests.
 - [ ] Formal or machine-checked supply-conservation and replay-safety properties.
-- [ ] Per-token, per-transaction, hourly, and daily exposure caps. The historical upstream contracts do not provide sufficient economic rate limiting by themselves.
+- [ ] Per-token, per-transaction, hourly, and daily exposure caps. The historical upstream contracts do not provide sufficient economic rate limiting by themselves. (EVM side in `Bridge.sol` `lock`, NOTICE item 18; the oracles' own check before voting and the canary values remain.)
 - [ ] Timelocked, publicly observable oracle/governance changes.
 - [ ] HSM-backed keys with separate operators, clouds, regions, RPC providers, and release pipelines.
 - [ ] A documented oracle quorum-loss and key-compromise recovery procedure.

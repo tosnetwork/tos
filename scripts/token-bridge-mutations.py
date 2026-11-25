@@ -936,6 +936,116 @@ MUTATIONS = [
         "failing",
         evm=True,
     ),
+    M(
+        "E07",
+        'a token without caps can be locked',
+        f"{SOL}/Bridge.sol",
+        '        require(lockCaps[token].total != 0, "lock: token has no lock cap");\n',
+        '',
+        'refuses locks before any cap is set',
+        "failing",
+        evm=True,
+    ),
+    M(
+        "E08",
+        'the per-lock cap is not checked',
+        f"{SOL}/Bridge.sol",
+        '        require(received <= cap.perLock, "lock: over the per-lock cap");\n',
+        '',
+        'accepts a lock at the per-lock cap and refuses one unit more',
+        "failing",
+        evm=True,
+    ),
+    M(
+        "E09",
+        'the token cap is not checked',
+        f"{SOL}/Bridge.sol",
+        '        require(newBalance <= cap.total, "lock: over the token cap");\n',
+        '',
+        'accepts a balance at the token cap',
+        "failing",
+        evm=True,
+    ),
+    M(
+        "E10",
+        'the hourly cap is not checked',
+        f"{SOL}/Bridge.sol",
+        '        require(hourUsed <= cap.hourly, "lock: over the hourly cap");\n',
+        '',
+        'fills the hourly bucket exactly',
+        "failing",
+        evm=True,
+    ),
+    M(
+        "E11",
+        'the daily cap is not checked',
+        f"{SOL}/Bridge.sol",
+        '        require(dayUsed <= cap.daily, "lock: over the daily cap");\n',
+        '',
+        'fills the daily bucket across hours',
+        "failing",
+        evm=True,
+    ),
+    M(
+        "E12",
+        "an earlier hour's usage is charged to the current hour",
+        f"{SOL}/Bridge.sol",
+        '        hourUsed = usage.hour == hour ? usage.hourUsed : 0;\n',
+        '        hourUsed = usage.hourUsed;\n',
+        'fills the hourly bucket exactly',
+        "failing",
+        evm=True,
+    ),
+    M(
+        "E13",
+        'the caps count the requested amount, not the received one',
+        f"{SOL}/Bridge.sol",
+        '        _consumeLockCap(token, received, newBalance);\n',
+        '        _consumeLockCap(token, amount, newBalance);\n',
+        'caps a fee-on-transfer token by the received amount',
+        "failing",
+        evm=True,
+    ),
+    M(
+        "E14",
+        'a stale lock cap nonce is accepted',
+        f"{SOL}/Bridge.sol",
+        '        require(nonce > lastLockCapNonce[token], "Stale lock cap nonce");\n',
+        '',
+        'refuses a cap vote with too few',
+        "failing",
+        evm=True,
+    ),
+    M(
+        "E15",
+        'unordered or partly zero caps are accepted',
+        f"{SOL}/Bridge.sol",
+        '            require(perLock <= hourly && hourly <= daily, "Lock caps are not ordered");\n',
+        '',
+        'refuses partly zero, unordered',
+        "failing",
+        evm=True,
+    ),
+    M(
+        "E16",
+        'a cap over the supply bound is truncated instead of refused',
+        f"{SOL}/Bridge.sol",
+        '            require(total <= 2 ** 120 - 1 && daily <= 2 ** 120 - 1, "Lock cap over the supply bound");\n',
+        '',
+        'refuses partly zero, unordered',
+        "failing",
+        evm=True,
+    ),
+    M(
+        "E17",
+        'the lock cap digest omits the token',
+        f"{SOL}/SignatureChecker.sol",
+        'abi.encode(0xCA95, address(this), block.chainid, token, total, perLock, hourly, daily, nonce)',
+        'abi.encode(0xCA95, address(this), block.chainid, total, perLock, hourly, daily, nonce)',
+        'refuses a cap vote with too few',
+        "failing",
+        evm=True,
+    ),
 ]
 
 
@@ -1010,7 +1120,7 @@ def only_named_fails(root: Path, m: Mutation) -> tuple[bool, str]:
 
 def run_hardhat(root: Path, title: str) -> tuple[int, str]:
     env = dict(os.environ, PRIVATE_KEY="0x" + "00" * 31 + "01")
-    cmd = ["npx", "hardhat", "test", "test/Settlement.test.ts", "--no-compile"]
+    cmd = ["npx", "hardhat", "test", "test/Settlement.test.ts", "test/LockCaps.test.ts", "--no-compile"]
     compile_cmd = ["npx", "hardhat", "compile", "--quiet"]
     cwd = root / BRIDGE / "evm"
     c = subprocess.run(compile_cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=900)
@@ -1069,7 +1179,7 @@ def main(mutations: list[Mutation] | None = None) -> int:
             if code != 0 or "failing" in out:
                 print(out[-3000:])
                 raise SystemExit("control: the Hardhat suite fails without any mutation")
-            print("green  Settlement.test.ts")
+            print("green  Settlement.test.ts LockCaps.test.ts")
         for m in chosen:
             target = root / m.file
             text = target.read_text()

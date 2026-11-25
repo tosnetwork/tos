@@ -110,4 +110,17 @@ contract SignatureChecker is TosUtils {
             abi.encode(0xD15A, address(this), block.chainid, isDisable, tokenAddress, nonce)
         );
     }
+
+    function getNewLockCapId(
+        address token,
+        uint256 total,
+        uint256 perLock,
+        uint256 hourly,
+        uint256 daily,
+        uint256 nonce
+    ) public view returns (bytes32 result) {
+        result = keccak256(
+            abi.encode(0xCA95, address(this), block.chainid, token, total, perLock, hourly, daily, nonce)
+        );
+    }
 }

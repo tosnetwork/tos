@@ -472,6 +472,13 @@ def verify_evm_sources() -> None:
             'require(record.status == LOCK_OPEN, "Lock is not refundable")',
             'require(newGeneration == generation + 1, "Generation must follow the current one")',
             'require(nonce > lastGenerationNonce, "Stale generation nonce")',
+            'require(lockCaps[token].total != 0, "lock: token has no lock cap")',
+            "_consumeLockCap(token, received, newBalance);",
+            'require(received <= cap.perLock, "lock: over the per-lock cap")',
+            'require(newBalance <= cap.total, "lock: over the token cap")',
+            'require(hourUsed <= cap.hourly, "lock: over the hourly cap")',
+            'require(dayUsed <= cap.daily, "lock: over the daily cap")',
+            'require(nonce > lastLockCapNonce[token], "Stale lock cap nonce")',
         ],
     )
     require_text(
@@ -485,6 +492,7 @@ def verify_evm_sources() -> None:
             "v == 27 || v == 28",
             "abi.encode(0x4EF0, address(this), block.chainid, n, lockGeneration, locker, token, amount)",
             "abi.encode(0x6E4E, address(this), block.chainid, newGeneration, tosBridge, tosLife, nonce)",
+            "abi.encode(0xCA95, address(this), block.chainid, token, total, perLock, hourly, daily, nonce)",
         ],
     )
     require_text(c / "TosUtils.sol", ["uint256 amount", "bytes32 tx_hash", "uint64 lt"])
