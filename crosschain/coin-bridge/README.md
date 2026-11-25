@@ -9,7 +9,7 @@ The TOS coin bridge carries native TOS to external EVM chains. Coins locked in t
 ### TOS/TVM side (per network under `tvm/ethereum/` and `tvm/bsc/`)
 
 - `bridge_code.fc`: accepts native coins, deducts flat/network/percentage fees, tracks `total_locked`, emits swap logs, and pays out on oracle-approved unlocks. Swaps to the zero external address are refused, the voted network fee has a floor covering the fixed swap receipt, and the oracle-voted migration operation is a closed loop: the old bridge zeroes its counter when the locked funds leave, the new bridge credits its counter when the `0xf00d` transfer arrives, and a rejected transfer bounces back and is locked again.
-- `multisig-code.fc`: `k`-of-`n` oracle voting with signer dedup bitmasks and expiring query IDs; each signed query carries the deployment's `wallet_id` and the network's global id (ConfigParam 19), so queries cannot cross deployments or networks.
+- `multisig-code.fc`: `k`-of-`n` oracle voting with signer dedup bitmasks and expiring query IDs; each signed query carries the deployment's `wallet_id` and the network's global id (ConfigParam 19), so queries cannot cross deployments or networks, and may only send a bounded, bounceable vote to a masterchain bridge listed in the multisig's StateInit. The reward vote pays the address it names.
 - `votes-collector.fc`: collects EVM-compatible oracle signatures for the reverse direction.
 - Shared configuration, message/text utilities, and Fift deployment sources.
 - `tvm/tests/`: TVM-level execution tests that compile the real contracts and drive them through the TOS TVM via a Fift harness.
@@ -30,6 +30,8 @@ No production oracle daemon ships with this directory; oracle operation remains 
 | BNB Smart Chain | 72 | `tvm/bsc/` |
 
 No slot is enabled or populated by this directory.
+
+The oracle multisig address is checked before the parameter vote by recomputing it: `new-multisig.fif`, run with the reviewed wallet id, `k`, owner keys and bridge list, prints the address of the StateInit `create_init_state` builds (no pending queries), and it must equal the one the parameter names; the deployed account must also return the reviewed list from `get_allowed_bridges` and nothing from `get_messages_unsigned`. The allowlist alone does not prove the account clean (`SECURITY.md`).
 
 ## Build and test the TVM contracts
 

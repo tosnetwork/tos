@@ -31,11 +31,12 @@ const privateKey = crypto.createPrivateKey({
 const spki = crypto.createPublicKey(privateKey).export({format: "der", type: "spki"});
 const publicKey = spki.subarray(spki.length - 32);
 
-// The message the query asks the multisig to dispatch: value 0 to DEST.
+// The message the query asks the multisig to dispatch: a bounceable vote of
+// value 0 to DEST, the masterchain bridge the multisig's allowlist names.
 const innerMsg = new CellWriter()
     .u(0x18, 6)              // internal, ihr disabled, bounceable, source none
     .u(4, 3)                 // std address, no anycast
-    .i(0, 8)                 // workchain
+    .i(-1, 8)                // workchain
     .u(BigInt(DEST), 256)
     .u(0, 4)                 // value 0
     .u(0, 107);              // fees, lt, created_at, no state init, body in place
@@ -43,7 +44,7 @@ const innerMsg = new CellWriter()
 const innerMsgJson = [
     "uint6", 0x18,
     "uint3", 4,
-    "int8", 0,
+    "int8", -1,
     "uint256", DEST,
     "coins", 0,
     "uint107", 0,
@@ -79,6 +80,9 @@ const ownerInfos = {
     "0": ["uint256", "0x" + publicKey.toString("hex"), "uint8", 0],
 };
 
+// The bridges the multisig may send votes to (HashmapE 256 of empty values).
+const allowed = {[DEST]: []};
+
 funcer({}, {
     path: "./func/",
     fc: ["stdlib.fc", "multisig-code.fc"],
@@ -93,6 +97,7 @@ funcer({}, {
         "uint8->any", ownerInfos,
         "uint1", 0,          // no pending queries
         "uint32", 0,         // lock_until
+        "uint256->any", allowed,
     ],
     in_msgs: [
         {
@@ -118,11 +123,12 @@ funcer({}, {
                 "uint8->any", ownerInfos,
                 "uint64->any", {[QUERY_ID.toString()]: ["uint1", 0]},
                 "uint32", 0,
+                "uint256->any", allowed,
             ],
             out_msgs: [
                 {
                     type: "Internal",
-                    to: `0:${DEST.slice(2)}`,
+                    to: `-1:${DEST.slice(2)}`,
                     amount: 0,
                     sendMode: 0,
                     stateInit: false,

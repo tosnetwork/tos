@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mutation controls for the token bridge settlement protocol.
+"""Mutation controls for the token bridge settlement protocol and its oracle multisig.
 
 Each control removes or weakens one guard in a copy of the sources and runs
 the test that names it. A control counts as red only when the test fails for
@@ -32,6 +32,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BRIDGE = "crosschain/token-bridge"
+COIN = "crosschain/coin-bridge"
 C = f"{BRIDGE}/tvm/contracts"
 SOL = f"{BRIDGE}/evm/contracts"
 
@@ -47,9 +48,81 @@ class Mutation:
     reason: str  # text the failure must contain
     evm: bool = False
     survivor: str = ""  # why this control cannot go red here, if it cannot
+    target: str = "token_bridge_sandbox"  # the sandbox test binary
+    # A filter naming the sibling tests that must all stay green under this
+    # mutation: the control is red only when the named test is the one that
+    # fails among them.
+    exclusive: str = ""
 
 
 M = Mutation
+
+# The guards of the oracle multisig (multisig.fc, check_proposed_query). Each
+# has one test in bridge_multisig_sandbox, a quorum query that violates only
+# that guard, and removing the guard turns only that test red among the
+# guard tests.
+MULTISIG_GUARDS = [
+    (
+        "does not check the destination allowlist",
+        "  throw_unless(46, allowed_bridge?(dest, allowed));\n",
+        "",
+        "guard_destination_",
+        "expected exit code 46",
+    ),
+    (
+        "does not check the bounce flag",
+        "  throw_unless(47, (flags & 11) == 2);\n",
+        "",
+        "guard_non_bounceable_",
+        "expected exit code 47",
+    ),
+    (
+        "does not check the send mode",
+        "  throw_unless(48, mode < 4);\n",
+        "",
+        "guard_send_mode_",
+        "expected exit code 48",
+    ),
+    (
+        "does not check the value bound",
+        "  throw_unless(49, (value <= MAX_VOTE_VALUE) & (extra == 0));\n",
+        "",
+        "guard_value_",
+        "expected exit code 49",
+    ),
+    (
+        "does not check the StateInit refusal",
+        "  throw_if(50, rest~load_uint(1));\n",
+        "",
+        "guard_state_init_",
+        "expected exit code 50",
+    ),
+    (
+        "checks only the bounce bit, not the message kind or the bounced bit",
+        "  throw_unless(47, (flags & 11) == 2);\n",
+        "  throw_unless(47, (flags & 2) == 2);\n",
+        "guard_non_bounceable_",
+        "expected exit code 47",
+    ),
+]
+
+
+def multisig_controls(prefix: str, file: str) -> list[Mutation]:
+    return [
+        Mutation(
+            f"{prefix}{i:02d}",
+            f"the multisig {what}",
+            file,
+            old,
+            new,
+            test,
+            reason,
+            target="bridge_multisig_sandbox",
+            exclusive="guard_",
+        )
+        for i, (what, old, new, test, reason) in enumerate(MULTISIG_GUARDS, 1)
+    ]
+
 
 MUTATIONS = [
     M(
@@ -800,6 +873,8 @@ MUTATIONS = [
         "t_r16_",
         "R's balance paid for a forged message",
     ),
+    # The oracle multisig: S01 to S06.
+    *multisig_controls("S", f"{C}/multisig.fc"),
     # EVM
     M(
         "E01",
@@ -868,6 +943,8 @@ def scratch_root() -> Path:
     root = Path(tempfile.mkdtemp(prefix="token-bridge-mutations-"))
     for sub in ("tvm", "tests"):
         shutil.copytree(ROOT / BRIDGE / sub, root / BRIDGE / sub)
+    # bridge_multisig_sandbox compiles every bridge multisig, coin ones too.
+    shutil.copytree(ROOT / COIN / "tvm", root / COIN / "tvm")
     evm = root / BRIDGE / "evm"
     shutil.copytree(
         ROOT / BRIDGE / "evm",
@@ -887,7 +964,7 @@ def restore(root: Path, rel: str) -> None:
     shutil.copyfile(ROOT / rel, root / rel)
 
 
-def run_sandbox(root: Path, test: str) -> tuple[int, str]:
+def run_sandbox(root: Path, test: str, target: str = "token_bridge_sandbox") -> tuple[int, str]:
     env = dict(os.environ, TOS_ROOT=str(root))
     env.setdefault("FUNC_PATH", str(ROOT / "build/crypto/func"))
     env.setdefault("FIFT_PATH", str(ROOT / "build/crypto/fift"))
@@ -901,7 +978,7 @@ def run_sandbox(root: Path, test: str) -> tuple[int, str]:
         "contracts",
         "--locked",
         "--test",
-        "token_bridge_sandbox",
+        target,
         test,
     ]
     p = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=3000)
@@ -909,6 +986,26 @@ def run_sandbox(root: Path, test: str) -> tuple[int, str]:
     if "running 0 tests" in out or " 0 passed; 0 failed" in out:
         raise SystemExit(f"the filter {test!r} selects no test")
     return p.returncode, out
+
+
+def failed_tests(out: str) -> set[str]:
+    """The tests a cargo test run reports as failed."""
+    return {
+        line[len("test ") : -len(" ... FAILED")]
+        for line in out.splitlines()
+        if line.startswith("test ") and line.endswith(" ... FAILED")
+    }
+
+
+def only_named_fails(root: Path, m: Mutation) -> tuple[bool, str]:
+    """Under the mutation, every sibling test passes but the named one."""
+    _, out = run_sandbox(root, m.exclusive, m.target)
+    failed = failed_tests(out)
+    named = {t for t in failed if m.test in t}
+    others = failed - named
+    if others or not named:
+        return False, f"siblings that failed: {sorted(failed)}"
+    return True, ""
 
 
 def run_hardhat(root: Path, title: str) -> tuple[int, str]:
@@ -926,7 +1023,9 @@ def run_hardhat(root: Path, title: str) -> tuple[int, str]:
     return (1 if failed else 0), out
 
 
-def main() -> int:
+def main(mutations: list[Mutation] | None = None) -> int:
+    """Runs `mutations` (this bridge's when not given) under the command line's options."""
+    all_mutations = MUTATIONS if mutations is None else mutations
     ap = argparse.ArgumentParser()
     ap.add_argument("--only")
     ap.add_argument("--results")
@@ -941,10 +1040,10 @@ def main() -> int:
     ap.add_argument("--show", action="store_true", help="print each mutated run's output")
     ap.add_argument("--no-controls", action="store_true", help="skip the unmutated runs")
     args = ap.parse_args()
-    chosen = MUTATIONS
+    chosen = all_mutations
     if args.only:
         ids = set(args.only.split(","))
-        chosen = [m for m in MUTATIONS if m.id in ids]
+        chosen = [m for m in all_mutations if m.id in ids]
     if args.skip_evm:
         chosen = [m for m in chosen if not m.evm]
     if args.evm_only:
@@ -953,12 +1052,18 @@ def main() -> int:
     results = []
     try:
         # positive controls: every named test passes unmutated
-        for test in sorted({m.test for m in chosen if not m.evm} if not args.no_controls else []):
-            code, out = run_sandbox(root, test)
+        unmutated = set()
+        for m in chosen:
+            if not m.evm:
+                unmutated.add((m.target, m.test))
+                if m.exclusive:
+                    unmutated.add((m.target, m.exclusive))
+        for target, test in sorted(unmutated if not args.no_controls else []):
+            code, out = run_sandbox(root, test, target)
             if code != 0:
                 print(out[-3000:])
-                raise SystemExit(f"control: {test} fails without any mutation")
-            print(f"green  {test}", flush=True)
+                raise SystemExit(f"control: {target} {test} fails without any mutation")
+            print(f"green  {target} {test}", flush=True)
         if any(m.evm for m in chosen) and not args.no_controls:
             code, out = run_hardhat(root, "")
             if code != 0 or "failing" in out:
@@ -972,11 +1077,17 @@ def main() -> int:
             if count != 1:
                 raise SystemExit(f"{m.id}: the guard text occurs {count} times in {m.file}")
             target.write_text(text.replace(m.old, m.new))
+            note = ""
             try:
-                code, out = run_hardhat(root, m.test) if m.evm else run_sandbox(root, m.test)
+                if m.evm:
+                    code, out = run_hardhat(root, m.test)
+                else:
+                    code, out = run_sandbox(root, m.test, m.target)
+                red = code != 0 and m.reason in out
+                if red and m.exclusive:
+                    red, note = only_named_fails(root, m)
             finally:
                 restore(root, m.file)
-            red = code != 0 and m.reason in out
             verdict = (
                 "red"
                 if red
@@ -993,10 +1104,13 @@ def main() -> int:
                 ),
                 "",
             )
+            if note:
+                line = note
             results.append(
                 {
                     "id": m.id,
                     "what": m.what,
+                    "target": m.target,
                     "test": m.test,
                     "verdict": verdict,
                     "exit": code,

@@ -45,6 +45,9 @@ on:
       - "tosctl/src/block/**"
       # The token-bridge sandbox compiles these sources when it runs.
       - "crosschain/token-bridge/tvm/**"
+      # The bridge multisig sandbox compiles the coin multisigs and bridges too.
+      - "crosschain/coin-bridge/tvm/**"
+      - "scripts/coin-bridge-mutations.py"
       - "scripts/replay-token-bridge-trace.py"
       - "test/auth-extensions/cells.py"
       - "test/auth-extensions/native.py"
@@ -118,6 +121,9 @@ on:
       - "tosctl/src/block/**"
       # The token-bridge sandbox compiles these sources when it runs.
       - "crosschain/token-bridge/tvm/**"
+      # The bridge multisig sandbox compiles the coin multisigs and bridges too.
+      - "crosschain/coin-bridge/tvm/**"
+      - "scripts/coin-bridge-mutations.py"
       - "scripts/replay-token-bridge-trace.py"
       - "test/auth-extensions/cells.py"
       - "test/auth-extensions/native.py"
@@ -544,7 +550,7 @@ jobs:
           cmake --build build --target emulator -j"$(nproc)"
           test ! -e "$TOKEN_BRIDGE_TRACE_DIR"
           cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test token_bridge_sandbox
-          python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR" --expected-records 6536
+          python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR" --expected-records 6555
 
       # From version 15 a failed action phase also pays the fines of the
       # messages it already sent; both executors must charge them identically.
@@ -589,6 +595,14 @@ jobs:
           FUNC_PATH: ${{ github.workspace }}/build/crypto/func
           FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
         run: python3 scripts/token-bridge-mutations.py --tvm-only --results token-bridge-mutations.json
+
+      # The coin bridge's oracle multisigs and its reward vote, the same way:
+      # each guard removed in a copy turns its own test red, and only that one.
+      - name: Every coin-bridge multisig guard is held by a test
+        env:
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+        run: python3 scripts/coin-bridge-mutations.py --results coin-bridge-mutations.json
 
       - name: Frozen BOCs match their sources
         run: git diff --exit-code

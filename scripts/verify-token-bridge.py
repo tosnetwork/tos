@@ -63,6 +63,44 @@ def require_helper_copy(directory: Path) -> None:
         )
 
 
+# What a quorum may make the oracle multisig send: a bounceable vote, in send
+# mode 0 to 3, of at most MAX_VOTE_VALUE, with no StateInit, to a masterchain
+# bridge its own StateInit lists. One check site, every guard its own code.
+MULTISIG_GUARDS = [
+    "  check_proposed_query(in_msg, allowed);",
+    "  throw_unless(46, allowed_bridge?(dest, allowed));",
+    "  throw_unless(47, (flags & 11) == 2);",
+    "  throw_unless(48, mode < 4);",
+    "  throw_unless(49, (value <= MAX_VOTE_VALUE) & (extra == 0));",
+    "  throw_if(50, rest~load_uint(1));",
+    "  throw_if(51, allowed.dict_empty?());",
+    "const int MAX_VOTE_VALUE = 10000000000;",
+    "cell get_allowed_bridges() method_id",
+]
+
+# new-multisig.fif takes the allowlist, refuses an empty, non-masterchain or
+# repeated entry, and has no time-lock argument.
+MULTISIG_SCRIPT = [
+    "$# 6 < ' usage if",
+    "swap -1 <> {",
+    "256 udict!+ not {",
+    "allowed\n",
+]
+
+
+def require_multisig_never_reads_config(path: Path) -> None:
+    """The multisig's allowlist is its own: a missing or changed ConfigParam cannot widen it."""
+    # A source check only; scripts/build-token-bridge.sh also refuses any
+    # configuration instruction in the compiled multisig.
+    text = path.read_text(encoding="utf-8")
+    includes = re.findall(r'#include\s+"([^"]+)"', text)
+    if "config_param" in text or any("config" in name for name in includes):
+        raise AssertionError(f"{path.relative_to(REPO_ROOT)} must not read ConfigParam")
+    script = (path.parent / "new-multisig.fif").read_text(encoding="utf-8")
+    if "spend-delay" in script:
+        raise AssertionError("new-multisig.fif must not take a time-lock argument")
+
+
 def verify_required_sources() -> None:
     missing = [rel for rel in REQUIRED_SOURCES if not (PROJECT / rel).is_file()]
     if missing:
@@ -182,8 +220,11 @@ def verify_tvm_sources() -> None:
             "  require_strong_owner_key(public_key);",
             "    require_strong_owner_key(key);",
             "  require_strong_owner_key(root_key);",
+            *MULTISIG_GUARDS,
         ],
     )
+    require_multisig_never_reads_config(c / "multisig.fc")
+    require_text(c / "new-multisig.fif", MULTISIG_SCRIPT)
     require_helper_copy(c)
     require_text(
         c / "votes-collector.fc",

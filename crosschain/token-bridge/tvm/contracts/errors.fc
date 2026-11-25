@@ -43,10 +43,10 @@ const int error::wrong_external_chain_id = 410;
 const int error::wrong_sender_workchain = 413;
 const int error::mint_fee_not_matched = 407;
 const int error::mint_fee_less_forward = 399;
-;; A non-zero forward amount is the only action the receiving wallet can
-;; fail on, and that failure is not reconcilable across the mint's three
-;; transactions. The bridge refuses such a swap outright.
-const int error::forward_amount_not_zero = 398;
+;; Codes 390, 391 and 393 to 395 were declared for an earlier completion
+;; design and 398 for a swap forward amount the vote no longer carries;
+;; nothing threw them, and they are removed and left unassigned (NOTICE.md
+;; item 14). 392 was never a token-bridge code.
 ;; A burn names a destination on the counterparty chain. The zero address is
 ;; not one: the ERC-20 transfer that would release the tokens there fails, and
 ;; by then the tokens on this side are already destroyed. Refusing here is the
@@ -55,12 +55,7 @@ const int error::zero_destination = 397;
 ;; A mint whose fee nobody paid. pay_swap records the payment and this is the
 ;; check that spends it, so the multisig never mints out of its own balance.
 const int error::swap_not_paid = 396;
-;; Completion of mints and burns; see settlement.fc.
-const int error::credit_underfunded = 395;
-const int error::burn_underfunded = 394;
-const int error::nothing_to_retry = 393;
-const int error::mint_ids_exhausted = 391;
-const int error::burn_ids_exhausted = 390;
+;; A wallet balance never exceeds the wrapped token's supply bound, 2^120 - 1.
 const int error::supply_bound = 389;
 
 const int error::no_bridge_config = 666;
