@@ -11,6 +11,34 @@ int get_global_id() asm "GLOBALID";
 ;; signature is checked, as root and as co-signer.
 #include "strong-ed25519-key.fc";
 
+;; What a quorum may make this multisig send. Every oracle flow is a
+;; bounceable vote to a bridge on the masterchain, so a query may carry
+;; nothing else:
+;;
+;;   46  the destination is a masterchain address in the allowlist;
+;;   47  the message is internal, bounceable and not marked bounced;
+;;   48  the send mode is 0 to 3: no +16, +32, +64 or +128, so a query can
+;;       neither carry the inbound value nor the balance nor destroy the
+;;       account;
+;;   49  the value is at most MAX_VOTE_VALUE, with no extra currencies;
+;;   50  the message deploys nothing (no StateInit).
+;;
+;; The allowlist is fixed in the StateInit, so the multisig's address commits
+;; to it, and it is never read from ConfigParam: a replaced bridge that still
+;; finishes old work (a migration vote sent to the old bridge) is listed
+;; explicitly, and a missing or changed configuration can never widen what
+;; the multisig may do. create_init_state refuses an empty allowlist (exit
+;; code 51).
+;;
+;; MAX_VOTE_VALUE bounds what one executed query can move out of this
+;; account. A vote pays only for its own execution at the bridge: at most
+;; 0.005 TOS for any operation at current prices. The margin absorbs gas
+;; price rises, since changing this bound means a new multisig, and covers
+;; the token bridge's multisig too, whose costliest vote needs 0.052 TOS.
+;; bridge_multisig_sandbox runs every coin vote on a quarter of it
+;; (max_vote_value_covers_every_coin_vote_with_margin).
+const int MAX_VOTE_VALUE = 10000000000; ;; 10 TOS
+
 ;; The inline prefilter clears almost every real key; only the rare key it cannot
 ;; clear pays for the full check.
 () require_strong_owner_key(int public_key) impure inline {
@@ -29,14 +57,17 @@ int get_global_id() asm "GLOBALID";
   } until (~ found);
 }
 
+;; lock_until is kept so the layout stays stable, and is inert: nothing reads
+;; it. It was a launch time-lock; activation is already gated by the
+;; validators' ConfigParam vote that names this multisig.
 _ unpack_state() inline_ref {
   var ds = begin_parse(get_data());
-  var res = (ds~load_uint(32), ds~load_uint(8), ds~load_uint(8), ds~load_uint(64), ds~load_dict(), ds~load_dict(), ds~load_uint(32));
+  var res = (ds~load_uint(32), ds~load_uint(8), ds~load_uint(8), ds~load_uint(64), ds~load_dict(), ds~load_dict(), ds~load_uint(32), ds~load_dict());
   ds.end_parse();
   return res;
 }
 
-_ pack_state(cell pending_queries, cell owner_infos, int last_cleaned, int k, int n, int wallet_id, int lock_until) inline_ref {
+_ pack_state(cell pending_queries, cell owner_infos, int last_cleaned, int k, int n, int wallet_id, int lock_until, cell allowed) inline_ref {
   return begin_cell()
     .store_uint(wallet_id, 32)
     .store_uint(n, 8)
@@ -45,6 +76,7 @@ _ pack_state(cell pending_queries, cell owner_infos, int last_cleaned, int k, in
     .store_dict(owner_infos)
     .store_dict(pending_queries)
     .store_uint(lock_until,32)
+    .store_dict(allowed)
   .end_cell();
 }
 
@@ -84,30 +116,65 @@ _ unpack_owner_info(slice cs) inline_ref {
   return (cnt, cnt_bits);
 }
 
-(int, cell, int, int) parse_msg(slice in_msg) inline_ref {
+;; The send mode, the message, and the fields of an internal message's header
+;; the guards read: the destination, the value, and the rest of the header
+;; from the extra-currency bit on.
+(int, cell, slice, int, slice) parse_msg(slice in_msg) inline_ref {
   int mode = in_msg~load_uint(8);
   var msg = in_msg~load_ref();
   var msg' = msg.begin_parse();
-  msg'~load_uint(4); ;; flags
+  msg'~skip_bits(4); ;; int_msg_info$0 ihr_disabled bounce bounced
   msg'~load_msg_addr(); ;; src
-  (int wc, int addr) = parse_std_addr(msg'~load_msg_addr()); ;; dest
-  return (mode, msg, wc, addr);
+  slice dest = msg'~load_msg_addr();
+  int value = msg'~load_coins();
+  return (mode, msg, dest, value, msg');
 }
 
-() check_proposed_query(slice in_msg) impure inline {
+;; True only for addr_std$10, no anycast, workchain -1, hash in the allowlist.
+int allowed_bridge?(slice dest, cell allowed) inline {
+  if (dest.slice_bits() != 3 + 8 + 256) {
+    return false;
+  }
+  int kind = dest~load_uint(3);
+  int wc = dest~load_int(8);
+  int hash = dest~load_uint(256);
+  if ((kind != 4) | (wc != -1)) {
+    return false;
+  }
+  (_, int listed) = allowed.udict_get?(256, hash);
+  return listed;
+}
+
+;; The only place a query's message is inspected. In a multisig built by
+;; create_init_state, which starts with no pending queries, a pending query
+;; is approved only with a byte-identical copy (exit code 36), so what
+;; executes is always what passed here. A hand-built StateInit can hold
+;; pending queries that never did; it has another address, which is why a
+;; deployment is checked against the address new-multisig.fif computes.
+() check_proposed_query(slice in_msg, cell allowed) impure inline {
   throw_unless(43, (slice_refs(in_msg) == 1) & (slice_bits(in_msg) == 8));
-  (_, _, int wc, _) = parse_msg(in_msg);
-  wc~impure_touch();
+  ;; The flags first: any other kind of message has another header layout.
+  int flags = in_msg.preload_ref().begin_parse().preload_uint(4);
+  throw_unless(47, (flags & 11) == 2);
+  (int mode, _, slice dest, int value, slice rest) = parse_msg(in_msg);
+  throw_unless(46, allowed_bridge?(dest, allowed));
+  throw_unless(48, mode < 4);
+  int extra = rest~load_uint(1);
+  throw_unless(49, (value <= MAX_VOTE_VALUE) & (extra == 0));
+  rest~load_coins(); ;; ihr_fee
+  rest~load_coins(); ;; fwd_fee
+  rest~skip_bits(64 + 32); ;; created_lt, created_at
+  throw_if(50, rest~load_uint(1));
 }
 
-(int, int, int, slice) unpack_query_data(slice in_msg, int n, slice query, var found?, int root_i) inline_ref {
+(int, int, int, slice) unpack_query_data(slice in_msg, int n, slice query, var found?, int root_i, cell allowed) inline_ref {
   if (found?) {
     throw_unless(35, query~load_int(1));
     (int creator_i, int cnt, int cnt_bits, slice msg) = (query~load_uint(8), query~load_uint(8), query~load_uint(n), query);
     throw_unless(36, slice_hash(msg) == slice_hash(in_msg));
     return (creator_i, cnt, cnt_bits, msg);
   }
-  check_proposed_query(in_msg);
+  check_proposed_query(in_msg, allowed);
 
   return (root_i, 0, 0, in_msg);
 }
@@ -121,7 +188,7 @@ _ unpack_owner_info(slice cs) inline_ref {
 
 (cell, cell) update_pending_queries(cell pending_queries, cell owner_infos, slice msg, int query_id, int creator_i, int cnt, int cnt_bits, int n, int k) impure inline_ref {
   if (cnt >= k) {
-    var (mode, msg', wc, addr) = parse_msg(msg);
+    (int mode, cell msg', _, _, _) = parse_msg(msg);
     send_raw_message(msg', mode);
     pending_queries~udict_set_builder(64, query_id, begin_cell().store_int(0, 1));
     owner_infos~dec_flood(creator_i);
@@ -149,10 +216,10 @@ _ unpack_owner_info(slice cs) inline_ref {
 
 () try_init() impure inline_ref {
   ;; first query without signatures is always accepted
-  (int wallet_id, int n, int k, int last_cleaned, cell owner_infos, cell pending_queries, int lock_until) = unpack_state();
+  (int wallet_id, int n, int k, int last_cleaned, cell owner_infos, cell pending_queries, int lock_until, cell allowed) = unpack_state();
   throw_if(37, last_cleaned);
   accept_message();
-  set_data(pack_state(pending_queries, owner_infos, 1, k, n, wallet_id, lock_until));
+  set_data(pack_state(pending_queries, owner_infos, 1, k, n, wallet_id, lock_until, allowed));
 }
 
 () recv_external() {
@@ -169,7 +236,7 @@ _ unpack_owner_info(slice cs) inline_ref {
   int root_hash = slice_hash(in_msg);
   int root_i = in_msg~load_uint(8);
 
-  (int wallet_id, int n, int k, int last_cleaned, cell owner_infos, cell pending_queries, int lock_until) = unpack_state();
+  (int wallet_id, int n, int k, int last_cleaned, cell owner_infos, cell pending_queries, int lock_until, cell allowed) = unpack_state();
 
   last_cleaned -= last_cleaned == 0;
 
@@ -210,7 +277,7 @@ _ unpack_owner_info(slice cs) inline_ref {
   var bound = (now() << 32);
   throw_if(33, query_id < bound);
 
-  (int creator_i, int cnt, int cnt_bits, slice msg) = unpack_query_data(in_msg, n, query, found?, root_i);
+  (int creator_i, int cnt, int cnt_bits, slice msg) = unpack_query_data(in_msg, n, query, found?, root_i, allowed);
   int mask = 1 << root_i;
   throw_if(34, cnt_bits & mask);
   cnt_bits |= mask;
@@ -223,7 +290,7 @@ _ unpack_owner_info(slice cs) inline_ref {
   }
 
   (pending_queries, owner_infos) = update_pending_queries(pending_queries, owner_infos, msg, query_id, creator_i, cnt, cnt_bits, n, k);
-  set_data(pack_state(pending_queries, owner_infos, last_cleaned, k, n, wallet_id, lock_until));
+  set_data(pack_state(pending_queries, owner_infos, last_cleaned, k, n, wallet_id, lock_until, allowed));
 
   int need_save = 0;
   ifnot (cell_null?(signatures) | (cnt >= k)) {
@@ -234,7 +301,6 @@ _ unpack_owner_info(slice cs) inline_ref {
   }
 
   bound -= (64 << 32);   ;; clean up records expired more than 64 seconds ago
-  int old_last_cleaned = last_cleaned;
   do {
     var (pending_queries', i, query, f) = pending_queries.udict_delete_get_min(64);
     f~touch();
@@ -252,7 +318,7 @@ _ unpack_owner_info(slice cs) inline_ref {
   } until (~ f);
 
   if (need_save) {
-    set_data(pack_state(pending_queries, owner_infos, last_cleaned, k, n, wallet_id, lock_until));
+    set_data(pack_state(pending_queries, owner_infos, last_cleaned, k, n, wallet_id, lock_until, allowed));
   }
 
   var cs = in_msg_cell.begin_parse();
@@ -270,7 +336,7 @@ _ unpack_owner_info(slice cs) inline_ref {
 ;; Get methods
 ;; returns -1 for processed queries, 0 for unprocessed, 1 for unknown (forgotten)
 (int, int) get_query_state(int query_id) method_id {
-  (_, int n, _, int last_cleaned, _, cell pending_queries, _) = unpack_state();
+  (_, int n, _, int last_cleaned, _, cell pending_queries, _, _) = unpack_state();
   (slice cs, var found) = pending_queries.udict_get?(64, query_id);
   if (found) {
     if (cs~load_int(1)) {
@@ -289,9 +355,12 @@ int processed?(int query_id) method_id {
   return x;
 }
 
-cell create_init_state(int wallet_id, int n, int k, cell owners_info, int lock_until) method_id {
+;; The initial data for an owner set and the bridges its queries may reach.
+;; lock_until is always 0 (see unpack_state).
+cell create_init_state(int wallet_id, int n, int k, cell owners_info, cell allowed) method_id {
   require_strong_owner_keys(owners_info);
-  return pack_state(new_dict(), owners_info, 0, k, n, wallet_id, lock_until);
+  throw_if(51, allowed.dict_empty?());
+  return pack_state(new_dict(), owners_info, 0, k, n, wallet_id, 0, allowed);
 }
 
 cell merge_list(cell a, cell b) {
@@ -314,8 +383,14 @@ cell merge_list(cell a, cell b) {
 }
 
 cell get_public_keys() method_id {
-  (_, _, _, _, cell public_keys, _, _) = unpack_state();
+  (_, _, _, _, cell public_keys, _, _, _) = unpack_state();
   return public_keys;
+}
+
+;; The masterchain bridge account ids this multisig may send votes to.
+cell get_allowed_bridges() method_id {
+  (_, _, _, _, _, _, _, cell allowed) = unpack_state();
+  return allowed;
 }
 
 (int, int) check_query_signatures(cell query) method_id {
@@ -342,7 +417,7 @@ cell get_public_keys() method_id {
 }
 
 int message_signed_by_id?(int id, int query_id) method_id {
-  (_, int n, _, _, _, cell pending_queries, _) = unpack_state();
+  (_, int n, _, _, _, cell pending_queries, _, _) = unpack_state();
   (var cs, var f) = pending_queries.udict_get?(64, query_id);
   if (f) {
     if (cs~load_int(1)) {
@@ -358,7 +433,7 @@ int message_signed_by_id?(int id, int query_id) method_id {
 }
 
 cell messages_by_mask(int mask) method_id {
-  (_, int n, _, _, _, cell pending_queries, _) = unpack_state();
+  (_, int n, _, _, _, cell pending_queries, _, _) = unpack_state();
   int i = -1;
   cell a = new_dict();
   do {
@@ -386,7 +461,7 @@ cell get_messages_unsigned() method_id {
 }
 
 (int, int) get_n_k() method_id {
-  (_, int n, int k, _, _, _, _) = unpack_state();
+  (_, int n, int k, _, _, _, _, _) = unpack_state();
   return (n, k);
 }
 
@@ -402,7 +477,8 @@ cell merge_inner_queries(cell a, cell b) method_id {
   .end_cell();
 }
 
+;; The stored lock_until, which nothing enforces (see unpack_state).
 int get_lock_timeout() method_id {
-  (_, _, _, _, _, _, int lock_until) = unpack_state();
+  (_, _, _, _, _, _, int lock_until, _) = unpack_state();
   return lock_until;
 }

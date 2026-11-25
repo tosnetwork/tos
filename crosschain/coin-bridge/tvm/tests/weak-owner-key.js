@@ -47,9 +47,10 @@ const forge = (publicKey, message) => {
     return forgeable ? Buffer.concat([R_IDENTITY, Buffer.alloc(32)]) : null;
 };
 
+// A bounceable vote of value 0 to DEST, the masterchain bridge the allowlist names.
 const innerMsg = new CellWriter()
-    .u(0x18, 6).u(4, 3).i(0, 8).u(BigInt(DEST), 256).u(0, 4).u(0, 107);
-const innerMsgJson = ["uint6", 0x18, "uint3", 4, "int8", 0, "uint256", DEST, "coins", 0, "uint107", 0];
+    .u(0x18, 6).u(4, 3).i(-1, 8).u(BigInt(DEST), 256).u(0, 4).u(0, 107);
+const innerMsgJson = ["uint6", 0x18, "uint3", 4, "int8", -1, "uint256", DEST, "coins", 0, "uint107", 0];
 
 // What every co-signer signs: the query after the signatures.
 const coSigned = (queryId) => new CellWriter()
@@ -126,6 +127,7 @@ funcer({}, {
         "uint8->any", ownerInfos,
         "uint1", 0,             // no pending queries
         "uint32", 0,            // lock_until
+        "uint256->any", {[DEST]: []}, // the bridges votes may go to
     ],
     in_msgs: [
         refused(forgedRoot(2)),
@@ -138,7 +140,7 @@ funcer({}, {
             amount: 0.1 * 1e9,
             body: withCoSigner(1, (message) => crypto.sign(null, message, strong[1].privateKey)),
             out_msgs: [
-                {type: "Internal", to: `0:${DEST.slice(2)}`, amount: 0, sendMode: 0, stateInit: false, body: []},
+                {type: "Internal", to: `-1:${DEST.slice(2)}`, amount: 0, sendMode: 0, stateInit: false, body: []},
                 {type: "Internal", to: SENDER, amount: 0, sendMode: 64 + 2, stateInit: false, body: []},
             ],
         },

@@ -12,7 +12,7 @@ The TOS token bridge carries ERC-20 tokens from external EVM chains onto TOS as 
 - `token-minter.fc`: reserves supply and a credit number before a swap is consumed, opens holders' wallets, counts supply once per confirmed credit, admits burns, and strands a deleted wallet's obligations under the owner-approved scope.
 - `token-wallet.fc`: TOS Token V1-style transfers; credits once per credit number; holds burned tokens until the burn is admitted and decided.
 - `settlement.fc`: the settlement protocol's shared parts: channels, windows, descriptors, funding and logs (`SETTLEMENT-PROTOCOL.md`).
-- `multisig.fc`: threshold oracle voting for TOS-side mint/governance messages; each signed query carries the deployment's `wallet_id` and the network's global id (ConfigParam 19), so queries cannot cross deployments or networks.
+- `multisig.fc`: threshold oracle voting for TOS-side mint/governance messages; each signed query carries the deployment's `wallet_id` and the network's global id (ConfigParam 19), so queries cannot cross deployments or networks, and may only send a bounded, bounceable vote to a masterchain bridge listed in the multisig's StateInit.
 - `votes-collector.fc`: collects EVM-compatible oracle signatures for burn/unlock.
 - Shared configuration, message, opcode, error, utility, and Fift deployment sources.
 
@@ -76,6 +76,8 @@ forms rather than a rejection.
 | Tron | 83 | 728126428 |
 
 The ConfigParam must contain the TOS bridge address, oracle multisig address/map, state flags, fee schedule, and external chain bridge address. No slot is enabled or populated by this directory.
+
+The oracle multisig address is checked before the parameter vote by recomputing it: `new-multisig.fif`, run with the reviewed wallet id, `k`, owner keys and bridge list, prints the address of the StateInit `create_init_state` builds (no pending queries), and it must equal the one the parameter names; the deployed account must also return the reviewed list from `get_allowed_bridges` and nothing from `get_messages_unsigned`. The allowlist alone does not prove the account clean (`SECURITY.md`).
 
 Tron is not an EVM chain, but its virtual machine is close enough for this contract plane: addresses are 20 bytes inside the VM, so the 160-bit destination field needs no change, and `ecrecover` is available for the counterparty half. Its `CHAINID` differs — it yields the last four bytes of the genesis block id rather than a registered chain id — so the chain id above is that value for Tron mainnet and must be confirmed against the target network before the slot is populated. The counterparty contracts have not been deployed or exercised on Tron; treat the slot as unproven configuration.
 

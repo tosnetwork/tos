@@ -37,9 +37,7 @@ def vote_digest(contract: str, chain_id: int, kind: str, payload: bytes) -> byte
     ).digest()
 
 
-def tvm_query_digest(
-    wallet_id: int, global_id: int, destination: str, payload: bytes
-) -> bytes:
+def tvm_query_digest(wallet_id: int, global_id: int, destination: str, payload: bytes) -> bytes:
     """Model the TVM multisig query hash's deployment, network, and destination binding."""
     return hashlib.sha3_256(
         wallet_id.to_bytes(4, "big")
@@ -134,6 +132,60 @@ class TvmBridgeModel:
         self.locked -= amount
 
 
+MAX_VOTE_VALUE = 10_000_000_000  # multisig-code.fc
+
+
+class MultisigRefusal(Exception):
+    def __init__(self, code: int) -> None:
+        super().__init__(f"exit code {code}")
+        self.code = code
+
+
+@dataclass(frozen=True)
+class VoteMessage:
+    workchain: int
+    destination: str
+    value: int
+    bounce: bool = True
+    mode: int = 1
+    state_init: bool = False
+    extra_currencies: bool = False
+
+
+@dataclass
+class TvmMultisigModel:
+    """Models what check_proposed_query in multisig-code.fc lets a quorum send.
+
+    The allowlist is fixed when the multisig is built. The configuration is
+    an argument only to show that nothing here depends on it.
+    """
+
+    allowed: frozenset[str]
+
+    def __post_init__(self) -> None:
+        if not self.allowed:
+            raise MultisigRefusal(51)
+
+    def propose(self, msg: VoteMessage, configured_bridge: str | None = None) -> VoteMessage:
+        del configured_bridge  # the multisig never reads ConfigParam
+        if msg.workchain != -1 or msg.destination not in self.allowed:
+            raise MultisigRefusal(46)
+        if not msg.bounce:
+            raise MultisigRefusal(47)
+        if not 0 <= msg.mode <= 3:
+            raise MultisigRefusal(48)
+        if msg.value > MAX_VOTE_VALUE or msg.extra_currencies:
+            raise MultisigRefusal(49)
+        if msg.state_init:
+            raise MultisigRefusal(50)
+        return msg
+
+
+def reward_address_ok(workchain: int, address_hash: int) -> bool:
+    """bridge_code.fc operation 5: a standard basechain or masterchain account, not zero."""
+    return workchain in (0, -1) and address_hash != 0
+
+
 ORACLES = (11, 22, 33)
 CHAIN_ID = 7001
 
@@ -153,29 +205,71 @@ class DomainSeparationTest(unittest.TestCase):
         bsc_wallet_id = 0x42534331
         mainnet_global_id = 7001
         rehearsal_global_id = 7002
-        base = tvm_query_digest(
-            eth_wallet_id, mainnet_global_id, "ethereum-bridge", b"unlock"
+        base = tvm_query_digest(eth_wallet_id, mainnet_global_id, "ethereum-bridge", b"unlock")
+        self.assertNotEqual(
+            base,
+            tvm_query_digest(bsc_wallet_id, mainnet_global_id, "ethereum-bridge", b"unlock"),
         )
         self.assertNotEqual(
             base,
-            tvm_query_digest(
-                bsc_wallet_id, mainnet_global_id, "ethereum-bridge", b"unlock"
-            ),
-        )
-        self.assertNotEqual(
-            base,
-            tvm_query_digest(
-                eth_wallet_id, mainnet_global_id, "bsc-bridge", b"unlock"
-            ),
+            tvm_query_digest(eth_wallet_id, mainnet_global_id, "bsc-bridge", b"unlock"),
         )
         # Two networks bootstrapped from one StateInit share the wallet id and
         # every address; only the network's own id separates their queries.
         self.assertNotEqual(
             base,
-            tvm_query_digest(
-                eth_wallet_id, rehearsal_global_id, "ethereum-bridge", b"unlock"
-            ),
+            tvm_query_digest(eth_wallet_id, rehearsal_global_id, "ethereum-bridge", b"unlock"),
         )
+
+
+class MultisigAllowlistTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # The old bridge stays listed so a migration can still be voted to it.
+        self.multisig = TvmMultisigModel(frozenset({"old-bridge", "new-bridge"}))
+
+    def vote(self, **changes: object) -> VoteMessage:
+        fields: dict[str, object] = {"workchain": -1, "destination": "old-bridge", "value": 10**9}
+        fields.update(changes)
+        return VoteMessage(**fields)  # type: ignore[arg-type]
+
+    def refused(self, code: int, msg: VoteMessage, configured: str | None = None) -> None:
+        with self.assertRaises(MultisigRefusal) as caught:
+            self.multisig.propose(msg, configured)
+        self.assertEqual(caught.exception.code, code)
+
+    def test_listed_bridges_receive_bounded_bounceable_votes(self) -> None:
+        for destination in ("old-bridge", "new-bridge"):
+            for mode in range(4):
+                msg = self.vote(destination=destination, mode=mode, value=MAX_VOTE_VALUE)
+                self.assertEqual(self.multisig.propose(msg, "new-bridge"), msg)
+
+    def test_a_bridge_the_configuration_no_longer_names_is_still_reachable(self) -> None:
+        self.assertEqual(self.multisig.propose(self.vote(), "new-bridge").destination, "old-bridge")
+
+    def test_the_configuration_cannot_widen_the_allowlist(self) -> None:
+        self.refused(46, self.vote(destination="other-bridge"), configured="other-bridge")
+        self.refused(46, self.vote(destination="other-bridge"), configured=None)
+
+    def test_each_guard_has_its_own_code(self) -> None:
+        self.refused(46, self.vote(workchain=0))
+        self.refused(47, self.vote(bounce=False))
+        for mode in (4, 16, 32, 64, 128, 129):
+            self.refused(48, self.vote(mode=mode))
+        self.refused(49, self.vote(value=MAX_VOTE_VALUE + 1))
+        self.refused(49, self.vote(extra_currencies=True))
+        self.refused(50, self.vote(state_init=True))
+
+    def test_an_empty_allowlist_builds_no_multisig(self) -> None:
+        with self.assertRaises(MultisigRefusal) as caught:
+            TvmMultisigModel(frozenset())
+        self.assertEqual(caught.exception.code, 51)
+
+    def test_reward_address_validation(self) -> None:
+        self.assertTrue(reward_address_ok(0, 1))
+        self.assertTrue(reward_address_ok(-1, 1))
+        self.assertFalse(reward_address_ok(0, 0))
+        self.assertFalse(reward_address_ok(-1, 0))
+        self.assertFalse(reward_address_ok(5, 1))
 
 
 class QuorumTest(unittest.TestCase):

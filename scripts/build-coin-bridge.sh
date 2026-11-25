@@ -106,6 +106,16 @@ for fif in "$work_root"/first/*/*.fif; do
   FIFTPATH="$FIFT_LIB" "$FIFT_BIN" -s "$wrapper" >/dev/null
 done
 
+# The oracle multisig's allowlist is its own: its compiled code holds no
+# instruction that reads the configuration. (GLOBALID, the network id that
+# every query names, is not one of them.)
+for fif in "$work_root"/first/*/multisig.fif; do
+  if grep -n -w -E 'CONFIGPARAM|CONFIGOPTPARAM|CONFIGDICT|CONFIGROOT' "$fif"; then
+    echo "$fif: the oracle multisig must not read the configuration" >&2
+    exit 1
+  fi
+done
+
 mkdir -p "$OUT"
 # Re-check once the path fully exists: only now can symlinks along it be
 # resolved, and nothing destructive has run yet.

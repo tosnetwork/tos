@@ -476,6 +476,9 @@ pub struct Delivery {
 pub struct Net {
     pub bc: Blockchain,
     pub oracles: Treasury,
+    /// The oracle account ConfigParam 79 names when it is not `oracles`: a
+    /// deployed oracle multisig.
+    pub oracles_account: Option<MsgAddressInt>,
     pub deployer: Treasury,
     pub users: Vec<Treasury>,
     pub stranger: Treasury,
@@ -584,6 +587,7 @@ impl Net {
         let mut net = Self {
             bc,
             oracles,
+            oracles_account: None,
             deployer,
             users,
             stranger,
@@ -645,7 +649,8 @@ impl Net {
         mint_fee: u64,
         external: Option<[u8; 20]>,
     ) {
-        let oracles = self.oracles.address().clone();
+        let oracles =
+            self.oracles_account.clone().unwrap_or_else(|| self.oracles.address().clone());
         let (wallet_min_storage, wallet_gas) = (self.wallet_min_storage, self.wallet_gas);
         let param = cell(|b| {
             b.append_u8(0).unwrap();

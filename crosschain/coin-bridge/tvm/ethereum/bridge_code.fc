@@ -74,6 +74,18 @@ int calculate_fee(int msg_value, fees) impure {
     return create_swap_from_tos(destination_address, msg_value, s_addr, 0, true);
 }
 
+;; A reward goes to a standard address (no anycast) on the basechain or the
+;; masterchain, and never to the zero account.
+int reward_address_ok?(slice addr) inline {
+  if (addr.slice_bits() != 3 + 8 + 256) {
+    return false;
+  }
+  int kind = addr~load_uint(3);
+  int wc = addr~load_int(8);
+  int hash = addr~load_uint(256);
+  return (kind == 4) & ((wc == 0) | (wc == -1)) & (hash != 0);
+}
+
 () execute_voting (slice s_addr, slice voting_data, int bridge_address) impure {
   (int state_flags, int total_locked, slice collector_address, var fees) = load_data();
 
@@ -135,11 +147,17 @@ int calculate_fee(int msg_value, fees) impure {
 
   } elseif (operation == 5) { ;; get reward
 
+    ;; The vote names where the reward goes, as the token bridge's
+    ;; get_reward does. The multisig that relayed the vote is not paid: it
+    ;; may only send bounded votes, so coins swept to it could never leave.
+    slice reward_address = voting_data~load_msg_addr();
+    voting_data.end_parse();
+    throw_unless(308, reward_address_ok?(reward_address));
     ;; reserve total_locked + 100 TOS for storage fees
     raw_reserve(total_locked + 100000000000, 2);
     var msg = begin_cell()
       .store_uint(0x18, 6) ;; bounceable
-      .store_slice(s_addr)
+      .store_slice(reward_address)
       .store_coins(0)
       .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1);
     send_raw_message(msg.end_cell(), 128); ;; send all the remainings
@@ -165,11 +183,9 @@ int calculate_fee(int msg_value, fees) impure {
     ;; transfer. When the migrate operation's 0xf00d message is rejected by
     ;; its destination, the value comes back here and must be locked again —
     ;; otherwise it would sit in the plain balance where a reward sweep
-    ;; (operation 5) could move it to the collector. Crediting msg_value is
-    ;; safe from any source: the balance and total_locked rise by the same
-    ;; amount, so the coins are genuinely locked. (The returned value is the
-    ;; sent amount net of forwarding fees, which only lowers total_locked
-    ;; relative to the balance, never above it.)
+    ;; (operation 5) could pay it out. Only a genuine bounce gets here (the
+    ;; flag cannot be forged), and it restores the amount the migration
+    ;; recorded, which its body echoes; see below.
     if (in_msg.slice_bits() >= 64) {
       in_msg~load_uint(32); ;; bounce marker 0xffffffff
       if (in_msg~load_uint(32) == 0xf00d) {

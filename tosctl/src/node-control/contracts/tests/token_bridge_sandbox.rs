@@ -37,6 +37,10 @@ mod limits;
 mod mint;
 #[path = "token_bridge/model.rs"]
 mod model;
+#[path = "token_bridge/oracles.rs"]
+mod oracles;
+#[path = "bridge_multisig/query.rs"]
+mod query;
 #[path = "token_bridge/recovery.rs"]
 mod recovery;
 #[path = "token_bridge/reported.rs"]
