@@ -130,11 +130,15 @@ impl<'de> serde::Deserialize<'de> for Strict {
     }
 }
 
+/// Parses JSON text, refusing a repeated key anywhere in it.
+pub fn parse_json_strict(text: &str) -> Result<Value> {
+    let Strict(value) = serde_json::from_str(text).map_err(|err| error!("JSON: {err}"))?;
+    Ok(value)
+}
+
 /// Parses a builder spec, refusing a repeated key anywhere in it.
 pub fn parse_settlement_assets_spec(text: &str) -> Result<Value> {
-    let Strict(value) =
-        serde_json::from_str(text).map_err(|err| error!("ConfigParam 84 spec: {err}"))?;
-    Ok(value)
+    parse_json_strict(text).map_err(|err| error!("ConfigParam 84 spec: {err}"))
 }
 
 fn object<'a>(value: &'a Value, what: &str) -> Result<&'a Map<String, Value>> {

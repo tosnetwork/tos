@@ -105,12 +105,14 @@ pub struct MasterEvidence<'a> {
 
 /// The minter and wallet code a token bridge creates its minters with: refs 0
 /// and 1 of its storage, after `born:uint64 evm_chain:uint32 evm_bridge:uint160
-/// generation:uint32 gen_start:uint64 gen_state:uint2 collector:MsgAddressInt`
+/// generation:uint32 gen_start:uint64 gen_state:uint2 collector:MsgAddress`
 /// (`load_data` in crosschain/token-bridge/tvm/contracts/token-bridge.fc).
 pub fn bridge_codes(bridge_data: &Cell) -> anyhow::Result<(Cell, Cell)> {
     let mut slice = SliceData::load_cell(bridge_data.clone())?;
     slice.get_next_bits(64 + 32 + 160 + 32 + 64 + 2)?;
-    let _collector: MsgAddressInt = chain_block::Deserializable::construct_from(&mut slice)?;
+    // `change_collector` stores any `load_msg_addr`: none, external or internal.
+    let _collector: chain_block::MsgAddress =
+        chain_block::Deserializable::construct_from(&mut slice)?;
     anyhow::ensure!(
         slice.remaining_bits() == 0 && slice.remaining_references() == 3,
         "the bridge account's data is not a token bridge's storage"
@@ -221,12 +223,22 @@ mod tests {
 
     /// A token bridge's storage holding `minter` and `wallet` as its codes.
     fn bridge_storage(minter: Cell, wallet: Cell) -> Cell {
+        let collector = chain_block::MsgAddress::AddrStd(chain_block::MsgAddrStd {
+            anycast: None,
+            workchain_id: 0,
+            address: UInt256::from([0x42; 32]).into(),
+        });
+        bridge_storage_with(minter, wallet, &collector)
+    }
+
+    fn bridge_storage_with(
+        minter: Cell,
+        wallet: Cell,
+        collector: &chain_block::MsgAddress,
+    ) -> Cell {
         let mut b = BuilderData::new();
         zeros(&mut b, 64 + 32 + 160 + 32 + 64 + 2).unwrap();
-        MsgAddressInt::with_standart(None, 0, UInt256::from([0x42; 32]).into())
-            .unwrap()
-            .write_to(&mut b)
-            .unwrap();
+        collector.write_to(&mut b).unwrap();
         b.checked_append_reference(minter).unwrap();
         b.checked_append_reference(wallet).unwrap();
         b.checked_append_reference(leaf(0)).unwrap();
@@ -351,6 +363,19 @@ mod tests {
             extra.into_cell().unwrap()
         };
         assert!(refusal(&s).contains("not a token bridge's storage"));
+    }
+
+    #[test]
+    fn a_bridge_with_no_or_an_external_collector_still_verifies() {
+        let external = chain_block::MsgAddress::AddrExt(
+            chain_block::MsgAddrExt::with_address(chain_block::SliceData::from_raw(vec![0xab], 8))
+                .unwrap(),
+        );
+        for collector in [chain_block::MsgAddress::AddrNone, external] {
+            let mut s = synthetic(PLAIN);
+            s.bridge_data = bridge_storage_with(leaf(1), leaf(2), &collector);
+            check(&s).unwrap();
+        }
     }
 
     #[test]

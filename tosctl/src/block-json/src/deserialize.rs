@@ -1021,6 +1021,8 @@ impl StateParser {
             let p = Self::parse_token_bridge_params(p)?;
             Ok(ConfigParamEnum::ConfigParam82(p))
         })?;
+        // The map reaching this point has already collapsed repeated keys; callers
+        // holding JSON text use parse_config_text / parse_state_text, which refuse them.
         self.parse_parameter(config, 84, |p| {
             Ok(ConfigParamEnum::ConfigParam84(settlement_assets_from_json(&Value::Object(
                 p.map.clone(),
@@ -1170,6 +1172,24 @@ pub fn parse_config_with_mandatory_params(
 
 pub fn parse_config(config: &Map<String, Value>) -> Result<ConfigParams> {
     parse_config_with_mandatory_params(config, &[])
+}
+
+/// [`parse_config`] from JSON text. A `serde_json` map keeps only the last of
+/// repeated keys, so a configuration whose ConfigParam 84 (or anything else) names
+/// a field twice is refused here, before it is collapsed.
+pub fn parse_config_text(text: &str) -> Result<ConfigParams> {
+    match crate::settlement_assets::parse_json_strict(text)? {
+        Value::Object(config) => parse_config(&config),
+        _ => fail!("a configuration must be a JSON object"),
+    }
+}
+
+/// [`parse_state`] from JSON text, refusing repeated keys as [`parse_config_text`] does.
+pub fn parse_state_text(text: &str) -> Result<ShardStateUnsplit> {
+    match crate::settlement_assets::parse_json_strict(text)? {
+        Value::Object(state) => parse_state(&state),
+        _ => fail!("a state must be a JSON object"),
+    }
 }
 
 pub fn parse_state(map: &Map<String, Value>) -> Result<ShardStateUnsplit> {

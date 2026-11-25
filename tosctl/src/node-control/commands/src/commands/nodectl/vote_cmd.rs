@@ -230,6 +230,27 @@ pub(crate) fn require_schema_rollout(param_id: i32, assume_upgraded: bool) -> an
     Ok(())
 }
 
+/// A parameter that must only ever change by a critical vote is proposed only on a
+/// network whose live ConfigParam 10 lists it. Genesis lists ConfigParam 84, but a
+/// network started before 84 existed does not, and there an ordinary vote would
+/// install it.
+pub(crate) fn require_critical_listing(
+    param_id: i32,
+    value_present: bool,
+    live_critical: &chain_block::ConfigParam10,
+) -> anyhow::Result<()> {
+    if param_id != chain_block::SETTLEMENT_ASSETS_CONFIG_PARAM as i32 || !value_present {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        live_critical.critical_params.get(&param_id)?.is_some(),
+        "ConfigParam 84 is not in this network's ConfigParam 10, so an ordinary vote could \
+         install or change it. Add 84 to ConfigParam 10 by a critical vote first, then \
+         propose the ConfigParam 84 value"
+    );
+    Ok(())
+}
+
 /// The proposal an operator asks for.
 pub(crate) struct ProposalRequest {
     pub param_id: i32,
@@ -351,7 +372,11 @@ impl VoteOfferCreateCmd {
             })
         };
         let mandatory = contains(chain.get_config_param(9).await?)?;
-        let critical_param = contains(chain.get_config_param(10).await?)?;
+        let live_critical = chain.get_config_param(10).await?;
+        if let ConfigParamEnum::ConfigParam10(list) = &live_critical {
+            require_critical_listing(self.param, value.is_some(), list)?;
+        }
+        let critical_param = contains(live_critical)?;
         let critical = self.critical || critical_param;
         let setup = match chain.get_config_param(11).await? {
             ConfigParamEnum::ConfigParam11(value) => {

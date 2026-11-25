@@ -506,3 +506,25 @@ fn a_spec_with_a_repeated_field_is_refused() {
     assert!(parse_settlement_assets_spec(&nested).is_err());
     assert!(parse_settlement_assets_spec("{\"assets\":[],\"assets\":[]}").is_err());
 }
+
+#[test]
+fn a_configuration_text_with_a_repeated_field_in_p84_is_refused() {
+    let p84 = serde_json::to_string(&spec()).unwrap();
+    let good = format!("{{\"p84\":{p84}}}");
+    let config = crate::parse_config_text(&good).unwrap();
+    match config.config(84).unwrap() {
+        Some(ConfigParamEnum::ConfigParam84(read)) => {
+            assert_eq!(read, settlement_assets_from_json(&spec()).unwrap())
+        }
+        other => panic!("ConfigParam 84 is {other:?}"),
+    }
+    let twice = good.replacen("\"decimals\":6", "\"decimals\":6,\"decimals\":18", 1);
+    assert_ne!(twice, good);
+    let err = crate::parse_config_text(&twice).unwrap_err().to_string();
+    assert!(err.contains("duplicate field"), "{err}");
+    let mut collapsed = serde_json::Map::new();
+    collapsed.insert("p84".into(), serde_json::from_str::<Value>(&twice).unwrap()["p84"].clone());
+    // The map entry point cannot see what serde_json already collapsed.
+    assert!(crate::parse_config(&collapsed).is_ok());
+    assert!(crate::parse_state_text("{\"a\":1,\"a\":2}").is_err());
+}

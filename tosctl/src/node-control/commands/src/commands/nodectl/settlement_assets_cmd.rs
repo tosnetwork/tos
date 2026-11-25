@@ -362,6 +362,23 @@ mod tests {
     }
 
     #[test]
+    fn proposing_84_needs_84_in_the_live_critical_list() {
+        use super::super::vote_cmd::require_critical_listing;
+        // A network started before ConfigParam 84 existed: ConfigParam 10 without 84.
+        let mut list = chain_block::ConfigParam10::default();
+        for id in [0i32, 1, 9, 10, 12, 34] {
+            list.critical_params.set(&id, &()).unwrap();
+        }
+        let refused = require_critical_listing(84, true, &list).unwrap_err().to_string();
+        assert!(refused.contains("Add 84 to ConfigParam 10 by a critical vote"), "{refused}");
+        // Removing 84, or any other parameter, is not held to it.
+        assert!(require_critical_listing(84, false, &list).is_ok());
+        assert!(require_critical_listing(79, true, &list).is_ok());
+        list.critical_params.set(&84i32, &()).unwrap();
+        assert!(require_critical_listing(84, true, &list).is_ok());
+    }
+
+    #[test]
     fn a_pin_is_a_workchain_zero_account_id() {
         let id = "a1".repeat(32);
         assert_eq!(parse_pin(&id).unwrap(), parse_pin(&format!("0:{id}")).unwrap());

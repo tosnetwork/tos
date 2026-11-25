@@ -397,6 +397,12 @@ collator then stops ("attempting to install invalid new configuration"). No
 validator reports which schema its node carries, so `tosctl vote offer create
 --param 84` refuses unless the operator passes `--assume-all-validators-upgraded`.
 
+Only a zero state built from this template lists 84 in ConfigParam 10. A network
+started before it does not, and there an ordinary vote could install 84. On such
+a network ConfigParam 84 must first be added to ConfigParam 10 by a critical
+vote; `tosctl vote offer create --param 84` refuses a value until the live
+ConfigParam 10 lists 84.
+
 **Size.** A value holds at most 16 entries; one or two are expected. The node
 validates each parameter against a budget of 1024 cells
 (`check_one_config_param`), and a ConfigParam 84 value of 342 or more entries
