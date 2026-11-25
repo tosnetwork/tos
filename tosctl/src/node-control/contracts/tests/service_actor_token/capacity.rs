@@ -59,7 +59,7 @@ pub fn genesis_cell_limit() -> u64 {
 }
 
 /// The state bound of service-actor-token-code.fc, in cells.
-const BASE: u64 = 320;
+const BASE: u64 = 360;
 const LIVE: u64 = 9;
 const RETURNED: u64 = 10;
 const FUNDING_RETURN: u64 = 5;

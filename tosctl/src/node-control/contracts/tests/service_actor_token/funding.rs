@@ -626,5 +626,86 @@ fn a_route_naming_no_bridge_parameter_is_refused_and_returned() {
         });
         d.build()
     });
+    // Tooling reads the slot and can precheck the refusal.
+    let param = w.get("get_bridge_config_param", vec![]).int_at(0);
+    assert_eq!(param, 84);
+    assert!(!contracts::service_actor_token::is_bridge_slot(param as u32));
     refused_call(&mut w, err::ASSET_ROUTE_INVALID);
+}
+
+const MAX_COINS: u128 = 1 << 120;
+
+/// Deploy data with the policy's price, storage fee or bounty replaced, as a
+/// deployer controlling its StateInit can write them.
+fn with_policy_amounts(price: u128, fee: u128, bounty: u128) -> World {
+    World::with_data(Options::default(), |data| {
+        let mut d = ActorData::parse(&data);
+        let mut s = chain_block::SliceData::load_cell(d.policy.clone()).unwrap();
+        let version = s.get_next_u32().unwrap();
+        for _ in 0..3 {
+            chain_block::Coins::construct_from(&mut s).unwrap();
+        }
+        d.policy = cell(|b| {
+            b.append_u32(version).unwrap();
+            coins(b, price);
+            coins(b, fee);
+            coins(b, bounty);
+            let mut rest = s.clone();
+            let commitments = rest.checked_drain_reference().unwrap();
+            b.append_bytestring(&rest).unwrap();
+            b.checked_append_reference(commitments).unwrap();
+        });
+        d.build()
+    })
+}
+
+#[test]
+fn amounts_at_the_coins_bound_are_refused_by_a_predicate_and_never_thrown() {
+    let top = MAX_COINS - 1;
+    for (name, price, fee, bounty, reason) in [
+        ("price", top, u128::from(STORAGE_FEE), u128::from(BOUNTY), err::INSUFFICIENT_PAYMENT),
+        ("storage fee", PRICE, top, u128::from(BOUNTY), err::INSUFFICIENT_PAYMENT),
+        ("bounty", PRICE, u128::from(STORAGE_FEE), top, err::INVALID_CLEANUP_BOUNTY),
+    ] {
+        let mut w = with_policy_amounts(price, fee, bounty);
+        let buyer = w.user(0);
+        let before = w.tokens(&buyer);
+        let start = w.fund(&buyer, PRICE, w.call_forward(), Some(w.token_call([1; 32])));
+        println!("case {name}");
+        for d in w.actor_txs_since(start) {
+            assert!(!outcome(&d.tx).aborted, "{name}: nothing throws");
+        }
+        let logs = w.funding_logs_since(start);
+        assert_eq!(logs[0].reason as i32, reason, "{name}");
+        assert_ne!(logs[0].payout_id, 0, "{name}: returned");
+        assert_eq!(w.tokens(&buyer), before, "{name}: every token is back");
+    }
+}
+
+#[test]
+fn a_ledger_one_below_the_coins_bound_refuses_a_new_admission_with_amount_range() {
+    let mut w = World::new();
+    let buyer = w.user(0);
+    w.call(&buyer);
+    // Deploy-time or corrupted ledger state: the invariant check is off.
+    w.checking = false;
+    w.patch(|d| d.token[0] = MAX_COINS - 1);
+    let before = w.tokens(&buyer);
+    let start = w.fund(&buyer, PRICE, w.call_forward(), Some(w.token_call([2; 32])));
+    for d in w.actor_txs_since(start) {
+        assert!(!outcome(&d.tx).aborted, "nothing throws");
+    }
+    let logs = w.funding_logs_since(start);
+    assert_eq!(logs[0].reason as i32, err::AMOUNT_RANGE);
+    assert_ne!(logs[0].payout_id, 0, "returned");
+    assert_eq!(w.tokens(&buyer), before, "every token is back");
+    assert_eq!(w.ledger().pending, MAX_COINS - 1, "the ledger is untouched");
+    // The same for the locked storage fees.
+    w.patch(|d| {
+        d.token[0] = PRICE;
+        d.tos[1] = MAX_COINS - 1;
+    });
+    let start = w.fund(&buyer, PRICE, w.call_forward(), Some(w.token_call([3; 32])));
+    assert_eq!(w.funding_logs_since(start)[0].reason as i32, err::AMOUNT_RANGE);
+    assert_eq!(w.tokens(&buyer), before);
 }

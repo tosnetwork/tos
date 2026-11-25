@@ -235,6 +235,40 @@ int checked_sub_amount(int a, int b) impure inline {
   return a - b;
 }
 
+;; The saturating forms never throw. They price budgets and evaluate refusal
+;; predicates, where a throw would strand a notification's tokens. An addition
+;; or product of non-negative amounts is capped at MAX_COINS, which no Coins
+;; field holds, so a capped value always fails the comparison it feeds. A
+;; difference below zero is zero.
+int saturating_add_amount(int a, int b) inline {
+  int total = max(a, 0) + max(b, 0); ;; 257-bit: no overflow below 2^255
+  return total < MAX_COINS ? total : MAX_COINS;
+}
+
+int saturating_mul_amount(int a, int b) inline {
+  int x = min(max(a, 0), MAX_COINS);
+  int y = min(max(b, 0), MAX_COINS);
+  int product = x * y; ;; at most 2^240: no overflow
+  return product < MAX_COINS ? product : MAX_COINS;
+}
+
+int saturating_sub_amount(int a, int b) inline {
+  return a > b ? a - b : 0;
+}
+
+;; The balance before this message: never below zero.
+int backing_or_zero(int msg_value) inline {
+  return saturating_sub_amount(get_balance().pair_first(), msg_value);
+}
+
+;; The balance before this message, or a refusal when storage took part of the
+;; message's own value.
+int backing_or_refuse(int msg_value, int refusal) impure inline {
+  int balance = get_balance().pair_first();
+  throw_unless(refusal, balance >= msg_value);
+  return checked_sub_amount(balance, msg_value);
+}
+
 ;; ---- Protocol constants -----------------------------------------------------
 ;; The native rail's bounds, unchanged.
 const int MINIMUM_CLEANUP_BOUNTY = 100000000; ;; 0.1 TOS
@@ -251,7 +285,7 @@ const int MAX_REFUND_CLAIM_WINDOW = 2592000; ;; 30 days
 ;; notification leaves its tokens unattributed, so every structure that grows
 ;; is capped, and the caps keep the worst state at 80% of the limit (52,428):
 ;;
-;;   base                                     <= 320 (code, policy, attestor key, route)
+;;   base                                     <= 360 (code, policy, attestor key, route)
 ;;   live entry, being swept, with its counter     9 cells x MAX_LIVE_GLOBAL
 ;;   returned entry, being paid, with its counter 10 cells x (MAX_RETURNED_GLOBAL
 ;;                                                  + MAX_LIVE_GLOBAL + MAX_RETURNS_IN_FLIGHT)
@@ -260,13 +294,13 @@ const int MAX_REFUND_CLAIM_WINDOW = 2592000; ;; 30 days
 ;;   attestor key named by pending requests       15 cells x MAX_LIVE_ATTESTOR_KEYS (4)
 ;;   one notification in flight                   10
 ;;
-;;   320 + 9 x 1,500 + 10 x 3,512 + 5 x 512 + 40 + 60 + 10 = 51,610 <= 52,428
+;;   360 + 9 x 1,500 + 10 x 3,512 + 5 x 512 + 40 + 60 + 10 = 51,650 <= 52,428
 ;;
 ;; A returned entry can outnumber MAX_RETURNED_GLOBAL by the live entries and
 ;; funding returns refused in flight; the bound counts those as both, which
 ;; over-counts. Each dictionary entry adds at most two cells (a leaf and a fork)
 ;; whatever the dictionary's shape. tests/service_actor_token/capacity.rs builds
-;; this worst state with every cell distinct and counts it: 47,025 cells.
+;; this worst state with every cell distinct and counts it: 47,046 cells.
 const int MAX_LIVE_GLOBAL = 1500;
 const int MAX_LIVE_PER_CALLER = 1000;
 
@@ -650,16 +684,18 @@ int max_fwd_fee() inline {
 ;; R it returns inside the bounce and pays S's bounce handler, the forwarding of
 ;; transfer_refused and this actor's pre-accept part, each at REPORT_MARGIN.
 int report_tos_amount() inline {
-  return REPORT_MARGIN * (gas_fee(PRE_ACCEPT_GAS) + gas_fee(S_BOUNCE_GAS) + max_fwd_fee())
-    + max_fwd_fee();
+  int legs = saturating_add_amount(saturating_add_amount(gas_fee(PRE_ACCEPT_GAS),
+    gas_fee(S_BOUNCE_GAS)), max_fwd_fee());
+  return saturating_add_amount(saturating_mul_amount(REPORT_MARGIN, legs), max_fwd_fee());
 }
 
 ;; What a payout reserves for its outcome: the whole handler, the
 ;; clear_refusal it may send and the forwarding of every send it may make (the
 ;; log, clear_refusal and the change), at REPORT_MARGIN.
 int outcome_fee_lock() inline {
-  return REPORT_MARGIN * (gas_fee(OUTCOME_HANDLER_GAS) + gas_fee(CLEAR_REFUSAL_GAS)
-    + 4 * max_fwd_fee());
+  int legs = saturating_add_amount(saturating_add_amount(gas_fee(OUTCOME_HANDLER_GAS),
+    gas_fee(CLEAR_REFUSAL_GAS)), saturating_mul_amount(4, max_fwd_fee()));
+  return saturating_mul_amount(REPORT_MARGIN, legs);
 }
 
 ;; One token bridge parameter's wallet gas and storage reserve, or nothing.
@@ -711,41 +747,45 @@ int transfer_budget(cell code) inline {
   if (~ any) {
     reserve = TOKEN_WALLET_ALLOWANCE;
   }
-  return report_tos_amount()
-    + max_fwd_fee()
-    + gas_fee(S_TRANSFER_GAS)
-    + get_forward_fee(false, bits + 4 * 1023, cells + 4)
-    + REPORT_MARGIN * (max(gas_fee(R_GAS_LIMIT), wallet_gas) + get_forward_fee(false, 32 + 256, 1)
-      + get_forward_fee(false, 0, 3))
-    + reserve;
+  ;; bits and cells count cells, not money.
+  int r_legs = saturating_add_amount(saturating_add_amount(max(gas_fee(R_GAS_LIMIT), wallet_gas),
+    get_forward_fee(false, 32 + 256, 1)), get_forward_fee(false, 0, 3));
+  int budget = saturating_add_amount(report_tos_amount(), max_fwd_fee());
+  budget = saturating_add_amount(budget, gas_fee(S_TRANSFER_GAS));
+  budget = saturating_add_amount(budget, get_forward_fee(false, bits + 4 * 1023, cells + 4));
+  budget = saturating_add_amount(budget, saturating_mul_amount(REPORT_MARGIN, r_legs));
+  return saturating_add_amount(budget, reserve);
 }
 
 ;; RETURN_BUDGET: one funding return's transfer, its outcome lock and its log.
 int return_budget(cell code) inline {
-  return transfer_budget(code) + outcome_fee_lock() + max_fwd_fee();
+  return saturating_add_amount(saturating_add_amount(transfer_budget(code), outcome_fee_lock()),
+    max_fwd_fee());
 }
 
 ;; ADMISSION_GAS_ALLOWANCE: the notification handler and its two sends.
 int admission_gas_allowance() inline {
-  return gas_fee(ADMISSION_GAS) + 2 * max_fwd_fee();
+  return saturating_add_amount(gas_fee(ADMISSION_GAS), saturating_mul_amount(2, max_fwd_fee()));
 }
 
 int min_funding_value(cell code) inline {
-  return admission_gas_allowance() + return_budget(code);
+  return saturating_add_amount(admission_gas_allowance(), return_budget(code));
 }
 
 ;; What a payout-creating op must attach: its own compute, the transfer and the
 ;; outcome lock.
 int payout_funding(cell code) inline {
-  return PAYOUT_GAS_ALLOWANCE + return_budget(code);
+  return saturating_add_amount(PAYOUT_GAS_ALLOWANCE, return_budget(code));
 }
 
 ;; What a funded rereport_refusal of a record whose payout is gone should
 ;; carry: S's rereport, this actor's answer and S's clear, with their
 ;; forwarding, at twice the current prices.
 int rereport_funding() inline {
-  return 2 * (gas_fee(S_REREPORT_GAS) + gas_fee(ABSENT_REPORT_GAS) + gas_fee(CLEAR_REFUSAL_GAS)
-    + 2 * max_fwd_fee());
+  int legs = saturating_add_amount(saturating_add_amount(gas_fee(S_REREPORT_GAS),
+    gas_fee(ABSENT_REPORT_GAS)), gas_fee(CLEAR_REFUSAL_GAS));
+  legs = saturating_add_amount(legs, saturating_mul_amount(2, max_fwd_fee()));
+  return saturating_mul_amount(2, legs);
 }
 
 ;; ---- Sends ----------------------------------------------------------------------
@@ -1236,7 +1276,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
   locked_outcome_fees = checked_sub_amount(locked_outcome_fees, lock);
   save_state();
   emit_outcome(id, kind, request_id, recipient, amount, outcome, 1 + 2);
-  raw_reserve(max(backing - lock - bounty, 0), 2);
+  raw_reserve(saturating_sub_amount(saturating_sub_amount(backing, lock), bounty), 2);
   if (~ null?(clear_at)) {
     send_body(clear_at, gas_fee(CLEAR_REFUSAL_GAS), false, query_body(op::clear_refusal, id), 1 + 2);
   }
@@ -1275,7 +1315,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
         return ();
       }
       set_gas_limit(OUTCOME_HANDLER_GAS);
-      int backing = get_balance().pair_first() - msg_value;
+      int backing = backing_or_zero(msg_value);
       load_state();
       ;; A funding return has no prior position: its bounce is a refusal.
       int outcome = kind == kind::funding_return ? outcome::refused : outcome::bounced;
@@ -1318,7 +1358,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
       return ();
     }
     set_gas_limit(OUTCOME_HANDLER_GAS);
-    int backing = get_balance().pair_first() - msg_value;
+    int backing = backing_or_zero(msg_value);
     load_state();
     (int q_active, int q_id, int q_purpose, int q_created_at, int q_floor, int q_delivered,
      int q_target, int q_amount, slice q_requester) = unpack_query();
@@ -1353,13 +1393,13 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
       ;; Query ids are never reused, so this cannot arise; keep both the payout
       ;; and the record, and log it.
       ;; Logged only on this message's own value.
-      if (msg_value >= gas_fee(PRE_ACCEPT_GAS) + max_fwd_fee()) {
+      if (msg_value >= saturating_add_amount(gas_fee(PRE_ACCEPT_GAS), max_fwd_fee())) {
         emit_outcome(query_id, kind, request_id, recipient, reported_amount, outcome::mismatch, 1);
       }
       return ();
     }
     set_gas_limit(OUTCOME_HANDLER_GAS);
-    int backing = get_balance().pair_first() - msg_value;
+    int backing = backing_or_zero(msg_value);
     load_state();
     int bounty = apply_outcome(query_id, kind, request_id, recipient, amount, undo,
       outcome::refused);
@@ -1381,14 +1421,17 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
       return ();
     }
     query_cell = empty_query();
-    int backing = get_balance().pair_first() - msg_value;
-    int others = pending_liability + refundable_liability + returned_liability
-      + withdrawable_token_revenue;
+    int backing = backing_or_zero(msg_value);
+    ;; Saturating: the token invariant keeps every ledger sum below the wallet's
+    ;; balance, so no cap is reached; a capped sum would only under-count surplus.
+    int others = saturating_add_amount(saturating_add_amount(pending_liability,
+      refundable_liability), saturating_add_amount(returned_liability, withdrawable_token_revenue));
     int result = err::surplus_insufficient;
     int surplus = 0;
     int payout_id = 0;
     if (q_purpose == purpose::surplus) {
-      surplus = max(balance - q_delivered - others - in_flight, 0);
+      surplus = saturating_sub_amount(saturating_sub_amount(saturating_sub_amount(balance,
+        q_delivered), others), in_flight);
       if ((q_amount > 0) & (q_amount <= surplus) & (next_payout_id < (1 << 64) - 1)) {
         result = 0;
         (payout_id, int lock) = create_payout(kind::surplus, 0, owner, q_requester, q_amount,
@@ -1399,7 +1442,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
           .store_uint(q_purpose, 1).store_uint(q_target, 64).store_coins(balance)
           .store_coins(surplus).store_uint(result, 16).store_uint(payout_id, 64).end_cell(), 1);
         send_payout(payout_id, q_amount, owner, q_requester, own_wallet,
-          checked_add_amount(max(backing, 0), lock));
+          checked_add_amount(backing, lock));
         return ();
       }
     } else {
@@ -1407,7 +1450,9 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
       if (found) {
         (int kind, int request_id, slice recipient, slice requester, int amount, _, _, _,
          int lock, cell undo) = unpack_payout(stored);
-        surplus = max(balance - q_delivered - others - (in_flight - amount), 0);
+        ;; amount <= in_flight: the target's amount is part of in_flight.
+        surplus = saturating_sub_amount(saturating_sub_amount(saturating_sub_amount(balance,
+          q_delivered), others), checked_sub_amount(in_flight, amount));
         if (surplus >= amount) {
           result = 0;
           payout_id = q_target;
@@ -1423,8 +1468,9 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
           send_log(begin_cell().store_uint(log::balance, 32).store_uint(query_id, 64)
             .store_uint(q_purpose, 1).store_uint(q_target, 64).store_coins(balance)
             .store_coins(surplus).store_uint(result, 16).store_uint(payout_id, 64).end_cell(), 1 + 2);
-          raw_reserve(max(backing - lock - bounty, 0), 2);
-          send_value(requester, lock + bounty, 1 + 2);
+          raw_reserve(saturating_sub_amount(saturating_sub_amount(backing, lock), bounty), 2);
+          ;; lock and bounty are each below MAX_COINS / 2 (the protocol bounds).
+          send_value(requester, checked_add_amount(lock, bounty), 1 + 2);
           send_value(q_requester, 0, 128 + 2);
           return ();
         }
@@ -1434,7 +1480,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     send_log(begin_cell().store_uint(log::balance, 32).store_uint(query_id, 64)
       .store_uint(q_purpose, 1).store_uint(q_target, 64).store_coins(balance)
       .store_coins(surplus).store_uint(result, 16).store_uint(payout_id, 64).end_cell(), 1 + 2);
-    raw_reserve(max(backing, 0), 2);
+    raw_reserve(backing, 2);
     send_value(q_requester, 0, 128 + 2);
     return ();
   }
@@ -1530,10 +1576,13 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     (int policy_version, int price, int fee, int bounty, int sla, int window, int open,
      int has_auth, slice auth, int rate, int max_tokens, int meta, int proof, int has_att,
      int att_id, cell att_key) = unpack_policy(policy_cell);
-    int backing = max(get_balance().pair_first() - msg_value, 0);
+    int backing = backing_or_zero(msg_value);
     int today = now() / 86400;
     int day_calls = today == call_day ? calls_today : 0;
-    int liability = pending_liability + refundable_liability + returned_liability + in_flight;
+    ;; The predicates below are saturating, so none can throw; the checked
+    ;; mutations after them are guarded by the predicates named at each.
+    int liability = saturating_add_amount(saturating_add_amount(pending_liability,
+      refundable_liability), saturating_add_amount(returned_liability, in_flight));
     cell terms = current_terms();
     int terms_hash = cell_hash(terms);
     ;; A key placed in the deploy data is checked as on the native rail; a key
@@ -1560,7 +1609,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
       reason = err::invalid_refund_claim_window;
     } elseif ((bounty < MINIMUM_CLEANUP_BOUNTY) | (bounty > MAXIMUM_CLEANUP_BOUNTY)) {
       reason = err::invalid_cleanup_bounty;
-    } elseif (fee < MINIMUM_STORAGE_FEE + bounty) {
+    } elseif (fee < saturating_add_amount(MINIMUM_STORAGE_FEE, bounty)) {
       reason = err::insufficient_storage_fee;
     } elseif ((price <= 0) | (max_tokens <= 0)) {
       reason = err::insufficient_payment;
@@ -1580,8 +1629,12 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
       reason = err::not_authorized;
     } elseif (amount != price) {
       reason = err::insufficient_payment;
-    } elseif (msg_value < fee + min_funding_value(code)) {
+    } elseif (msg_value < saturating_add_amount(fee, min_funding_value(code))) {
       reason = err::insufficient_payment;
+    } elseif ((saturating_add_amount(pending_liability, price) >= MAX_COINS)
+              | (saturating_add_amount(locked_storage_fees, fee) >= MAX_COINS)
+              | (saturating_add_amount(backing, fee) >= MAX_COINS)) {
+      reason = err::amount_range;
     } elseif (live_count >= MAX_LIVE_GLOBAL) {
       reason = err::capacity_exceeded_global;
     } elseif (caller_count(caller_live_counts, from) >= MAX_LIVE_PER_CALLER) {
@@ -1593,15 +1646,13 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     } elseif ((returned_count >= MAX_RETURNED_GLOBAL)
               | (caller_count(caller_returned_counts, from) >= MAX_RETURNED_PER_CALLER)) {
       reason = err::not_accepting_tokens;
-    } elseif (liability + price > min(max_tokens, asset_cap)) {
+    } elseif (saturating_add_amount(liability, price) > min(max_tokens, asset_cap)) {
       reason = err::exposure_cap;
     } elseif (expected_terms_hash != terms_hash) {
       reason = err::terms_mismatch;
-    } elseif (backing < locked_storage_fees + locked_outcome_fees + MINIMUM_OPERATING_RESERVE) {
+    } elseif (backing < saturating_add_amount(saturating_add_amount(locked_storage_fees,
+                locked_outcome_fees), MINIMUM_OPERATING_RESERVE)) {
       reason = err::operating_reserve_unfunded;
-    } elseif ((pending_liability + price >= MAX_COINS) | (locked_storage_fees + fee >= MAX_COINS)
-              | (backing + fee >= MAX_COINS)) {
-      reason = err::amount_range;
     }
 
     if (reason == 0) {
@@ -1620,10 +1671,12 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
       live_count += 1;
       call_day = today;
       calls_today = day_calls + 1;
-      pending_liability += price;
-      locked_storage_fees += fee;
+      ;; The amount_range predicate: pending_liability + price, locked_storage_fees
+      ;; + fee and backing + fee are each below MAX_COINS.
+      pending_liability = checked_add_amount(pending_liability, price);
+      locked_storage_fees = checked_add_amount(locked_storage_fees, fee);
       save_state();
-      raw_reserve(backing + fee, 0);
+      raw_reserve(checked_add_amount(backing, fee), 0);
       send_log(begin_cell()
         .store_uint(log::request_snapshot, 32)
         .store_uint(request_id, 64)
@@ -1639,12 +1692,16 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
 
     ;; Refused: the tokens go back to their sender as a funding return, paid
     ;; from its RETURN_BUDGET. No cap applies to it.
+    int return_lock = outcome_fee_lock();
     if ((amount <= 0) | (next_payout_id >= (1 << 64) - 1)
-        | (returns_in_flight >= MAX_RETURNS_IN_FLIGHT) | (~ canonical_basechain?(from))) {
+        | (returns_in_flight >= MAX_RETURNS_IN_FLIGHT) | (~ canonical_basechain?(from))
+        | (saturating_add_amount(in_flight, amount) >= MAX_COINS)
+        | (saturating_add_amount(locked_outcome_fees, return_lock) >= MAX_COINS)
+        | (saturating_add_amount(backing, return_lock) >= MAX_COINS)) {
       ;; No token to return, no payout id left, MAX_RETURNS_IN_FLIGHT returns
-      ;; already unresolved, or a sender no wallet can pay (off workchain 0, or
-      ;; not canonical): nothing is stored, the tokens are surplus and the log
-      ;; names the funding.
+      ;; already unresolved, a sender no wallet can pay (off workchain 0, or not
+      ;; canonical), or a ledger the return could not fit in Coins: nothing is
+      ;; stored, the tokens are surplus and the log names the funding.
       emit_funding(query_id, from, amount, reason, 0, 1);
       return ();
     }
@@ -1653,7 +1710,9 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     returns_in_flight += 1;
     save_state();
     emit_funding(query_id, from, amount, reason, payout_id, 1);
-    send_payout(payout_id, amount, from, from, own_wallet, backing + lock);
+    ;; The predicate above: backing + lock is below MAX_COINS (lock is
+    ;; outcome_fee_lock(), priced once per transaction as return_lock).
+    send_payout(payout_id, amount, from, from, own_wallet, checked_add_amount(backing, lock));
     return ();
   }
 
@@ -1728,8 +1787,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     throw_unless(err::request_id_overflow, next_payout_id < (1 << 64) - 1);
     throw_unless(err::invalid_destination, valid_destination?(destination));
     throw_unless(err::insufficient_execution_payment, msg_value >= payout_funding(code));
-    int backing = get_balance().pair_first() - msg_value;
-    throw_unless(err::insufficient_balance, backing >= 0);
+    int backing = backing_or_refuse(msg_value, err::insufficient_balance);
     (refunds, _) = refunds.udict_delete?(64, request_id);
     refundable_liability = checked_sub_amount(refundable_liability, price);
     slice own_wallet = token_wallet_address(my_address(), master, code);
@@ -1760,8 +1818,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     throw_unless(err::request_id_overflow, next_payout_id < (1 << 64) - 1);
     throw_unless(err::sweep_too_early, now() >= refund_claim_deadline);
     throw_unless(err::insufficient_execution_payment, msg_value >= payout_funding(code));
-    int backing = get_balance().pair_first() - msg_value;
-    throw_unless(err::insufficient_balance, backing >= 0);
+    int backing = backing_or_refuse(msg_value, err::insufficient_balance);
     if (in_pending) {
       (pending_requests, _) = pending_requests.udict_delete?(64, request_id);
       pending_liability = checked_sub_amount(pending_liability, price);
@@ -1790,8 +1847,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     throw_unless(err::request_id_overflow, next_payout_id < (1 << 64) - 1);
     throw_unless(err::invalid_destination, valid_destination?(destination));
     throw_unless(err::insufficient_execution_payment, msg_value >= payout_funding(code));
-    int backing = get_balance().pair_first() - msg_value;
-    throw_unless(err::insufficient_balance, backing >= 0);
+    int backing = backing_or_refuse(msg_value, err::insufficient_balance);
     returned_liability = checked_sub_amount(returned_liability, amount);
     slice own_wallet = token_wallet_address(my_address(), master, code);
     (int payout_id, int lock) = create_payout(kind::returned_claim, id, destination, sender, amount,
@@ -1813,8 +1869,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     throw_unless(err::sweep_too_early, now() >= return_deadline);
     throw_unless(err::payout_in_flight, paying == 0);
     throw_unless(err::insufficient_execution_payment, msg_value >= payout_funding(code));
-    int backing = get_balance().pair_first() - msg_value;
-    throw_unless(err::insufficient_balance, backing >= 0);
+    int backing = backing_or_refuse(msg_value, err::insufficient_balance);
     returned_liability = checked_sub_amount(returned_liability, amount);
     slice own_wallet = token_wallet_address(my_address(), master, code);
     (int payout_id, int lock) = create_payout(kind::returned_sweep, id, caller, sender, amount,
@@ -1915,8 +1970,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     in_msg.end_parse();
     ;; The TOS part as on the native rail: what live entries and outcome locks
     ;; need, and the operating reserve, are never the owner's.
-    int backing = get_balance().pair_first() - msg_value;
-    throw_unless(err::insufficient_revenue, backing >= 0);
+    int backing = backing_or_refuse(msg_value, err::insufficient_revenue);
     int remaining = backing;
     throw_unless(err::insufficient_revenue, remaining >= locked_storage_fees);
     remaining = checked_sub_amount(remaining, locked_storage_fees);
@@ -1969,7 +2023,7 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     (int q_active, _, _, int q_created_at, _, _, _, _, _) = unpack_query();
     throw_if(err::balance_query_busy, q_active & (now() < q_created_at + RECHECK_QUERY_TTL));
     throw_unless(err::insufficient_execution_payment,
-      msg_value >= PAYOUT_GAS_ALLOWANCE + payout_funding(code));
+      msg_value >= saturating_add_amount(PAYOUT_GAS_ALLOWANCE, payout_funding(code)));
     throw_unless(err::request_id_overflow, next_payout_id < (1 << 64) - 2);
     int q_id = next_payout_id;
     next_payout_id = q_id + 1;
@@ -1992,14 +2046,13 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     (int q_active, _, _, int q_created_at, _, _, _, _, _) = unpack_query();
     throw_if(err::balance_query_busy, q_active & (now() < q_created_at + RECHECK_QUERY_TTL));
     query_cell = empty_query();
-    int backing = get_balance().pair_first() - msg_value;
-    throw_unless(err::insufficient_balance, backing >= 0);
+    int backing = backing_or_refuse(msg_value, err::insufficient_balance);
     apply_outcome(id, kind, request_id, recipient, amount, undo, outcome::abandoned);
     (payouts, _) = payouts.udict_delete?(64, id);
     locked_outcome_fees = checked_sub_amount(locked_outcome_fees, lock);
     save_state();
     emit_outcome(id, kind, request_id, recipient, amount, outcome::abandoned, 1);
-    raw_reserve(max(backing - lock, 0), 0);
+    raw_reserve(saturating_sub_amount(backing, lock), 0);
     send_value(sender, 0, 128);
     return ();
   }
@@ -2041,6 +2094,14 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
 (slice, int, cell) get_asset_route() method_id {
   load_state();
   return unpack_route(route_cell);
+}
+
+;; The asset's token bridge parameter the route names: the slot the actor
+;; prices the bridge wallet from (then its negative slot), and admission
+;; refuses (1932) unless it is 79, 81, 82 or 83.
+int get_bridge_config_param() method_id {
+  load_state();
+  return route_bridge_param(route_cell);
 }
 
 slice get_own_wallet() method_id {
