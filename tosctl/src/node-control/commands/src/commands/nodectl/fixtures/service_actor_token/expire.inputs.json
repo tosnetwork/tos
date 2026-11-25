@@ -1,0 +1,89 @@
+{
+  "state": {
+    "actor": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+    "code_profile": "release",
+    "read_at": {
+      "seqno": 4242,
+      "root_hash": "abababababababababababababababababababababababababababababababab",
+      "gen_utime": 1800000000
+    },
+    "balance": "5000000000",
+    "get_service_data": {
+      "owner": "0:0101010101010101010101010101010101010101010101010101010101010101",
+      "active": true,
+      "policy_version": 2,
+      "price_per_call": "2500000",
+      "storage_fee": "200000000",
+      "cleanup_bounty": "100000000",
+      "response_sla": 3600,
+      "refund_claim_window": 3600,
+      "open_access": true,
+      "authorized_caller": null,
+      "rate_limit_per_day": 0,
+      "metadata_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "proof_scheme_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "attestor_key_id": null,
+      "max_token_liability": "1329227995784915872903807060280344575",
+      "next_request_id": 7,
+      "pending_count": 1,
+      "live_count": 2,
+      "next_payout_id": 12
+    },
+    "get_terms_hash": "632baf94f8fd2ba1da749e5cedf7b0f75ae1090485660ddd6bed5e0ec7142ded",
+    "get_token_ledger": [
+      "2500000",
+      "2500000",
+      "1000000",
+      "500000",
+      "10000000"
+    ],
+    "get_native_ledger": {
+      "withdrawable_revenue": "800000000",
+      "locked_storage_fees": "400000000",
+      "locked_outcome_fees": "300000000",
+      "call_day": 20833,
+      "calls_today": 3,
+      "revenue_payouts_in_flight": 1,
+      "returned_count": 1,
+      "returns_in_flight": 0,
+      "surplus_payouts_in_flight": 0
+    },
+    "get_funding_prices": [
+      "1300000000",
+      "300000000",
+      "1000000000",
+      "60000000",
+      "150000000",
+      "1200000000"
+    ],
+    "get_accepting_tokens": true,
+    "get_attestor_key_count": 0,
+    "current_attestor_key_stored": false,
+    "get_asset_route": {
+      "master": "0:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "wallet_code_boc": "te6ccgEBAQEAJAAARGJyaWRnZSB0b2tlbiB3YWxsZXQgY29kZSAoZml4dHVyZSk=",
+      "bridge_config_param": 79
+    },
+    "get_own_wallet": "0:0c6e7f3e5974a3fe5ede451fef4e040297bd04e5454b20d891f3063fcb0e0810"
+  },
+  "reads": {
+    "get_request": {
+      "caller": "0:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+      "price": "2500000",
+      "storage_fee": "200000000",
+      "cleanup_bounty": "100000000",
+      "response_deadline": 1800001800,
+      "refund_claim_deadline": 1800005400,
+      "policy_version": 2,
+      "request_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+      "terms_hash": "632baf94f8fd2ba1da749e5cedf7b0f75ae1090485660ddd6bed5e0ec7142ded",
+      "attestor_key_id": null
+    }
+  },
+  "sender": "0:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+  "query_id": 3,
+  "operation": "expire",
+  "arguments": {
+    "request_id": 5
+  }
+}

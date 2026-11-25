@@ -1,0 +1,25 @@
+{
+  "version": "tosctl.service-actor-token.prepared-message.v1",
+  "operation": "claim-refund",
+  "rail": "tos.service.service-actor-token.v1",
+  "code_profile": "release",
+  "actor": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "read_at": {
+    "seqno": 4242,
+    "root_hash": "abababababababababababababababababababababababababababababababab",
+    "gen_utime": 1800000000
+  },
+  "sender": "0:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+  "destination": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "value_nanotos": "2400000000",
+  "bounce": true,
+  "body_boc": "te6ccgEBAQEAOAAAa1NUQwQAAAAAAAAAAwAAAAAAAAAFgBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYEA==",
+  "body_hash": "3f47ab6c14971c8b4de702f2969ddc014c828cf46058e4ebf91b5802506e7256",
+  "details": {
+    "destination": "0:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+    "payout_funding": "1200000000",
+    "query_id": "3",
+    "request_id": "5",
+    "token_amount": "2500000"
+  }
+}

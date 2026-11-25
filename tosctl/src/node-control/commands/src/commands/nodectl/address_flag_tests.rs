@@ -209,6 +209,42 @@ fn every_address_flag_accepts_a_raw_masterchain_address() {
             "service_actor_cmd::ServiceActorBuildStateCmd",
             "owner",
         ),
+        check::<super::service_actor_token_cmd::TokenShowCmd>(
+            "service_actor_token_cmd::TokenShowCmd",
+            "address",
+        ),
+        check::<super::service_actor_token_cmd::TokenCallCmd>(
+            "service_actor_token_cmd::TokenCallCmd",
+            "address",
+        ),
+        check::<super::service_actor_token_cmd::TokenCallCmd>(
+            "service_actor_token_cmd::TokenCallCmd",
+            "sender",
+        ),
+        check::<super::service_actor_token_cmd::TokenSendCmd>(
+            "service_actor_token_cmd::TokenSendCmd",
+            "address",
+        ),
+        check::<super::service_actor_token_cmd::TokenSendCmd>(
+            "service_actor_token_cmd::TokenSendCmd",
+            "sender",
+        ),
+        check::<super::service_actor_token_cmd::TokenSendCmd>(
+            "service_actor_token_cmd::TokenSendCmd",
+            "destination",
+        ),
+        check::<super::service_actor_token_cmd::TokenSendCmd>(
+            "service_actor_token_cmd::TokenSendCmd",
+            "authorized_caller",
+        ),
+        check::<super::service_actor_token_cmd::TokenTopUpCmd>(
+            "service_actor_token_cmd::TokenTopUpCmd",
+            "address",
+        ),
+        check::<super::service_actor_token_cmd::TokenTopUpCmd>(
+            "service_actor_token_cmd::TokenTopUpCmd",
+            "sender",
+        ),
         check::<super::tx_cmd::TxBuildIntentCmd>("tx_cmd::TxBuildIntentCmd", "address"),
         check::<super::tx_cmd::TxSigningPayloadCmd>("tx_cmd::TxSigningPayloadCmd", "address"),
         check::<super::wallet_cmd::WalletSendCmd>("wallet_cmd::WalletSendCmd", "to"),
@@ -414,6 +450,42 @@ fn every_address_flag_refuses_an_option_or_a_non_address_as_its_value() {
         refuses_non_address::<super::service_actor_cmd::ServiceActorBuildStateCmd>(
             "service_actor_cmd::ServiceActorBuildStateCmd",
             "owner",
+        ),
+        refuses_non_address::<super::service_actor_token_cmd::TokenShowCmd>(
+            "service_actor_token_cmd::TokenShowCmd",
+            "address",
+        ),
+        refuses_non_address::<super::service_actor_token_cmd::TokenCallCmd>(
+            "service_actor_token_cmd::TokenCallCmd",
+            "address",
+        ),
+        refuses_non_address::<super::service_actor_token_cmd::TokenCallCmd>(
+            "service_actor_token_cmd::TokenCallCmd",
+            "sender",
+        ),
+        refuses_non_address::<super::service_actor_token_cmd::TokenSendCmd>(
+            "service_actor_token_cmd::TokenSendCmd",
+            "address",
+        ),
+        refuses_non_address::<super::service_actor_token_cmd::TokenSendCmd>(
+            "service_actor_token_cmd::TokenSendCmd",
+            "sender",
+        ),
+        refuses_non_address::<super::service_actor_token_cmd::TokenSendCmd>(
+            "service_actor_token_cmd::TokenSendCmd",
+            "destination",
+        ),
+        refuses_non_address::<super::service_actor_token_cmd::TokenSendCmd>(
+            "service_actor_token_cmd::TokenSendCmd",
+            "authorized_caller",
+        ),
+        refuses_non_address::<super::service_actor_token_cmd::TokenTopUpCmd>(
+            "service_actor_token_cmd::TokenTopUpCmd",
+            "address",
+        ),
+        refuses_non_address::<super::service_actor_token_cmd::TokenTopUpCmd>(
+            "service_actor_token_cmd::TokenTopUpCmd",
+            "sender",
         ),
         refuses_non_address::<super::tx_cmd::TxBuildIntentCmd>(
             "tx_cmd::TxBuildIntentCmd",

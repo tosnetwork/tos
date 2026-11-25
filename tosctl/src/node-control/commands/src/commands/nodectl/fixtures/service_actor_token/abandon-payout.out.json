@@ -1,0 +1,24 @@
+{
+  "version": "tosctl.service-actor-token.prepared-message.v1",
+  "operation": "abandon-payout",
+  "rail": "tos.service.service-actor-token.v1",
+  "code_profile": "release",
+  "actor": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "read_at": {
+    "seqno": 4242,
+    "root_hash": "abababababababababababababababababababababababababababababababab",
+    "gen_utime": 1800000000
+  },
+  "sender": "0:0101010101010101010101010101010101010101010101010101010101010101",
+  "destination": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "value_nanotos": "10000000",
+  "bounce": true,
+  "body_boc": "te6ccgEBAQEAFgAAKFNUQwwAAAAAAAAAAwAAAAAAAAAK",
+  "body_hash": "f357eb9f68d3ecd0024c1740e28555f8941e7aa8c713711750dad06afe8b3e43",
+  "details": {
+    "created_at": "1797407999",
+    "id": "10",
+    "kind": "3",
+    "query_id": "3"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "version": "tosctl.service-actor-token.prepared-message.v1",
+  "operation": "update-policy",
+  "rail": "tos.service.service-actor-token.v1",
+  "code_profile": "release",
+  "actor": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "read_at": {
+    "seqno": 4242,
+    "root_hash": "abababababababababababababababababababababababababababababababab",
+    "gen_utime": 1800000000
+  },
+  "sender": "0:0101010101010101010101010101010101010101010101010101010101010101",
+  "destination": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "value_nanotos": "10000000",
+  "bounce": true,
+  "body_boc": "te6ccgEBAgEAkAABlVNUQwYAAAAAAAAAAzLcbAQL68IAQF9eEAAAAcIAAADhCwAsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLAAAABkQC+vCAgEAgGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=",
+  "body_hash": "7cc6ca893826bec2a706985e90763dde85ad5ebf86d1ea4b36b3a3500e476fc8",
+  "details": {
+    "active": "true",
+    "authorized_caller": "0:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+    "cleanup_bounty": "100000000",
+    "max_token_liability": "50000000",
+    "metadata_hash": "6666666666666666666666666666666666666666666666666666666666666666",
+    "open_access": "false",
+    "price_per_call": "3000000",
+    "proof_scheme_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+    "query_id": "3",
+    "rate_limit_per_day": "100",
+    "refund_claim_window": "3600",
+    "response_sla": "7200",
+    "storage_fee": "200000000"
+  }
+}

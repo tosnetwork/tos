@@ -505,12 +505,19 @@ impl ClientJsonRpc {
     /// `seqno`, with the block the endpoint read it at, or `None` when every
     /// endpoint reports the parameter absent there. A reader that decodes only
     /// part of a value (ConfigParam 84 clients decode only the entries they pin)
-    /// needs the cell rather than a whole-value decode.
+    /// needs the cell rather than a whole-value decode. The id is signed: the
+    /// configuration dictionary is keyed by int32, and some contracts fall
+    /// back to a parameter's negative slot.
     pub async fn get_optional_config_param_cell_at(
         &self,
-        param_id: u32,
+        param_id: impl Into<i64>,
         seqno: u32,
     ) -> anyhow::Result<Option<(Cell, BlockIdExt)>> {
+        let param_id: i64 = param_id.into();
+        anyhow::ensure!(
+            i32::try_from(param_id).is_ok(),
+            "ConfigParam {param_id} is outside the int32 key range"
+        );
         anyhow::ensure!(seqno > 0, "a pinned read needs a masterchain seqno above zero");
         let seqno = seqno_param(seqno)?;
         let total = self.endpoints.len();

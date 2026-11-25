@@ -1,0 +1,33 @@
+{
+  "version": "tosctl.service-actor-token.prepared-message.v1",
+  "operation": "call",
+  "rail": "tos.service.service-actor-token.v1",
+  "code_profile": "release",
+  "actor": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "read_at": {
+    "seqno": 4242,
+    "root_hash": "abababababababababababababababababababababababababababababababab",
+    "gen_utime": 1800000000
+  },
+  "sender": "0:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+  "destination": "0:31a675602268845a52b9d96bb68d906d777d33f5e7a57138bede742b934a1fc9",
+  "value_nanotos": "3091952016",
+  "bounce": true,
+  "body_boc": "te6ccgEBAgEAoAABrg+KfqUAAAAAAAAACTJiWggAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLUALCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwJZaC8AQEAiFNUQwEzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM2Mrr5T4/Suh2nSeXO33sPda4QkEhWYN3WvtXg7HFC3t",
+  "body_hash": "eb4da460d325cb25b4d81bab0776a3dca241cd0a99a0df6db4c6ae03f0562678",
+  "details": {
+    "accepting_tokens": "true",
+    "asset_decimals": "6",
+    "asset_master": "0:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "expected_terms_hash": "632baf94f8fd2ba1da749e5cedf7b0f75ae1090485660ddd6bed5e0ec7142ded",
+    "forward_tos_amount": "3000000000",
+    "min_funding_value": "1300000000",
+    "minimum_forward": "1500000000",
+    "query_id": "9",
+    "request_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+    "storage_fee": "200000000",
+    "token_amount": "2500000",
+    "token_wallet": "0:31a675602268845a52b9d96bb68d906d777d33f5e7a57138bede742b934a1fc9",
+    "wallet_need": "3041952016"
+  }
+}

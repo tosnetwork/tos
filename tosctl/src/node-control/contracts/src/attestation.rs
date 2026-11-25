@@ -233,10 +233,41 @@ pub fn service_respond_domain_hash(
     response_deadline: u64,
     refund_claim_deadline: u64,
 ) -> anyhow::Result<[u8; 32]> {
+    service_respond_domain_hash_coins(
+        global_id,
+        contract_address,
+        caller,
+        request_id,
+        request_hash,
+        response_hash,
+        terms_hash,
+        u128::from(price),
+        response_deadline,
+        refund_claim_deadline,
+    )
+}
+
+/// [`service_respond_domain_hash`] for a price anywhere in the Coins range,
+/// as the token-rail actor's prices in atomic units may be.
+#[allow(clippy::too_many_arguments)]
+pub fn service_respond_domain_hash_coins(
+    global_id: i32,
+    contract_address: &MsgAddressInt,
+    caller: &MsgAddressInt,
+    request_id: u64,
+    request_hash: &[u8; 32],
+    response_hash: &[u8; 32],
+    terms_hash: &[u8; 32],
+    price: u128,
+    response_deadline: u64,
+    refund_claim_deadline: u64,
+) -> anyhow::Result<[u8; 32]> {
+    anyhow::ensure!(price < (1u128 << 120), "the price does not fit a Coins field");
+    let price: Coins = price.to_string().parse()?;
     let mut tail = BuilderData::new();
     caller.write_to(&mut tail)?;
     tail.append_u256(terms_hash)?;
-    Coins::new(price).write_to(&mut tail)?;
+    price.write_to(&mut tail)?;
     tail.append_u64(response_deadline)?;
     tail.append_u64(refund_claim_deadline)?;
 

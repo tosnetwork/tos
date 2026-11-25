@@ -39,6 +39,7 @@ pub(crate) mod pool_cmd;
 pub(crate) mod prediction_cmd;
 pub(crate) mod proof_attestation_cmd;
 pub(crate) mod service_actor_cmd;
+pub(crate) mod service_actor_token_cmd;
 pub(crate) mod service_api_cmd;
 pub(crate) mod service_cmd;
 pub(crate) mod settlement_assets_cmd;

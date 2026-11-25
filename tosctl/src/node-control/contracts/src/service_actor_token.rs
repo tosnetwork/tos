@@ -828,6 +828,174 @@ impl ServiceActorTokenContract {
         }))
     }
 
+    /// `get_funding_prices`: the TOS values tooling attaches, at the prices of
+    /// the state read. The call minimum must be its two parts' sum.
+    pub fn decode_funding_quote(stack: &TvmStackParser) -> anyhow::Result<FundingQuote> {
+        let quote = FundingQuote {
+            min_funding_value: u128_at(stack, 0)?,
+            admission_gas_allowance: u128_at(stack, 1)?,
+            return_budget: u128_at(stack, 2)?,
+            report_tos_amount: u128_at(stack, 3)?,
+            outcome_fee_lock: u128_at(stack, 4)?,
+            payout_funding: u128_at(stack, 5)?,
+        };
+        anyhow::ensure!(
+            quote.admission_gas_allowance.checked_add(quote.return_budget)
+                == Some(quote.min_funding_value),
+            "get_funding_prices: the call minimum is not its admission allowance plus its return \
+             budget"
+        );
+        Ok(quote)
+    }
+
+    /// `get_accepting_tokens`.
+    pub fn decode_accepting_tokens(stack: &TvmStackParser) -> anyhow::Result<bool> {
+        stack.bool(0)
+    }
+
+    /// `get_request(request_id)`; `None` when the request is not pending.
+    pub fn decode_request(stack: &TvmStackParser) -> anyhow::Result<Option<TokenPendingRequest>> {
+        if !stack.bool(0)? {
+            return Ok(None);
+        }
+        let mut s = stack.slice(1)?;
+        let caller = MsgAddressInt::construct_from(&mut s)?;
+        let response_deadline = stack.u64(5)?;
+        let refund_claim_deadline = stack.u64(6)?;
+        anyhow::ensure!(
+            response_deadline <= refund_claim_deadline,
+            "a pending request whose refund deadline precedes its response deadline"
+        );
+        Ok(Some(TokenPendingRequest {
+            caller,
+            price: u128_at(stack, 2)?,
+            storage_fee: stack.u64(3)?,
+            cleanup_bounty: stack.u64(4)?,
+            response_deadline,
+            refund_claim_deadline,
+            policy_version: u32_at(stack, 7)?,
+            request_hash: parse_hash(stack, 8)?,
+            terms_hash: parse_hash(stack, 9)?,
+            attestor_key_id: if stack.bool(10)? { Some(parse_hash(stack, 11)?) } else { None },
+        }))
+    }
+
+    /// The SRP2 response domain a signed `respond` to `request` signs, as the
+    /// native rail computes it, with the price in the asset's atomic units.
+    pub fn respond_domain_hash(
+        global_id: i32,
+        actor: &MsgAddressInt,
+        request_id: u64,
+        request: &TokenPendingRequest,
+        response_hash: [u8; 32],
+    ) -> anyhow::Result<[u8; 32]> {
+        crate::attestation::service_respond_domain_hash_coins(
+            global_id,
+            actor,
+            &request.caller,
+            request_id,
+            &request.request_hash,
+            &response_hash,
+            &request.terms_hash,
+            request.price,
+            request.response_deadline,
+            request.refund_claim_deadline,
+        )
+    }
+
+    /// `get_refund(request_id)`; `None` when no unclaimed refund exists.
+    pub fn decode_refund(stack: &TvmStackParser) -> anyhow::Result<Option<TokenRefund>> {
+        if !stack.bool(0)? {
+            return Ok(None);
+        }
+        let mut s = stack.slice(1)?;
+        Ok(Some(TokenRefund {
+            caller: MsgAddressInt::construct_from(&mut s)?,
+            price: u128_at(stack, 2)?,
+            storage_fee: stack.u64(3)?,
+            cleanup_bounty: stack.u64(4)?,
+            refund_claim_deadline: stack.u64(5)?,
+        }))
+    }
+
+    /// `get_request_attestor_key(request_id)`: the ML-DSA-44 public key the
+    /// request snapshotted, in its canonical stored form.
+    pub fn decode_attestor_key(stack: &TvmStackParser) -> anyhow::Result<Vec<u8>> {
+        let stored = stack.cell(0)?;
+        crate::native_registry::read_stored_bytes(
+            &stored,
+            crate::native_registry::NATIVE_REGISTRY_PUBLIC_KEY_BYTES,
+        )
+    }
+
+    /// Whether the actor's data holds `key_id` among the attestor keys its
+    /// pending requests name (`attestor_key_of`). Admission refuses a new key
+    /// with 1944 while the store is full; a key already stored is admitted.
+    pub fn attestor_key_stored(data: &Cell, key_id: &[u8; 32]) -> anyhow::Result<bool> {
+        let mut root = SliceData::load_cell_ref(data)?;
+        MsgAddressInt::construct_from(&mut root)?;
+        root.get_next_bits(1 + 64 + 32 + 32 + 64)?;
+        anyhow::ensure!(root.remaining_references() == 4, "actor data has another layout");
+        let requests = root.reference(2)?;
+        let mut rs = SliceData::load_cell(requests)?;
+        for _ in 0..3 {
+            rs.get_next_dictionary()?;
+        }
+        let keys = chain_block::HashmapE::with_hashmap(256, rs.get_next_dictionary()?);
+        exhausted(&rs, "actor request dictionaries")?;
+        Ok(keys.get(SliceData::from_raw(key_id.to_vec(), 256))?.is_some())
+    }
+
+    /// The asset's bridge wallet gas and storage reserve, read from a token
+    /// bridge ConfigParam as the bridge wallet reads it
+    /// (`get_token_bridge_config`): the prefix, the two addresses, the oracle
+    /// dictionary and the state flags are skipped, and the prices are the
+    /// third and fourth Coins of the prices reference. Anything after them is
+    /// not read. Returns (`wallet_gas_consumption`,
+    /// `wallet_min_tos_for_storage`).
+    pub fn bridge_wallet_terms(param: &Cell) -> anyhow::Result<(u128, u128)> {
+        let mut s = SliceData::load_cell_ref(param)?;
+        s.get_next_bits(8 + 256 + 256)?;
+        if s.get_next_bit()? {
+            s.checked_drain_reference()?;
+        }
+        s.get_next_bits(8)?;
+        let mut prices = SliceData::load_cell(s.checked_drain_reference()?)?;
+        Coins::construct_from(&mut prices)?;
+        Coins::construct_from(&mut prices)?;
+        let reserve = Coins::construct_from(&mut prices)?.as_u128();
+        let gas = Coins::construct_from(&mut prices)?.as_u128();
+        Ok((gas, reserve))
+    }
+
+    /// The destination check of `claim_refund` and `claim_returned`
+    /// (`valid_destination?`): a canonical `addr_std` on workchain 0, without
+    /// anycast, other than the actor. The actor refuses anything else with
+    /// 1934 `invalid_destination`.
+    pub fn check_destination(
+        destination: &MsgAddressInt,
+        actor: &MsgAddressInt,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            canonical_basechain(destination),
+            "the destination {destination} is not a canonical address on workchain 0 without \
+             anycast (the actor refuses it with {})",
+            err::INVALID_DESTINATION
+        );
+        anyhow::ensure!(
+            !(canonical_basechain(actor) && destination.address() == actor.address()),
+            "the destination is the actor itself (the actor refuses it with {})",
+            err::INVALID_DESTINATION
+        );
+        Ok(())
+    }
+
+    /// Whether `address` is a canonical `addr_std` on workchain 0 without
+    /// anycast: the only form of caller, claimant and owner the actor serves.
+    pub fn is_canonical_basechain(address: &MsgAddressInt) -> bool {
+        canonical_basechain(address)
+    }
+
     pub fn decode_returned(stack: &TvmStackParser) -> anyhow::Result<Option<ReturnedData>> {
         if !stack.bool(0)? {
             return Ok(None);
@@ -863,6 +1031,52 @@ pub struct ServiceActorTokenData {
     pub pending_count: u32,
     pub live_count: u32,
     pub next_payout_id: u64,
+}
+
+/// `get_funding_prices`, in nanoTOS at the prices of the state read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FundingQuote {
+    /// A call's least forward value, without the storage fee.
+    pub min_funding_value: u128,
+    pub admission_gas_allowance: u128,
+    pub return_budget: u128,
+    pub report_tos_amount: u128,
+    pub outcome_fee_lock: u128,
+    /// What a payout-creating op must attach.
+    pub payout_funding: u128,
+}
+
+impl FundingQuote {
+    /// The funding check's inputs at the same state: the actor's storage fee
+    /// and `get_accepting_tokens`.
+    pub fn prices(&self, storage_fee: u64, accepting_tokens: bool) -> FundingPrices {
+        FundingPrices { storage_fee, min_funding_value: self.min_funding_value, accepting_tokens }
+    }
+}
+
+/// A pending request (`get_request`), its price in the asset's atomic units.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TokenPendingRequest {
+    pub caller: MsgAddressInt,
+    pub price: u128,
+    pub storage_fee: u64,
+    pub cleanup_bounty: u64,
+    pub response_deadline: u64,
+    pub refund_claim_deadline: u64,
+    pub policy_version: u32,
+    pub request_hash: [u8; 32],
+    pub terms_hash: [u8; 32],
+    pub attestor_key_id: Option<[u8; 32]>,
+}
+
+/// An unclaimed refund (`get_refund`), its price in the asset's atomic units.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TokenRefund {
+    pub caller: MsgAddressInt,
+    pub price: u128,
+    pub storage_fee: u64,
+    pub cleanup_bounty: u64,
+    pub refund_claim_deadline: u64,
 }
 
 /// The token ledger, in the asset's atomic units.
@@ -1180,6 +1394,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chain_block::AnycastInfo;
     use tl_api::tos::tvm::{
         Number, StackEntry,
         numberdecimal::NumberDecimal,
@@ -1401,5 +1616,107 @@ mod tests {
             assert!(ServiceActorTokenContract::build_data(&bad).is_err(), "{name}");
             assert!(ServiceActorTokenContract::initial_terms(&bad).is_err(), "{name}");
         }
+    }
+
+    #[test]
+    fn a_destination_must_be_canonical_on_workchain_0_and_not_the_actor() {
+        let actor = basechain(9);
+        assert!(ServiceActorTokenContract::check_destination(&basechain(3), &actor).is_ok());
+        let anycast =
+            AnycastInfo::with_rewrite_pfx(SliceData::new(vec![0b1010_0000, 0x80])).unwrap();
+        let cases = [
+            ("the actor", actor.clone()),
+            ("workchain -1", MsgAddressInt::with_standart(None, -1, [3; 32].into()).unwrap()),
+            ("workchain 1", MsgAddressInt::with_standart(None, 1, [3; 32].into()).unwrap()),
+            (
+                "anycast",
+                MsgAddressInt::with_standart(Some(anycast.clone()), 0, [3; 32].into()).unwrap(),
+            ),
+            (
+                "addr_var",
+                MsgAddressInt::with_variant(None, 0, SliceData::new(vec![3; 33])).unwrap(),
+            ),
+        ];
+        for (name, destination) in cases {
+            let error =
+                ServiceActorTokenContract::check_destination(&destination, &actor).unwrap_err();
+            assert!(error.to_string().contains("1934"), "{name}: {error:#}");
+            assert!(
+                !ServiceActorTokenContract::is_canonical_basechain(&destination)
+                    || destination == actor,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_funding_quote_and_pending_request_decoders_check_their_shape() {
+        let quote = |min: &str| {
+            TvmStackParser::new(
+                [min, "300", "700", "40", "50", "900"].into_iter().map(number).collect(),
+            )
+        };
+        let decoded = ServiceActorTokenContract::decode_funding_quote(&quote("1000")).unwrap();
+        assert_eq!(decoded.payout_funding, 900);
+        assert_eq!(
+            decoded.prices(200, true),
+            FundingPrices { storage_fee: 200, min_funding_value: 1_000, accepting_tokens: true }
+        );
+        assert!(ServiceActorTokenContract::decode_funding_quote(&quote("999")).is_err());
+        assert!(ServiceActorTokenContract::decode_funding_quote(&quote("-1")).is_err());
+
+        let request = |response: &str, refund: &str| {
+            TvmStackParser::new(vec![
+                number("1"),
+                address_entry(&basechain(3)),
+                number("1000"),
+                number("200000000"),
+                number("100000000"),
+                number(response),
+                number(refund),
+                number("2"),
+                number("7"),
+                number("8"),
+                number("0"),
+                number("0"),
+            ])
+        };
+        let pending =
+            ServiceActorTokenContract::decode_request(&request("100", "200")).unwrap().unwrap();
+        assert_eq!((pending.price, pending.caller.clone()), (1_000, basechain(3)));
+        assert_eq!(pending.attestor_key_id, None);
+        assert!(ServiceActorTokenContract::decode_request(&request("201", "200")).is_err());
+        let absent = TvmStackParser::new(vec![number("0")]);
+        assert_eq!(ServiceActorTokenContract::decode_request(&absent).unwrap(), None);
+
+        // A price above 64 bits signs; one past the Coins range does not.
+        let mut large = pending.clone();
+        large.price = u128::from(u64::MAX) + 1;
+        assert!(
+            ServiceActorTokenContract::respond_domain_hash(7, &basechain(9), 1, &large, [5; 32])
+                .is_ok()
+        );
+        large.price = 1u128 << 120;
+        assert!(
+            ServiceActorTokenContract::respond_domain_hash(7, &basechain(9), 1, &large, [5; 32])
+                .is_err()
+        );
+        assert_eq!(
+            ServiceActorTokenContract::respond_domain_hash(7, &basechain(9), 1, &pending, [5; 32])
+                .unwrap(),
+            crate::attestation::service_respond_domain_hash(
+                7,
+                &basechain(9),
+                &basechain(3),
+                1,
+                &pending.request_hash,
+                &[5; 32],
+                &pending.terms_hash,
+                1_000,
+                100,
+                200,
+            )
+            .unwrap()
+        );
     }
 }

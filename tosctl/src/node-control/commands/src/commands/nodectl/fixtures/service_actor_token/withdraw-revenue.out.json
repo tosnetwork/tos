@@ -1,0 +1,24 @@
+{
+  "version": "tosctl.service-actor-token.prepared-message.v1",
+  "operation": "withdraw-revenue",
+  "rail": "tos.service.service-actor-token.v1",
+  "code_profile": "release",
+  "actor": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "read_at": {
+    "seqno": 4242,
+    "root_hash": "abababababababababababababababababababababababababababababababab",
+    "gen_utime": 1800000000
+  },
+  "sender": "0:0101010101010101010101010101010101010101010101010101010101010101",
+  "destination": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "value_nanotos": "2400000000",
+  "bounce": true,
+  "body_boc": "te6ccgEBAQEAFgAAKFNUQwkAAAAAAAAAAzPQkAQdzWUA",
+  "body_hash": "1161d8dd542bb008484c6230d4e1e1280e87d9a36d37c71985260bed7947db8b",
+  "details": {
+    "minimum_value": "1200000000",
+    "query_id": "3",
+    "token_amount": "4000000",
+    "tos_amount": "500000000"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "version": "tosctl.service-actor-token.prepared-message.v1",
+  "operation": "top-up-wallet",
+  "rail": "tos.service.service-actor-token.v1",
+  "code_profile": "release",
+  "actor": "0:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "read_at": {
+    "seqno": 4242,
+    "root_hash": "abababababababababababababababababababababababababababababababab",
+    "gen_utime": 1800000000
+  },
+  "sender": "0:0101010101010101010101010101010101010101010101010101010101010101",
+  "destination": "0:0c6e7f3e5974a3fe5ede451fef4e040297bd04e5454b20d891f3063fcb0e0810",
+  "value_nanotos": "700000000",
+  "bounce": true,
+  "body_boc": "te6ccgEBAQEAAgAAAA==",
+  "body_hash": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7",
+  "details": {
+    "actor_balance": "5000000000"
+  }
+}
