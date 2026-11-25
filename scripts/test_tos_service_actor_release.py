@@ -147,7 +147,9 @@ class TestProfile(unittest.TestCase):
         )
         self.assertEqual(profiles.PROFILES[profiles.RELEASE]["overrides"], {})
         self.assertEqual(profiles.PROFILES[profiles.TOKEN]["overrides"], {})
-        self.assertEqual(profiles.PROFILES[profiles.TOKEN_TEST]["overrides"], profiles.TEST_OVERRIDES)
+        self.assertEqual(
+            profiles.PROFILES[profiles.TOKEN_TEST]["overrides"], profiles.TEST_OVERRIDES
+        )
 
     def test_the_token_test_source_differs_from_its_source_in_two_lines(self):
         with tempfile.TemporaryDirectory() as work:
@@ -155,8 +157,10 @@ class TestProfile(unittest.TestCase):
             original = (ROOT / profiles.TOKEN_SOURCE).read_text().splitlines()
             changed = [(a, b) for a, b in zip(original, derived) if a != b]
             self.assertEqual(len(original), len(derived))
-            self.assertEqual([a.split(" = ")[0] for a, _ in changed],
-                             ["const int MIN_RESPONSE_SLA", "const int MIN_REFUND_CLAIM_WINDOW"])
+            self.assertEqual(
+                [a.split(" = ")[0] for a, _ in changed],
+                ["const int MIN_RESPONSE_SLA", "const int MIN_REFUND_CLAIM_WINDOW"],
+            )
 
     def test_only_the_named_values_change(self):
         derived = profiles.apply_overrides(self.SOURCE, profiles.TEST_OVERRIDES)

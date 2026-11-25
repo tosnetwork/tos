@@ -552,6 +552,20 @@ jobs:
           cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test token_bridge_sandbox
           python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR" --expected-records 6779
 
+      # The token-rail Service Actor runs on the bridge's network with the real
+      # wallets; every transaction of its suite, the actor's included, is
+      # replayed in libemulator with the same outcome and the same gas.
+      - name: Token-rail Service Actor transactions agree with the native engine
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+          TOKEN_BRIDGE_TRACE_DIR: ${{ runner.temp }}/service-actor-token-trace
+        run: |
+          test ! -e "$TOKEN_BRIDGE_TRACE_DIR"
+          cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test service_actor_token_sandbox
+          python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR" --expected-records 13394
+
       # From version 15 a failed action phase also pays the fines of the
       # messages it already sent; both executors must charge them identically.
       - name: Failed-action fines agree between the executors

@@ -36,9 +36,11 @@ sys.path.insert(0, str(ROOT / "test/auth-extensions"))
 from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
 
 DEFAULT_CONFIG = ROOT / "tosctl/src/executor/real_boc/default_config.boc"
-MAX_TRACE_RECORDS = 10_000
+# Sized for the largest pinned population, the token-rail Service Actor suite
+# (about 13,400 records, 390 MB), with room to grow.
+MAX_TRACE_RECORDS = 20_000
 MAX_TRACE_FILE = 16 * 1024 * 1024
-MAX_TRACE_BYTES = 256 * 1024 * 1024
+MAX_TRACE_BYTES = 512 * 1024 * 1024
 
 
 def trace_population(directory: Path, expected: int | None = None) -> list[Path]:

@@ -62,6 +62,8 @@ def expected_fields(name: str) -> dict:
         "source": selected["source"],
         "artifact_base64": selected["artifact_base64"],
     }
+
+
 PROFILE_FIELDS = ("profile", "test_only", "notice", "constant_overrides", "release_manifest")
 TEST_NOTICE = "TEST NETWORKS ONLY"
 COMMIT = re.compile(r"^[0-9a-f]{40}$")

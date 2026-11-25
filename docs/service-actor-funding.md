@@ -272,3 +272,48 @@ mutation, source discovery and Python evidence), `rust-workspace-tests-compile`
 merge gates. The local result table is not a statement that these checks have
 completed on a subsequently published commit. Live Service Actor CLI, wallet,
 RPC and finality rehearsal was not run locally.
+
+## Token rail
+
+The token-rail actor (`crypto/smartcont/service-actor-token-code.fc`, release
+`tos-service-actor-token-v1`) keeps the native ledger above for storage fees,
+TOS revenue and the operating reserve, and adds a token ledger in the asset's
+atomic units: pending, refundable, returned, in flight and token revenue. Its
+wallet must hold at least their sum; the rest is surplus. Token principal is
+never counted as TOS backing.
+
+A call is funded by a token transfer to the actor whose `forward_tos_amount`
+is at least `storage_fee` plus `MIN_FUNDING_VALUE`. A payout op attaches at
+least `PAYOUT_GAS_ALLOWANCE` plus `RETURN_BUDGET`. Every value is priced at run
+time from the basechain's gas and forwarding prices, and the getter
+`get_funding_prices` returns them, in this order: `MIN_FUNDING_VALUE`,
+`ADMISSION_GAS_ALLOWANCE`, `RETURN_BUDGET`, `report_tos_amount`,
+`outcome_fee_lock` and the payout op minimum.
+
+A payout reserves its `outcome_fee_lock` from the requester's value. Everything
+above the actor's backing and that lock goes to the actor's wallet with the
+reported transfer. What the wallets do not spend returns to the requester as
+the recipient wallet's excess. On a refusal or a bounce, it returns with the
+outcome's change instead.
+
+### Gas
+
+Each constant is at least twice the most either engine measured at capacity,
+with every dictionary at its deepest shape
+(`tests/service_actor_token/gas.rs`). The native engine replays every measured
+transaction and reports the same gas.
+
+| Constant | Value | Most measured | Bounds |
+| --- | --- | --- | --- |
+| `PRE_ACCEPT_GAS` | 20,000 | 9,675 | an outcome handler up to its `set_gas_limit` |
+| `OUTCOME_HANDLER_GAS` | 240,000 | 116,038 | a whole outcome handler (a refund or sweep refused at R) |
+| `ADMISSION_GAS` | 260,000 | 126,285 | the notification handler |
+| `ABSENT_REPORT_GAS` | 20,000 | 7,934 | the answer to a report of an absent payout |
+
+A re-reporter sends `rereport_refusal` to the actor's wallet with at least
+`get_rereport_funding()`. That is twice, at current prices, the cost of three
+legs and two forwardings:
+
+- S's re-report (`S_REREPORT_GAS`, 19,042);
+- the actor's absent-payout answer (`ABSENT_REPORT_GAS`);
+- S's `clear_refusal` (`CLEAR_REFUSAL_GAS`, 52,000).

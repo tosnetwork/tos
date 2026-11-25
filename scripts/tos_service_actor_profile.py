@@ -91,8 +91,11 @@ PROFILES = {
 }
 
 # Each test profile and the release profile it derives from.
-TEST_PAIRS = tuple((selected["release"], name) for name, selected in PROFILES.items()
-                   if selected["release"] is not None)
+TEST_PAIRS = tuple(
+    (selected["release"], name)
+    for name, selected in PROFILES.items()
+    if selected["release"] is not None
+)
 
 INCLUDE = re.compile(r'^\s*#include\s+"([^"]+)"\s*;', re.MULTILINE)
 
