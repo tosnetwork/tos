@@ -57,14 +57,18 @@ pub(crate) mod testing {
     impl PollClock for FakeClock {
         async fn sleep(&self, duration: Duration) {
             pause_gate();
-            let mut started = false;
+            let mut ready_at = None;
             std::future::poll_fn(|cx| {
-                if started {
-                    return Poll::Ready(());
+                if let Some(ready_at) = ready_at {
+                    return if self.elapsed.get() >= ready_at {
+                        Poll::Ready(())
+                    } else {
+                        Poll::Pending
+                    };
                 }
-                started = true;
                 self.sleeps.borrow_mut().push(duration);
                 let next = self.elapsed.get().checked_add(duration).expect("fake clock overflow");
+                ready_at = Some(next);
                 self.elapsed.set(self.deadline.get().map_or(next, |deadline| next.min(deadline)));
                 cx.waker().wake_by_ref();
                 Poll::Pending
@@ -84,10 +88,13 @@ pub(crate) mod testing {
             let _reset = scopeguard::guard(previous, |before| self.deadline.set(before));
             let mut future = std::pin::pin!(future);
             std::future::poll_fn(|cx| {
-                // Like Tokio, poll the operation before checking its deadline.
+                // A sleep may move logical time while being polled. Give the
+                // operation another poll at that instant before the deadline,
+                // just as Tokio does when sleep and timeout become ready together.
+                let elapsed_before_poll = self.elapsed.get();
                 match future.as_mut().poll(cx) {
                     Poll::Ready(value) => Poll::Ready(Ok(value)),
-                    Poll::Pending if self.elapsed.get() >= deadline => {
+                    Poll::Pending if elapsed_before_poll >= deadline => {
                         Poll::Ready(Err(PollTimeout))
                     }
                     Poll::Pending => Poll::Pending,
@@ -100,6 +107,8 @@ pub(crate) mod testing {
     // A blocking worker prevents Tokio's idle auto-advance from racing real
     // loopback I/O. Each tick advances a fixed duration, never the wall-clock
     // delta: suspension therefore cannot consume a transport deadline.
+    // Requires Tokio >= 1.24.0: a running spawn_blocking task inhibits paused
+    // time's auto-advance (Tokio change #5115). tosctl/src/Cargo.lock pins 1.50.0.
     pub(crate) struct FrozenNetworkTime {
         stop: Option<std::sync::mpsc::Sender<()>>,
     }
@@ -128,6 +137,8 @@ pub(crate) mod testing {
     }
 
     // Opt-in rendezvous for the external SIGSTOP control, never a test deadline.
+    // VOTE_CMD_PAUSE_GATE is only for the control script's single-test runs;
+    // setting it otherwise blocks on stdin until a controller supplies a byte.
     pub(crate) fn pause_gate() {
         static ONCE: std::sync::Once = std::sync::Once::new();
         if std::env::var_os("VOTE_CMD_PAUSE_GATE").is_none() {
@@ -177,6 +188,48 @@ mod tests {
             .await;
         assert!(production.is_err());
         assert_eq!(started.elapsed(), limit);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_exact_deadline_polls_the_read_before_timing_out() {
+        use std::cell::Cell;
+
+        async fn read_at_deadline<C: PollClock>(
+            clock: &C,
+            reads: &Cell<usize>,
+            finish: bool,
+        ) -> bool {
+            clock
+                .timeout(Duration::from_secs(9), async {
+                    loop {
+                        clock.sleep(Duration::from_secs(3)).await;
+                        reads.set(reads.get() + 1);
+                        if reads.get() == 3 {
+                            if finish {
+                                return;
+                            }
+                            std::future::pending::<()>().await;
+                        }
+                    }
+                })
+                .await
+                .is_ok()
+        }
+
+        for finish in [false, true] {
+            let fake = FakeClock::default();
+            let fake_reads = Cell::new(0);
+            let real_reads = Cell::new(0);
+            let simulated = read_at_deadline(&fake, &fake_reads, finish).await;
+            let started = tokio::time::Instant::now();
+            let production = read_at_deadline(&TokioClock, &real_reads, finish).await;
+            assert_eq!(real_reads.get(), 3, "Tokio starts the read at the deadline");
+            assert_eq!(fake_reads.get(), real_reads.get());
+            assert_eq!(simulated, production);
+            assert_eq!(simulated, finish);
+            assert_eq!(fake.elapsed(), Duration::from_secs(9));
+            assert_eq!(started.elapsed(), Duration::from_secs(9));
+        }
     }
 
     #[tokio::test(start_paused = true)]
