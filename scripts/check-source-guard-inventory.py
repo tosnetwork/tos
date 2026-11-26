@@ -55,6 +55,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "pq-unsafe-rotation-source-mutations",
         "quic-ctest-isolation-source",
         "release-artifacts-binding",
+        "local-token-refusal-fixture",
         "security-remediation-mutation-anchors",
         "security-remediation-tooling-self-test",
         "simplex-exact-ancestor-source-guard",
