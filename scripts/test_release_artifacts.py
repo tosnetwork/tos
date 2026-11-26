@@ -1442,10 +1442,23 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
         "-DCMAKE_BUILD_TYPE=Release \\\n",
         "-DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \\\n",
         '-DTOS_ARCH="$CPU" -DPORTABLE="$CPU" \\\n',
+        "-DTOS_STATIC_GSL=ON \\\n",
         "-DTOS_USE_JEMALLOC=ON\n",
         "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct HEAD)\nexport SOURCE_DATE_EPOCH\n",
         "export CCACHE_DISABLE=1\n",
         '[ "$(cached TOS_USE_JEMALLOC)" = ON ]',
+        # GSL is linked from its archive, whose soname would tie the binaries
+        # to one Ubuntu release, and the GSL code path is still compiled in.
+        '\n[ "$(cached TOS_STATIC_GSL)" = ON ] || die "TOS_STATIC_GSL is not ON"\n',
+        '\nfor t in "${TARGETS[@]}"; do\n'
+        '  bin="$BUILD/${PATHS[$t]}"\n'
+        "  if readelf -d \"$bin\" | grep 'NEEDED.*\\[libgsl' >/dev/null; "
+        'then die "$t needs the GSL shared library"; fi\n'
+        "done\n",
+        '\nnm --defined-only "$BUILD/${PATHS[validator-engine]}" '
+        "| grep -E ' [Tt] gsl_cdf_negative_binomial_P$' >/dev/null \\\n"
+        '  || die "validator-engine does not carry the GSL functions"\n',
+        "TOS_USE_JEMALLOC=ON TOS_STATIC_GSL=ON\"\n",
         # ... and with the hardware SHA-256 backend of its architecture, which
         # the build record names.
         "\nunset TOS_SLHDSA_SHA_NI TOS_SLHDSA_ARMV8_SHA2\n",
@@ -1686,6 +1699,33 @@ class NodeBinaryReleaseTest(unittest.TestCase):
             "stats check deleted": script.replace(stats, ""),
             "commit check deleted": script.replace(
                 '  "$BUILD/${PATHS[$t]}" -V | grep -q "Commit: $REV" ', "  true "
+            ),
+        }
+        for label, mutant in mutants.items():
+            with self.subTest(mutant=label):
+                self.assertNotEqual(mutant, script)
+                self.assertNotEqual(node_release_problems(config, workflow, mutant), [])
+
+    def test_a_dropped_static_gsl_check_is_refused(self) -> None:
+        config, workflow, script = self.inputs()
+        self.assertEqual(node_release_problems(config, workflow, script), [])
+        mutants = {
+            "static GSL not configured": script.replace("  -DTOS_STATIC_GSL=ON \\\n", ""),
+            "static GSL configured OFF": script.replace(
+                "-DTOS_STATIC_GSL=ON", "-DTOS_STATIC_GSL=OFF"
+            ),
+            "cache check deleted": script.replace(
+                '[ "$(cached TOS_STATIC_GSL)" = ON ] || die "TOS_STATIC_GSL is not ON"\n', ""
+            ),
+            "NEEDED check tolerated": script.replace(
+                'then die "$t needs the GSL shared library"',
+                'then echo "$t needs the GSL shared library"',
+            ),
+            "symbol check deleted": script.replace(
+                '  || die "validator-engine does not carry the GSL functions"\n', ""
+            ),
+            "build record drops the flag": script.replace(
+                "TOS_USE_JEMALLOC=ON TOS_STATIC_GSL=ON\"", 'TOS_USE_JEMALLOC=ON"'
             ),
         }
         for label, mutant in mutants.items():

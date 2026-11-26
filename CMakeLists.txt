@@ -93,6 +93,7 @@ endif()
 option(TOS_USE_ROCKSDB "Use \"ON\" to enable RocksDb." ${NOT_TOS_ONLY_TOSLIB})
 option(TOS_USE_ABSEIL "Use \"ON\" to enable Abseil." ${NOT_TOS_ONLY_TOSLIB})
 option(TOS_USE_JEMALLOC "Use \"ON\" to enable JeMalloc." OFF)
+option(TOS_STATIC_GSL "Use \"ON\" to link GSL statically, so the binaries do not need the GSL shared library." OFF)
 #END internal
 
 option(TOSLIB_ENABLE_JNI "Use \"ON\" to enable JNI-compatible TosLib API.")
