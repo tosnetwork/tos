@@ -261,6 +261,32 @@ wallet send --via-proxy  Send through a proxy contract
 wallet broadcast-prepared Broadcast the exact BOC emitted by send --build-only
 ```
 
+`wallet send --valid-until <unix seconds>` writes that absolute expiry into
+the signed message instead of the default (local clock + 120 s). The value
+must be a decimal u32 that leaves at least 10 s and at most 3600 s from the
+local clock: the wallet refuses a body once `valid_until <= now()`, so a
+closer deadline cannot be delivered, and the wallet contracts set no upper
+bound, so the one-hour cap keeps the window in which an undelivered message
+can still execute bounded. V1R3 bodies carry no expiry, so `--valid-until`
+and `--build-only` refuse a V1R3 wallet. The same inputs (wallet, seqno,
+destination, amount, body, bounce, state init, `--valid-until`) give the same
+message bytes.
+
+`--build-only` prints one JSON object, schema `tosctl.wallet-prepared-send.v2`
+(the domain commands' `--build-only` print the same envelope):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `version` | string | `tosctl.wallet-prepared-send.v2` |
+| `valid_until` | integer (u32 unix seconds) | the expiry signed into the message, read back from its body; the `--valid-until` value when given, otherwise the default |
+| `message_boc_base64` | string | the exact external message BOC, standard Base64 |
+| `wallet` | string | the configured wallet name |
+| `payer` | string | the wallet address |
+| `destination` | string | the destination address |
+| `amount_nanotos` | integer | the transferred value |
+| `body_hash` | string | representation hash of the internal message body (`wallet send`: `tvm-cell-sha256:<hex>`; domain commands: bare hex) |
+| `state_init_hash` | string or null | `wallet send`: `tvm-cell-sha256:<hex>` of the attached StateInit, or `""` when none; domain commands: `null` |
+
 Automation that needs a crash-safe broadcast boundary can first use
 `wallet send --build-only` to construct and sign an external message, validate
 the returned versioned JSON, then submit those exact bytes with

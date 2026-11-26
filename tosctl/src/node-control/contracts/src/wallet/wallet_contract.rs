@@ -61,8 +61,18 @@ pub struct WalletContract {
 }
 
 impl WalletContract {
-    const LIFETIME: u32 = 120; // 2 minutes
+    /// Default message lifetime in seconds: a message built without an
+    /// explicit expiry is valid until the local clock plus this value.
+    pub const LIFETIME: u32 = 120; // 2 minutes
     const V5_PREFIX_SIGNED_EXTERNAL: u32 = 0x7369_676e;
+
+    /// The expiry the default path signs: the local clock plus `LIFETIME`.
+    pub fn default_valid_until() -> anyhow::Result<u32> {
+        u32::try_from(time_format::now())
+            .ok()
+            .and_then(|now| now.checked_add(Self::LIFETIME))
+            .ok_or_else(|| anyhow::anyhow!("the local clock does not fit a 32-bit expiry"))
+    }
 
     /// `global_id` must be the value the target chain publishes in
     /// ConfigParam 19; there is deliberately no default, because a wallet
@@ -190,6 +200,7 @@ impl WalletContract {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn signing_body(
         &self,
         seqno: u32,
@@ -198,6 +209,7 @@ impl WalletContract {
         payload: Cell,
         bounce: bool,
         state_init: Option<StateInit>,
+        expire: u32,
     ) -> anyhow::Result<Cell> {
         match self.version {
             WalletVersion::V1R3 | WalletVersion::V3R2 | WalletVersion::V4R2 => {
@@ -216,7 +228,6 @@ impl WalletContract {
 
                 let message_cell = internal_message.serialize_as_is()?.0.into_cell()?;
                 const SEND_MODE: u8 = 1 + 2; // pay fees separately + ignore errors
-                let expire = time_format::now() as u32 + Self::LIFETIME;
                 let mut builder = BuilderData::new();
                 match self.version {
                     WalletVersion::V1R3 => {
@@ -256,12 +267,12 @@ impl WalletContract {
             WalletVersion::V5R1 => {
                 let actions =
                     Self::build_v5_single_send_actions(dest, value, payload, bounce, state_init)?;
-                self.signing_body_v5(seqno, actions)
+                self.signing_body_v5(seqno, actions, expire)
             }
         }
     }
 
-    fn signing_body_v5(&self, seqno: u32, actions: Cell) -> anyhow::Result<Cell> {
+    fn signing_body_v5(&self, seqno: u32, actions: Cell, expire: u32) -> anyhow::Result<Cell> {
         let wallet_id = self.subwallet_id;
         let mut builder = BuilderData::new();
         // V5R1 signed layout: prefix(32) + global_id(int32) + wallet_id(32)
@@ -270,7 +281,7 @@ impl WalletContract {
             .append_u32(Self::V5_PREFIX_SIGNED_EXTERNAL)?
             .append_i32(self.global_id)?
             .append_u32(wallet_id)?
-            .append_u32(time_format::now() as u32 + Self::LIFETIME)?
+            .append_u32(expire)?
             .append_u32(seqno)?
             .append_bit_one()? // has_actions = true
             .checked_append_reference(actions)?
@@ -395,6 +406,67 @@ impl Wallet for WalletContract {
         state_init_external: Option<StateInit>,
         state_init_internal: Option<StateInit>,
     ) -> anyhow::Result<Cell> {
+        self.build_message_with_expiry(
+            dest,
+            value,
+            payload,
+            bounce,
+            seqno,
+            state_init_external,
+            state_init_internal,
+            Self::default_valid_until()?,
+        )
+        .await
+    }
+}
+
+impl WalletContract {
+    /// Builds and signs a transfer whose body carries exactly `valid_until`
+    /// instead of the default lifetime. Range policy (how far in the future
+    /// the caller may set it) belongs to the caller; this refuses only an
+    /// expiry the wallet cannot carry. V1R3 bodies have no expiry field, so
+    /// an explicit expiry is refused rather than silently dropped.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn build_message_valid_until(
+        &self,
+        dest: MsgAddressInt,
+        value: u64,
+        payload: Cell,
+        bounce: bool,
+        seqno: Option<u32>,
+        state_init_internal: Option<StateInit>,
+        valid_until: u32,
+    ) -> anyhow::Result<Cell> {
+        anyhow::ensure!(
+            self.version != WalletVersion::V1R3,
+            "a V1R3 wallet message carries no expiry; use a V3R2, V4R2 or V5R1 wallet"
+        );
+        anyhow::ensure!(valid_until > 0, "valid_until must be positive");
+        self.build_message_with_expiry(
+            dest,
+            value,
+            payload,
+            bounce,
+            seqno,
+            None,
+            state_init_internal,
+            valid_until,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn build_message_with_expiry(
+        &self,
+        dest: MsgAddressInt,
+        value: u64,
+        payload: Cell,
+        bounce: bool,
+        seqno: Option<u32>,
+        state_init_external: Option<StateInit>,
+        state_init_internal: Option<StateInit>,
+        expire: u32,
+    ) -> anyhow::Result<Cell> {
         let seqno = match seqno {
             Some(seqno) => seqno,
             None => self.seqno().await.map_err(|e| anyhow::anyhow!("get seqno error: {}", e))?,
@@ -411,7 +483,7 @@ impl Wallet for WalletContract {
                     state_init_internal,
                 )?;
 
-                let signing_cell = self.signing_body_v5(seqno, actions_cell)?;
+                let signing_cell = self.signing_body_v5(seqno, actions_cell, expire)?;
                 let signature = self.sign(signing_cell.hash(0).as_slice()).await?;
 
                 // V5: body first, then signature
@@ -421,8 +493,15 @@ impl Wallet for WalletContract {
             }
             WalletVersion::V1R3 | WalletVersion::V3R2 | WalletVersion::V4R2 => {
                 // signature first, then body
-                let signing_cell =
-                    self.signing_body(seqno, dest, value, payload, bounce, state_init_internal)?;
+                let signing_cell = self.signing_body(
+                    seqno,
+                    dest,
+                    value,
+                    payload,
+                    bounce,
+                    state_init_internal,
+                    expire,
+                )?;
                 let signature = self.sign(signing_cell.hash(0).as_slice()).await?;
 
                 let mut builder = BuilderData::new();
@@ -629,6 +708,59 @@ mod tests {
                 (_, None) => panic!("{version:?} lost its valid_until"),
             }
         }
+    }
+
+    /// An explicit expiry is signed exactly, for every wallet version that
+    /// carries one, and the same inputs give the same message bytes.
+    #[tokio::test]
+    async fn explicit_valid_until_is_signed_exactly_and_deterministically() {
+        for version in [WalletVersion::V3R2, WalletVersion::V4R2, WalletVersion::V5R1] {
+            let wallet = test_wallet(version, 42, 698_983_191).await;
+            let build = |valid_until: u32| {
+                wallet.build_message_valid_until(
+                    destination(),
+                    1,
+                    BuilderData::new().into_cell().unwrap(),
+                    true,
+                    Some(7),
+                    None,
+                    valid_until,
+                )
+            };
+            let first = build(2_000_000_123).await.unwrap();
+            let signed = wallet.signed_message(&first).unwrap();
+            assert_eq!(signed.valid_until, Some(2_000_000_123), "{version:?}");
+            assert_eq!(signed.seqno, 7, "{version:?}");
+            let second = build(2_000_000_123).await.unwrap();
+            assert_eq!(
+                chain_block::write_boc(&first).unwrap(),
+                chain_block::write_boc(&second).unwrap(),
+                "{version:?}: the same inputs must give the same bytes"
+            );
+            let other = build(2_000_000_124).await.unwrap();
+            assert_ne!(first.repr_hash(), other.repr_hash(), "{version:?}: expiry is signed");
+            assert_eq!(
+                wallet.signed_message(&other).unwrap().valid_until,
+                Some(2_000_000_124),
+                "{version:?}"
+            );
+            assert!(build(0).await.is_err(), "{version:?}: a zero expiry is refused");
+        }
+        let v1 = test_wallet(WalletVersion::V1R3, 42, 698_983_191).await;
+        assert!(
+            v1.build_message_valid_until(
+                destination(),
+                1,
+                BuilderData::new().into_cell().unwrap(),
+                true,
+                Some(7),
+                None,
+                2_000_000_123,
+            )
+            .await
+            .is_err(),
+            "V1R3 cannot carry an explicit expiry"
+        );
     }
 
     /// A message of another network, subwallet or wallet version is refused

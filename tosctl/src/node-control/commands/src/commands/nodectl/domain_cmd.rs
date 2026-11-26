@@ -766,9 +766,18 @@ impl DomainTransferCmd {
             let body_hash = hex::encode(body.repr_hash().as_slice());
             let msg_boc =
                 build_wallet_message_boc(&wallet, item.clone(), amount, body, true, seqno).await?;
+            let valid_until = signed_valid_until(&wallet, &msg_boc)?;
             println!(
                 "{}",
-                prepared_send_json(&self.from, &owner_address, &item, amount, &body_hash, &msg_boc)
+                prepared_send_json(
+                    &self.from,
+                    &owner_address,
+                    &item,
+                    amount,
+                    &body_hash,
+                    &msg_boc,
+                    valid_until
+                )
             );
             return Ok(());
         }
@@ -1056,9 +1065,18 @@ async fn send_domain_message(
             owner_info.seqno,
         )
         .await?;
+        let valid_until = signed_valid_until(&wallet, &msg_boc)?;
         println!(
             "{}",
-            prepared_send_json(from, &owner_address, &destination, amount, &body_hash, &msg_boc)
+            prepared_send_json(
+                from,
+                &owner_address,
+                &destination,
+                amount,
+                &body_hash,
+                &msg_boc,
+                valid_until
+            )
         );
         return Ok(());
     }
@@ -1077,6 +1095,22 @@ async fn send_domain_message(
     Ok(())
 }
 
+/// The expiry read back from the signed body of a prepared message, so the
+/// envelope reports what the wallet will enforce rather than a recomputed
+/// value. A V1R3 body has no expiry and cannot be reported.
+fn signed_valid_until(
+    wallet: &contracts::wallet::WalletContract,
+    msg_boc: &[u8],
+) -> anyhow::Result<u32> {
+    let message = chain_block::read_single_root_boc(msg_boc)?;
+    wallet.signed_message(&message)?.valid_until.ok_or_else(|| {
+        anyhow::anyhow!(
+            "a V1R3 wallet message carries no expiry, so it cannot be prepared; \
+             use a V3R2, V4R2 or V5R1 wallet"
+        )
+    })
+}
+
 /// The same prepared-send envelope `wallet send --build-only` emits, so
 /// `wallet broadcast-prepared --message-boc <base64>` accepts it unchanged.
 fn prepared_send_json(
@@ -1086,9 +1120,11 @@ fn prepared_send_json(
     amount: u64,
     body_hash: &str,
     msg_boc: &[u8],
+    valid_until: u32,
 ) -> String {
     serde_json::json!({
-        "version": "tosctl.wallet-prepared-send.v1",
+        "version": super::wallet_cmd::PREPARED_SEND_VERSION,
+        "valid_until": valid_until,
         "message_boc_base64": base64::engine::general_purpose::STANDARD.encode(msg_boc),
         "wallet": from,
         "payer": payer.to_string(),
@@ -1607,9 +1643,10 @@ mod domain_cli_tests {
             "0:cec242160fa821bc402586947649f25d4a0c1b02808d1dce93c893e98061bb8a"
                 .parse()
                 .expect("dest address");
-        let json = prepared_send_json("boss", &payer, &dest, 42, "aa55", &[1, 2, 3]);
+        let json = prepared_send_json("boss", &payer, &dest, 42, "aa55", &[1, 2, 3], 2_000_000_120);
         let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
-        assert_eq!(value["version"], "tosctl.wallet-prepared-send.v1");
+        assert_eq!(value["version"], "tosctl.wallet-prepared-send.v2");
+        assert_eq!(value["valid_until"], 2_000_000_120u32);
         assert_eq!(value["wallet"], "boss");
         assert_eq!(value["amount_nanotos"], 42);
         assert_eq!(value["body_hash"], "aa55");
