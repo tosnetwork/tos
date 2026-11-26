@@ -755,7 +755,7 @@ impl DomainTransferCmd {
         let new_owner =
             self.new_owner.parse::<MsgAddressInt>().context("invalid --new-owner address")?;
         let (wallet, owner_address, seqno, rpc_client) =
-            load_signer(config_path, &self.from).await?;
+            load_signer(config_path, &self.from, self.build_only).await?;
         let body = dns::transfer_body(&new_owner, &owner_address, forward_amount, self.query_id)?;
         if !self.yes
             && !confirm(&format!("Transfer '{}' to {new_owner}? This is irreversible.", self.name))?
@@ -1010,10 +1010,28 @@ fn connect_rpc(config_path: &str) -> anyhow::Result<Arc<ClientJsonRpc>> {
 
 type Signer = (contracts::wallet::WalletContract, MsgAddressInt, Option<u32>, Arc<ClientJsonRpc>);
 
-async fn load_signer(config_path: &str, from: &str) -> anyhow::Result<Signer> {
+/// The v2 prepared-send envelope reports the signed expiry, and a V1R3 body
+/// has none, so `--build-only` refuses a V1R3 wallet before anything is
+/// built or signed, as `wallet send --build-only` does.
+fn refuse_v1r3_build_only(
+    from: &str,
+    version: common::WalletVersion,
+    build_only: bool,
+) -> anyhow::Result<()> {
+    if build_only && version == common::WalletVersion::V1R3 {
+        bail!(
+            "wallet '{from}' is V1R3, whose messages carry no expiry; --build-only needs a \
+             V3R2, V4R2 or V5R1 wallet"
+        );
+    }
+    Ok(())
+}
+
+async fn load_signer(config_path: &str, from: &str, build_only: bool) -> anyhow::Result<Signer> {
     let path = Path::new(config_path);
     let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
     let wallet_config = get_wallet_config(from, &config.wallets, config.master_wallet.as_ref())?;
+    refuse_v1r3_build_only(from, wallet_config.version, build_only)?;
     let (owner_address, owner_info, owner_secret) =
         wallet_info(rpc_client.clone(), wallet_config, vault).await?;
     if owner_info.account_state != AccountState::Active {
@@ -1036,6 +1054,7 @@ async fn send_domain_message(
     let path = Path::new(config_path);
     let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
     let wallet_config = get_wallet_config(from, &config.wallets, config.master_wallet.as_ref())?;
+    refuse_v1r3_build_only(from, wallet_config.version, build_only)?;
     let (owner_address, owner_info, owner_secret) =
         wallet_info(rpc_client.clone(), wallet_config, vault).await?;
     if owner_info.account_state != AccountState::Active {
@@ -1631,6 +1650,16 @@ mod domain_cli_tests {
             .expect("resolve --format json must parse");
         let parsed = DomainResolveCmd::from_arg_matches(&matches).expect("parsed resolve");
         assert!(matches!(parsed.format, OutputFormat::Json));
+    }
+
+    #[test]
+    fn build_only_refuses_a_v1r3_wallet_up_front() {
+        use common::WalletVersion;
+        assert!(refuse_v1r3_build_only("old", WalletVersion::V1R3, true).is_err());
+        assert!(refuse_v1r3_build_only("old", WalletVersion::V1R3, false).is_ok());
+        for version in [WalletVersion::V3R2, WalletVersion::V4R2, WalletVersion::V5R1] {
+            assert!(refuse_v1r3_build_only("w", version, true).is_ok(), "{version:?}");
+        }
     }
 
     #[test]

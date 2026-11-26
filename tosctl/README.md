@@ -272,6 +272,12 @@ and `--build-only` refuse a V1R3 wallet. The same inputs (wallet, seqno,
 destination, amount, body, bounce, state init, `--valid-until`) give the same
 message bytes.
 
+Without `--build-only`, `wallet send` broadcasts and then waits only
+`SEND_TIMEOUT` (15 s) for the wallet seqno to change. A "Transaction timeout
+expired" error therefore does **not** mean the message was not delivered: it
+can still execute until its `valid_until`. Decide "not delivered" only from
+finalized state after `valid_until` has passed with the seqno unchanged.
+
 `--build-only` prints one JSON object, schema `tosctl.wallet-prepared-send.v2`
 (the domain commands' `--build-only` print the same envelope):
 

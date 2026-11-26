@@ -375,7 +375,10 @@ pub struct WalletSendCmd {
     #[arg(
         long,
         help = "Absolute unix time (seconds) written into the signed message as its expiry; \
-                must leave at least 10 s and at most 3600 s from now. Default: now + 120 s"
+                must leave at least 10 s and at most 3600 s from now. Default: now + 120 s. \
+                Without --build-only the command waits only 15 s for the seqno to change: \
+                a timeout then does not mean the message was not delivered, as it can still \
+                execute until valid_until"
     )]
     valid_until: Option<u32>,
 
