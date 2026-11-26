@@ -35,6 +35,7 @@ mod negative_number_flag_tests;
 pub(crate) mod node_cmd;
 pub(crate) mod observe_cmd;
 pub(crate) mod output_format;
+mod poll_clock;
 pub(crate) mod pool_cmd;
 pub(crate) mod prediction_cmd;
 pub(crate) mod proof_attestation_cmd;

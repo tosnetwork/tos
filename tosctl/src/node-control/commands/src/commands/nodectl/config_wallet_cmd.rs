@@ -740,12 +740,34 @@ pub(crate) async fn wait_for_stake_accepted(
     cancellation_ctx: &CancellationCtx,
     max_wait: tokio::time::Duration,
 ) -> anyhow::Result<()> {
+    wait_for_stake_accepted_with_clock(
+        provider,
+        election_id,
+        staking_account_id,
+        expected_stake,
+        cancellation_ctx,
+        max_wait,
+        &super::poll_clock::TokioClock,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)] // Keep the production call parameters plus the time source.
+pub(crate) async fn wait_for_stake_accepted_with_clock<C: super::poll_clock::PollClock>(
+    provider: &mut dyn ElectionsProvider,
+    election_id: u64,
+    staking_account_id: &[u8],
+    expected_stake: u64,
+    cancellation_ctx: &CancellationCtx,
+    max_wait: tokio::time::Duration,
+    clock: &C,
+) -> anyhow::Result<()> {
     let poll = async {
         loop {
             if cancellation_ctx.is_cancelled() {
                 anyhow::bail!("Task cancelled");
             }
-            tokio::time::sleep(STAKE_POLL_INTERVAL).await;
+            clock.sleep(STAKE_POLL_INTERVAL).await;
             let info = stake_elections_info(provider).await?;
             anyhow::ensure!(
                 info.election_id == election_id,
@@ -759,7 +781,8 @@ pub(crate) async fn wait_for_stake_accepted(
             }
         }
     };
-    tokio::time::timeout(max_wait, poll)
+    clock
+        .timeout(max_wait, poll)
         .await
         .map_err(|_| anyhow::anyhow!("Timeout waiting for stake to appear in elector"))?
 }

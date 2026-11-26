@@ -30,6 +30,7 @@ fn upgrade(result: anyhow::Result<()>, unsupported: bool) -> anyhow::Result<()> 
 
 #[tokio::test]
 async fn election_ls_uses_one_control_read_and_no_public_elector_getters() -> anyhow::Result<()> {
+    let _network_time = super::super::poll_clock::testing::freeze_network_time().await;
     for unsupported in [false, true] {
         for count in [1, 100, 256] {
             let fixture =
@@ -58,6 +59,7 @@ async fn election_ls_uses_one_control_read_and_no_public_elector_getters() -> an
 
 #[tokio::test]
 async fn election_cast_uses_one_control_read_and_no_public_elector_getters() -> anyhow::Result<()> {
+    let _network_time = super::super::poll_clock::testing::freeze_network_time().await;
     for unsupported in [false, true] {
         let fixture =
             Fixture::new(Reply { unsupported, finished: true, ..Reply::default() }).await?;
@@ -79,6 +81,7 @@ async fn election_cast_uses_one_control_read_and_no_public_elector_getters() -> 
 
 #[tokio::test]
 async fn public_elector_counters_have_a_positive_control() -> anyhow::Result<()> {
+    let _network_time = super::super::poll_clock::testing::freeze_network_time().await;
     let fixture = Fixture::new(Reply::default()).await?;
     let rpc = super::super::utils::try_create_rpc_client(&fixture.config()?).await?;
     let elector = ElectorWrapperImpl::new(contracts::contract_provider!(rpc));
@@ -99,6 +102,7 @@ async fn public_elector_counters_have_a_positive_control() -> anyhow::Result<()>
 #[tokio::test]
 async fn initial_stake_decision_uses_one_snapshot_and_no_public_elector_getters()
 -> anyhow::Result<()> {
+    let _network_time = super::super::poll_clock::testing::freeze_network_time().await;
     for unsupported in [false, true] {
         let fixture =
             Fixture::new(Reply { unsupported, finished: true, ..Reply::default() }).await?;
@@ -137,6 +141,7 @@ async fn initial_stake_decision_uses_one_snapshot_and_no_public_elector_getters(
 #[tokio::test]
 async fn stake_confirmation_uses_one_snapshot_per_poll_and_propagates_upgrade() -> anyhow::Result<()>
 {
+    let _network_time = super::super::poll_clock::testing::freeze_network_time().await;
     for unsupported in [false, true] {
         let fixture = Fixture::new(Reply { unsupported, ..Reply::default() }).await?;
         let config = fixture.config()?;
@@ -150,13 +155,15 @@ async fn stake_confirmation_uses_one_snapshot_per_poll_and_propagates_upgrade() 
             adnl,
             Arc::new(contracts::DefaultChainProvider::new(rpc)),
         );
-        let result = super::super::config_wallet_cmd::wait_for_stake_accepted(
+        let clock = super::super::poll_clock::testing::FakeClock::default();
+        let result = super::super::config_wallet_cmd::wait_for_stake_accepted_with_clock(
             &mut provider,
             1_700_000_000,
             &[0; 32],
             7,
             &common::task_cancellation::CancellationCtx::new(),
             std::time::Duration::from_secs(10),
+            &clock,
         )
         .await;
         fixture.no_public_elector()?;
@@ -165,6 +172,8 @@ async fn stake_confirmation_uses_one_snapshot_per_poll_and_propagates_upgrade() 
             1,
             "one control read per confirmation poll"
         );
+        assert_eq!(clock.elapsed(), std::time::Duration::from_secs(3));
+        assert_eq!(clock.sleeps(), vec![std::time::Duration::from_secs(3)]);
         upgrade(result, unsupported)?;
         provider.shutdown().await?;
         fixture.stop().await;
@@ -175,6 +184,7 @@ async fn stake_confirmation_uses_one_snapshot_per_poll_and_propagates_upgrade() 
 #[tokio::test]
 async fn confirmation_refuses_another_election_or_a_partial_invalid_response() -> anyhow::Result<()>
 {
+    let _network_time = super::super::poll_clock::testing::freeze_network_time().await;
     for reply in [
         Reply { election_id: 1_700_000_001, ..Reply::default() },
         Reply { overflow: true, ..Reply::default() },
@@ -191,13 +201,15 @@ async fn confirmation_refuses_another_election_or_a_partial_invalid_response() -
             adnl,
             Arc::new(contracts::DefaultChainProvider::new(rpc)),
         );
-        let error = super::super::config_wallet_cmd::wait_for_stake_accepted(
+        let clock = super::super::poll_clock::testing::FakeClock::default();
+        let error = super::super::config_wallet_cmd::wait_for_stake_accepted_with_clock(
             &mut provider,
             1_700_000_000,
             &[0; 32],
             7,
             &common::task_cancellation::CancellationCtx::new(),
             std::time::Duration::from_secs(10),
+            &clock,
         )
         .await
         .err()
@@ -211,10 +223,46 @@ async fn confirmation_refuses_another_election_or_a_partial_invalid_response() -
             }),
             "wrong refusal: {message}"
         );
+        assert_eq!(clock.elapsed(), std::time::Duration::from_secs(3));
         fixture.no_public_elector()?;
         assert_eq!(fixture.counts.control.load(Ordering::SeqCst), 1);
         provider.shutdown().await?;
         fixture.stop().await;
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn stake_confirmation_timeout_counts_only_logical_polls() -> anyhow::Result<()> {
+    let _network_time = super::super::poll_clock::testing::freeze_network_time().await;
+    let fixture = Fixture::new(Reply { participants: 0, ..Reply::default() }).await?;
+    let config = fixture.config()?;
+    let adnl = config.nodes.get("test").context("fixture node")?.to_node_adnl_config(None).await?;
+    let rpc = Arc::new(chain_rpc_client::v2::client_json_rpc::ClientJsonRpc::connect(
+        fixture.public_url.clone(),
+        None,
+    )?);
+    let mut provider =
+        DefaultElectionsProvider::new(adnl, Arc::new(contracts::DefaultChainProvider::new(rpc)));
+    let clock = super::super::poll_clock::testing::FakeClock::default();
+    let result = super::super::config_wallet_cmd::wait_for_stake_accepted_with_clock(
+        &mut provider,
+        1_700_000_000,
+        &[0; 32],
+        7,
+        &common::task_cancellation::CancellationCtx::new(),
+        std::time::Duration::from_secs(10),
+        &clock,
+    )
+    .await;
+    ensure!(
+        result.err().context("missing stake confirmed")?.to_string().contains("Timeout waiting")
+    );
+    assert_eq!(clock.elapsed(), std::time::Duration::from_secs(10));
+    assert_eq!(clock.sleeps(), vec![std::time::Duration::from_secs(3); 4]);
+    assert_eq!(fixture.counts.control.load(Ordering::SeqCst), 3);
+    fixture.no_public_elector()?;
+    provider.shutdown().await?;
+    fixture.stop().await;
     Ok(())
 }
