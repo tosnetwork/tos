@@ -3,12 +3,15 @@
 This test build is not a token release. Its source generator is confined to this
 test directory and writes only a new private directory outside the checkout whose
 name contains `local-only-test`. It never regenerates a release BOC or edits a
-release manifest. The production wallet source is SHA-256 pinned; drift refuses.
+release manifest. The production wallet source is SHA-256 pinned; drift refuses. The generator
+also compiles the staged wallet and requires the exact cell hash copied from the
+real integration build (`cf5c98a11cf3de09b1cf702fa1eba38d870c822abb866320bba2da59dac013df`).
+A mismatched compilation refuses before the marker claims a verified code hash.
 
 ```sh
 python3 test/token-refusal/build-local-only.py \
   --source-root "$TOS_ROOT" --output "$PRIVATE_STATE/local-only-test-build" \
-  --global-id 3
+  --global-id 3 --func "$BUILD_DIR/crypto/func" --fift "$BUILD_DIR/crypto/fift"
 python3 test/token-refusal/test_local_only.py
 ctest --test-dir "$BUILD_DIR" -L source-guard --output-on-failure
 ```
@@ -39,3 +42,10 @@ shortened: a sweep stays pending until finalized chain time reaches its deadline
 
 Upstream comparison: this token settlement test has no corresponding code in
 upstream; inherited VM and message delivery code are unchanged.
+
+The source guard scans all workflows (including release and custom artifact
+publishers), the entire shipped smart-contract tree, every CMake file containing
+install rules, and the release-artifact manifest. The only CMake exclusions are
+the two exact source-guard test registrations, which install nothing. Markers,
+the fixed rejecting owner, and a refusal-1980/global-id instruction pairing are
+forbidden in these release inputs.

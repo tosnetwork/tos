@@ -9,10 +9,13 @@ public network. The wallet itself refuses execution outside global id 3.
 import argparse
 import hashlib
 import json
+import re
 import shutil
+import subprocess
 from pathlib import Path
 
 SOURCE_SHA256 = "4e0f79b01e4d385e9c72ffa228dfd1ec58b2295ff8773719ce670d4f1f2c4ca3"
+TEST_WALLET_CODE_HASH = "cf5c98a11cf3de09b1cf702fa1eba38d870c822abb866320bba2da59dac013df"
 REJECT_OWNER = hashlib.sha256(b"LOCAL-ONLY-TEST-REFUSAL-RECIPIENT-v1").hexdigest()
 INTERNAL = (
     "() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {"
@@ -85,13 +88,66 @@ def stage(root, output, global_id):
     return manifest
 
 
+def verify_code_hash(actual):
+    if actual != TEST_WALLET_CODE_HASH:
+        raise ValueError("compiled test wallet code differs from its pinned real build")
+
+
+def compile_wallet(root, output, func, fift):
+    subprocess.run(
+        [
+            str(func),
+            "-PS",
+            "-o",
+            "local-only-test-token-wallet.fif",
+            "token-wallet-local-only-test.fc",
+        ],
+        cwd=output,
+        check=True,
+        capture_output=True,
+        timeout=120,
+    )
+    script = output / "hash-local-only-test-token-wallet.fif"
+    script.write_text(
+        '"Asm.fif" include "local-only-test-token-wallet.fif" include hashu 256 u>B ." HASH " Bx. cr\n'
+    )
+    result = subprocess.run(
+        [
+            str(fift),
+            "-I",
+            f"{root / 'crypto/fift/lib'}:{root / 'crypto/smartcont'}:{output}",
+            "-s",
+            str(script),
+        ],
+        cwd=output,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    hashes = re.findall(r"HASH\s+(?:0x)?([0-9a-fA-F]{64})", result.stdout)
+    if len(hashes) != 1:
+        raise ValueError("test wallet compiler did not return exactly one code hash")
+    actual = hashes[0].lower()
+    verify_code_hash(actual)
+    path = output / "LOCAL-ONLY-TEST.json"
+    marker = json.loads(path.read_text())
+    marker["wallet_code_hash"] = actual
+    path.write_text(json.dumps(marker, indent=2) + "\n")
+    return marker
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--global-id", type=int, required=True)
+    parser.add_argument("--func", type=Path, required=True)
+    parser.add_argument("--fift", type=Path, required=True)
     args = parser.parse_args()
-    print(json.dumps(stage(args.source_root.resolve(), args.output.resolve(), args.global_id)))
+    root, output = args.source_root.resolve(), args.output.resolve()
+    stage(root, output, args.global_id)
+    print(json.dumps(compile_wallet(root, output, args.func.resolve(), args.fift.resolve())))
 
 
 if __name__ == "__main__":
