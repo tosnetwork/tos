@@ -26,8 +26,10 @@ use common::{
     app_config::WalletConfig,
     chain_utils::{display_tos, tos_to_nanotos},
     task_cancellation::CancellationCtx,
+    time_format,
+    wallet_version::WalletVersion,
 };
-use contracts::Wallet;
+use contracts::{Wallet, WalletContract};
 use secrets_vault::{
     crypto::factory::{AutoCryptoFactory, CryptoFactory},
     errors::error::VaultError,
@@ -372,6 +374,16 @@ pub struct WalletSendCmd {
 
     #[arg(
         long,
+        help = "Absolute unix time (seconds) written into the signed message as its expiry; \
+                must leave at least 10 s and at most 3600 s from now. Default: now + 120 s. \
+                Without --build-only the command waits only 15 s for the seqno to change: \
+                a timeout then does not mean the message was not delivered, as it can still \
+                execute until valid_until"
+    )]
+    valid_until: Option<u32>,
+
+    #[arg(
+        long,
         help = "Build and sign the exact external message, emit versioned JSON, and do not broadcast"
     )]
     build_only: bool,
@@ -379,6 +391,49 @@ pub struct WalletSendCmd {
     config_fd: Option<i32>,
     #[arg(long, value_parser = ["json", "yaml", "yml"], requires = "config_fd")]
     config_format: Option<String>,
+}
+
+/// Schema of the JSON `wallet send --build-only` (and the domain commands'
+/// `--build-only`) print. v2 always carries `valid_until`, the expiry signed
+/// into the message.
+pub(crate) const PREPARED_SEND_VERSION: &str = "tosctl.wallet-prepared-send.v2";
+
+/// Least time `--valid-until` must leave before expiry. The wallet refuses a
+/// body once `valid_until <= now()` of the block that executes it, so a
+/// message needs time to reach a validator, wait for inclusion and execute
+/// in a block whose time may run ahead of the local clock. Ten seconds covers
+/// several block intervals plus ordinary clock skew; a closer deadline would
+/// produce a message that is almost certainly dead on arrival.
+pub(crate) const VALID_UNTIL_MIN_REMAINING_SECS: u32 = 10;
+
+/// Most time `--valid-until` may leave before expiry. The wallet contracts
+/// impose no upper bound (they only refuse `valid_until <= now()`), and a
+/// signed message stays executable until it expires or its seqno is used,
+/// so a caller that decides "not delivered" must wait out the whole window.
+/// One hour keeps that window bounded and refuses a value given in the wrong
+/// unit or far in the future by mistake.
+pub(crate) const VALID_UNTIL_MAX_LIFETIME_SECS: u32 = 3_600;
+
+/// Checks an explicit expiry against the local clock `now` (unix seconds).
+fn check_send_valid_until(valid_until: u32, now: u64) -> anyhow::Result<u32> {
+    let now = u32::try_from(now).context("the local clock does not fit a 32-bit expiry")?;
+    let remaining = valid_until
+        .checked_sub(now)
+        .filter(|remaining| *remaining > 0)
+        .ok_or_else(|| anyhow::anyhow!("--valid-until {valid_until} is not after now ({now})"))?;
+    if remaining < VALID_UNTIL_MIN_REMAINING_SECS {
+        anyhow::bail!(
+            "--valid-until {valid_until} leaves {remaining} s; at least \
+             {VALID_UNTIL_MIN_REMAINING_SECS} s are needed for delivery"
+        );
+    }
+    if remaining > VALID_UNTIL_MAX_LIFETIME_SECS {
+        anyhow::bail!(
+            "--valid-until {valid_until} is {remaining} s from now; at most \
+             {VALID_UNTIL_MAX_LIFETIME_SECS} s is accepted"
+        );
+    }
+    Ok(valid_until)
 }
 
 #[derive(clap::Args, Clone)]
@@ -1526,6 +1581,20 @@ impl WalletSendCmd {
         let wallet_cfg =
             get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
 
+        // A V1R3 body has no expiry field: an explicit one cannot be honoured
+        // and a prepared envelope could not report one.
+        let has_expiry = wallet_cfg.version != WalletVersion::V1R3;
+        if !has_expiry && (self.valid_until.is_some() || self.build_only) {
+            anyhow::bail!(
+                "wallet '{}' is V1R3, whose messages carry no expiry; --valid-until and \
+                 --build-only need a V3R2, V4R2 or V5R1 wallet",
+                self.from
+            );
+        }
+        if let Some(valid_until) = self.valid_until {
+            check_send_valid_until(valid_until, time_format::now())?;
+        }
+
         let (from_wallet_address, from_wallet_info, from_secret) =
             wallet_info(rpc_client.clone(), wallet_cfg, vault.clone()).await?;
 
@@ -1607,16 +1676,44 @@ impl WalletSendCmd {
             }
         }
 
-        let msg = wallet
-            .build_message(dest_addr, amount_nanotos, body, self.bounce, None, None, state_init)
-            .await?;
+        let (msg, valid_until) = if has_expiry {
+            // Rechecked here because the confirmation prompt may have waited.
+            let valid_until = match self.valid_until {
+                Some(valid_until) => check_send_valid_until(valid_until, time_format::now())?,
+                None => WalletContract::default_valid_until()?,
+            };
+            let msg = wallet
+                .build_message_valid_until(
+                    dest_addr,
+                    amount_nanotos,
+                    body,
+                    self.bounce,
+                    None,
+                    state_init,
+                    valid_until,
+                )
+                .await?;
+            let signed = wallet.signed_message(&msg)?.valid_until;
+            if signed != Some(valid_until) {
+                anyhow::bail!("the signed message does not carry valid_until {valid_until}");
+            }
+            (msg, Some(valid_until))
+        } else {
+            let msg = wallet
+                .build_message(dest_addr, amount_nanotos, body, self.bounce, None, None, state_init)
+                .await?;
+            (msg, None)
+        };
 
         let msg_boc = write_boc(&msg)?;
         if self.build_only {
+            let valid_until = valid_until
+                .ok_or_else(|| anyhow::anyhow!("a prepared message must carry an expiry"))?;
             println!(
                 "{}",
                 serde_json::json!({
-                    "version": "tosctl.wallet-prepared-send.v1",
+                    "version": PREPARED_SEND_VERSION,
+                    "valid_until": valid_until,
                     "message_boc_base64": base64::engine::general_purpose::STANDARD.encode(&msg_boc),
                     "wallet": self.from,
                     "payer": from_wallet_address.to_string(),
@@ -1671,6 +1768,81 @@ mod wallet_send_cli_tests {
         assert_eq!(parsed.amount, None);
         assert!(parsed.yes);
         assert!(!parsed.build_only);
+        assert_eq!(parsed.valid_until, None, "no flag keeps the default lifetime");
+    }
+
+    fn send_args(valid_until: &str) -> Vec<String> {
+        [
+            "send",
+            "--from",
+            "anchor",
+            "--to",
+            "0:abababababababababababababababababababababababababababababababab",
+            "--amount-nanotos",
+            "7",
+            "--bounce",
+            "--valid-until",
+            valid_until,
+            "--build-only",
+        ]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect()
+    }
+
+    #[test]
+    fn parses_an_explicit_valid_until() {
+        let matches = WalletSendCmd::augment_args(Command::new("send"))
+            .try_get_matches_from(send_args("2000000120"))
+            .expect("--valid-until must parse");
+        let parsed = WalletSendCmd::from_arg_matches(&matches).expect("parsed send args");
+        assert_eq!(parsed.valid_until, Some(2_000_000_120));
+        assert!(parsed.build_only);
+    }
+
+    #[test]
+    fn refuses_a_valid_until_that_is_not_a_u32() {
+        for garbage in ["", "abc", "1.5", "-1", "0x10", "1e9", "4294967296", "18446744073709551616"]
+        {
+            assert!(
+                WalletSendCmd::augment_args(Command::new("send"))
+                    .try_get_matches_from(send_args(garbage))
+                    .is_err(),
+                "--valid-until {garbage:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn valid_until_bounds() {
+        use super::{
+            VALID_UNTIL_MAX_LIFETIME_SECS, VALID_UNTIL_MIN_REMAINING_SECS, check_send_valid_until,
+        };
+        let now: u32 = 2_000_000_000;
+        let check = |valid_until: u32| check_send_valid_until(valid_until, u64::from(now));
+        // Past, now and too close are refused.
+        assert!(check(0).is_err());
+        assert!(check(now - 1).is_err());
+        assert!(check(now).is_err());
+        assert!(check(now + VALID_UNTIL_MIN_REMAINING_SECS - 1).is_err());
+        // The inclusive bounds are accepted and returned unchanged.
+        assert_eq!(check(now + VALID_UNTIL_MIN_REMAINING_SECS).unwrap(), now + 10);
+        assert_eq!(check(now + 120).unwrap(), now + 120);
+        assert_eq!(check(now + VALID_UNTIL_MAX_LIFETIME_SECS).unwrap(), now + 3_600);
+        // Too far out is refused, up to the largest u32.
+        assert!(check(now + VALID_UNTIL_MAX_LIFETIME_SECS + 1).is_err());
+        assert!(check(u32::MAX).is_err());
+        // A local clock beyond u32 cannot be compared with a 32-bit expiry.
+        assert!(check_send_valid_until(u32::MAX, u64::from(u32::MAX) + 1).is_err());
+    }
+
+    #[test]
+    fn default_lifetime_is_unchanged() {
+        assert_eq!(contracts::WalletContract::LIFETIME, 120);
+        let before = common::time_format::now();
+        let default = contracts::WalletContract::default_valid_until().unwrap();
+        let after = common::time_format::now();
+        assert!(u64::from(default) >= before + 120 && u64::from(default) <= after + 120);
     }
 
     #[test]

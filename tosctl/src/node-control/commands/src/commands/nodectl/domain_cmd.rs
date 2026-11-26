@@ -755,7 +755,7 @@ impl DomainTransferCmd {
         let new_owner =
             self.new_owner.parse::<MsgAddressInt>().context("invalid --new-owner address")?;
         let (wallet, owner_address, seqno, rpc_client) =
-            load_signer(config_path, &self.from).await?;
+            load_signer(config_path, &self.from, self.build_only).await?;
         let body = dns::transfer_body(&new_owner, &owner_address, forward_amount, self.query_id)?;
         if !self.yes
             && !confirm(&format!("Transfer '{}' to {new_owner}? This is irreversible.", self.name))?
@@ -766,9 +766,18 @@ impl DomainTransferCmd {
             let body_hash = hex::encode(body.repr_hash().as_slice());
             let msg_boc =
                 build_wallet_message_boc(&wallet, item.clone(), amount, body, true, seqno).await?;
+            let valid_until = signed_valid_until(&wallet, &msg_boc)?;
             println!(
                 "{}",
-                prepared_send_json(&self.from, &owner_address, &item, amount, &body_hash, &msg_boc)
+                prepared_send_json(
+                    &self.from,
+                    &owner_address,
+                    &item,
+                    amount,
+                    &body_hash,
+                    &msg_boc,
+                    valid_until
+                )
             );
             return Ok(());
         }
@@ -1001,10 +1010,28 @@ fn connect_rpc(config_path: &str) -> anyhow::Result<Arc<ClientJsonRpc>> {
 
 type Signer = (contracts::wallet::WalletContract, MsgAddressInt, Option<u32>, Arc<ClientJsonRpc>);
 
-async fn load_signer(config_path: &str, from: &str) -> anyhow::Result<Signer> {
+/// The v2 prepared-send envelope reports the signed expiry, and a V1R3 body
+/// has none, so `--build-only` refuses a V1R3 wallet before anything is
+/// built or signed, as `wallet send --build-only` does.
+fn refuse_v1r3_build_only(
+    from: &str,
+    version: common::WalletVersion,
+    build_only: bool,
+) -> anyhow::Result<()> {
+    if build_only && version == common::WalletVersion::V1R3 {
+        bail!(
+            "wallet '{from}' is V1R3, whose messages carry no expiry; --build-only needs a \
+             V3R2, V4R2 or V5R1 wallet"
+        );
+    }
+    Ok(())
+}
+
+async fn load_signer(config_path: &str, from: &str, build_only: bool) -> anyhow::Result<Signer> {
     let path = Path::new(config_path);
     let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
     let wallet_config = get_wallet_config(from, &config.wallets, config.master_wallet.as_ref())?;
+    refuse_v1r3_build_only(from, wallet_config.version, build_only)?;
     let (owner_address, owner_info, owner_secret) =
         wallet_info(rpc_client.clone(), wallet_config, vault).await?;
     if owner_info.account_state != AccountState::Active {
@@ -1027,6 +1054,7 @@ async fn send_domain_message(
     let path = Path::new(config_path);
     let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
     let wallet_config = get_wallet_config(from, &config.wallets, config.master_wallet.as_ref())?;
+    refuse_v1r3_build_only(from, wallet_config.version, build_only)?;
     let (owner_address, owner_info, owner_secret) =
         wallet_info(rpc_client.clone(), wallet_config, vault).await?;
     if owner_info.account_state != AccountState::Active {
@@ -1056,9 +1084,18 @@ async fn send_domain_message(
             owner_info.seqno,
         )
         .await?;
+        let valid_until = signed_valid_until(&wallet, &msg_boc)?;
         println!(
             "{}",
-            prepared_send_json(from, &owner_address, &destination, amount, &body_hash, &msg_boc)
+            prepared_send_json(
+                from,
+                &owner_address,
+                &destination,
+                amount,
+                &body_hash,
+                &msg_boc,
+                valid_until
+            )
         );
         return Ok(());
     }
@@ -1077,6 +1114,22 @@ async fn send_domain_message(
     Ok(())
 }
 
+/// The expiry read back from the signed body of a prepared message, so the
+/// envelope reports what the wallet will enforce rather than a recomputed
+/// value. A V1R3 body has no expiry and cannot be reported.
+fn signed_valid_until(
+    wallet: &contracts::wallet::WalletContract,
+    msg_boc: &[u8],
+) -> anyhow::Result<u32> {
+    let message = chain_block::read_single_root_boc(msg_boc)?;
+    wallet.signed_message(&message)?.valid_until.ok_or_else(|| {
+        anyhow::anyhow!(
+            "a V1R3 wallet message carries no expiry, so it cannot be prepared; \
+             use a V3R2, V4R2 or V5R1 wallet"
+        )
+    })
+}
+
 /// The same prepared-send envelope `wallet send --build-only` emits, so
 /// `wallet broadcast-prepared --message-boc <base64>` accepts it unchanged.
 fn prepared_send_json(
@@ -1086,9 +1139,11 @@ fn prepared_send_json(
     amount: u64,
     body_hash: &str,
     msg_boc: &[u8],
+    valid_until: u32,
 ) -> String {
     serde_json::json!({
-        "version": "tosctl.wallet-prepared-send.v1",
+        "version": super::wallet_cmd::PREPARED_SEND_VERSION,
+        "valid_until": valid_until,
         "message_boc_base64": base64::engine::general_purpose::STANDARD.encode(msg_boc),
         "wallet": from,
         "payer": payer.to_string(),
@@ -1598,6 +1653,16 @@ mod domain_cli_tests {
     }
 
     #[test]
+    fn build_only_refuses_a_v1r3_wallet_up_front() {
+        use common::WalletVersion;
+        assert!(refuse_v1r3_build_only("old", WalletVersion::V1R3, true).is_err());
+        assert!(refuse_v1r3_build_only("old", WalletVersion::V1R3, false).is_ok());
+        for version in [WalletVersion::V3R2, WalletVersion::V4R2, WalletVersion::V5R1] {
+            assert!(refuse_v1r3_build_only("w", version, true).is_ok(), "{version:?}");
+        }
+    }
+
+    #[test]
     fn prepared_send_json_shape() {
         let payer: MsgAddressInt =
             "0:1111111111111111111111111111111111111111111111111111111111111111"
@@ -1607,9 +1672,10 @@ mod domain_cli_tests {
             "0:cec242160fa821bc402586947649f25d4a0c1b02808d1dce93c893e98061bb8a"
                 .parse()
                 .expect("dest address");
-        let json = prepared_send_json("boss", &payer, &dest, 42, "aa55", &[1, 2, 3]);
+        let json = prepared_send_json("boss", &payer, &dest, 42, "aa55", &[1, 2, 3], 2_000_000_120);
         let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
-        assert_eq!(value["version"], "tosctl.wallet-prepared-send.v1");
+        assert_eq!(value["version"], "tosctl.wallet-prepared-send.v2");
+        assert_eq!(value["valid_until"], 2_000_000_120u32);
         assert_eq!(value["wallet"], "boss");
         assert_eq!(value["amount_nanotos"], 42);
         assert_eq!(value["body_hash"], "aa55");
