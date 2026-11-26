@@ -80,6 +80,10 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        # Pinned to scripts/build-tool-pins.json, so the step never looks up the
+        # latest release over the GitHub API.
+        with:
+          version: "0.11.7"
 
       # The replay tool's only dependency, at the version its launcher pins.
       - name: Local CI replay parallelism tests

@@ -178,7 +178,10 @@ jobs:
           key: tl-${{ hashFiles('tl/generate/scheme/*.tl', 'tosctl/src/tl/codegen/**', 'tosctl/src/tl/api/tl/codegen.json') }}
           workspaces: tosctl/src -> target
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        # The version is pinned to scripts/build-tool-pins.json, so the step
+        # never looks up the latest release over the GitHub API.
         with:
+          version: "0.11.7"
           enable-cache: true
       - name: Prepare Python environment
         run: |

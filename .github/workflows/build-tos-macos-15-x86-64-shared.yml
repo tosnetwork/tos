@@ -82,6 +82,10 @@ jobs:
     # The suite reads git history and runs uv-based harnesses.
     - name: Install uv
       uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      # Pinned to scripts/build-tool-pins.json, so the step never looks up the
+      # latest release over the GitHub API.
+      with:
+        version: "0.11.7"
 
     # Linux routes all of 127.0.0.0/8 on lo; macOS only the addresses aliased
     # on lo0. The loopback-aliases tests bind sources up to 127.0.0.39.
