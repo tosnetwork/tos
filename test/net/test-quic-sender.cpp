@@ -19,6 +19,7 @@
 #include <array>
 #include <atomic>
 #include <barrier>
+#include <cerrno>
 #include <chrono>
 #include <future>
 #include <iostream>
@@ -796,46 +797,55 @@ class RawQuicTestRunner final : public td::actor::Actor {
     LOG(FATAL) << "Test timeout after " << timeout_ << "s";
   }
 
+  // A raw endpoint's port only has to be free: nothing addresses it by number
+  // before it exists. The test ports lie inside the operating systems'
+  // dynamic port ranges (from 32768 on Linux, from 49152 on macOS), so any
+  // one of them can be held at that moment, usually by another process's
+  // ephemeral socket. Our SO_REUSEADDR does not help: macOS refuses a
+  // wildcard bind of a UDP port another socket holds, and so does Linux when
+  // that socket did not set SO_REUSEADDR itself. Such a port is skipped for
+  // the next one; any other failure ends the test with its cause.
+  template <class Callback>
+  RawQuicEndpoint bind_raw_endpoint(tos::quic::QuicServer::Options options) {
+    constexpr int kMaxAttempts = 16;
+    for (int attempt = 1;; ++attempt) {
+      auto port = next_port();
+      auto key = make_quic_key(port);
+      auto state = std::make_shared<RawQuicEndpointState>();
+
+      auto callback = std::make_unique<Callback>(state);
+      auto* callback_ptr = callback.get();
+      auto local_id =
+          tos::adnl::AdnlNodeIdFull(tos::PublicKey(tos::pubkeys::Ed25519(key.get_public_key().move_as_ok())))
+              .compute_short_id();
+      auto identity = tos::quic::ServerIdentity{.local_id = local_id, .key = clone_quic_key(key)};
+      auto server_result = tos::quic::QuicServer::create(port, std::move(callback), 4096, std::move(identity), "tos",
+                                                         "127.0.0.1", options);
+      if (server_result.is_error()) {
+        auto error = server_result.move_as_error();
+        LOG_IF(FATAL, error.code() != EADDRINUSE || attempt == kMaxAttempts)
+            << "raw QUIC endpoint on port " << port << " (attempt " << attempt << "): " << error;
+        LOG(WARNING) << "raw QUIC endpoint port " << port << " is in use, trying the next one: " << error;
+        continue;
+      }
+      auto server = server_result.move_as_ok();
+      callback_ptr->set_server(server.get());
+      return RawQuicEndpoint{port, std::move(key), std::move(server), std::move(state)};
+    }
+  }
+
   td::actor::Task<RawQuicEndpoint> create_endpoint(tos::quic::QuicServer::Options options) {
-    auto port = next_port();
-    auto key = make_quic_key(port);
-    auto state = std::make_shared<RawQuicEndpointState>();
-
-    auto callback = std::make_unique<RawQuicCallback>(state);
-    auto* callback_ptr = callback.get();
-    auto local_id = tos::adnl::AdnlNodeIdFull(tos::PublicKey(tos::pubkeys::Ed25519(key.get_public_key().move_as_ok())))
-                        .compute_short_id();
-    auto identity = tos::quic::ServerIdentity{.local_id = local_id, .key = clone_quic_key(key)};
-    auto server_result = tos::quic::QuicServer::create(port, std::move(callback), 4096, std::move(identity), "tos",
-                                                       "127.0.0.1", options);
-    ASSERT_TRUE(server_result.is_ok());
-    auto server = server_result.move_as_ok();
-    callback_ptr->set_server(server.get());
-
+    auto endpoint = bind_raw_endpoint<RawQuicCallback>(options);
     co_await td::actor::Yield{};
-    co_return RawQuicEndpoint{port, std::move(key), std::move(server), std::move(state)};
+    co_return endpoint;
   }
 
   // Like create_endpoint, but the server replies to every inbound query with a
   // single byte and no FIN (a half-received response), never completing it.
   td::actor::Task<RawQuicEndpoint> create_partial_responder_endpoint() {
-    auto port = next_port();
-    auto key = make_quic_key(port);
-    auto state = std::make_shared<RawQuicEndpointState>();
-
-    auto callback = std::make_unique<PartialResponderCallback>(state);
-    auto* callback_ptr = callback.get();
-    auto local_id = tos::adnl::AdnlNodeIdFull(tos::PublicKey(tos::pubkeys::Ed25519(key.get_public_key().move_as_ok())))
-                        .compute_short_id();
-    auto identity = tos::quic::ServerIdentity{.local_id = local_id, .key = clone_quic_key(key)};
-    auto server_result = tos::quic::QuicServer::create(port, std::move(callback), 4096, std::move(identity), "tos",
-                                                       "127.0.0.1", quic_test_options());
-    ASSERT_TRUE(server_result.is_ok());
-    auto server = server_result.move_as_ok();
-    callback_ptr->set_server(server.get());
-
+    auto endpoint = bind_raw_endpoint<PartialResponderCallback>(quic_test_options());
     co_await td::actor::Yield{};
-    co_return RawQuicEndpoint{port, std::move(key), std::move(server), std::move(state)};
+    co_return endpoint;
   }
 
   // Create a full QuicSender-backed node (the production inbound path, including

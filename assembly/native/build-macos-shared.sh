@@ -51,6 +51,12 @@ CMAKE_EXTRA_ARGS=()
 if [ "${GITHUB_ACTIONS}" = "true" ] || [ "$with_ccache" = true ]; then
   CMAKE_EXTRA_ARGS+=(-DTOS_ARCH="$CI_ARCH")
 fi
+# A test build carries line tables, so a crash's stack trace names file and line;
+# they change no generated code. The validator engine's are linked into a dSYM
+# below, where the backtrace library reads them.
+if [ "$with_tests" = true ]; then
+  CMAKE_EXTRA_ARGS+=(-DCMAKE_C_FLAGS=-gline-tables-only -DCMAKE_CXX_FLAGS=-gline-tables-only)
+fi
 
 if [ ! -d "build" ]; then
   mkdir build
@@ -76,6 +82,7 @@ ninja storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-c
       generate-random-id json2tlo dht-server http-proxy rldp-http-proxy dht-ping-servers dht-resolve \
  create-state emulator proxy-liteserver tos-pq-consensus-key tos-pq-vote all-tests install
       test $? -eq 0 || { echo "Can't compile tos"; exit 1; }
+      dsymutil validator-engine/validator-engine || { echo "Can't link the validator engine's dSYM"; exit 1; }
 else
 ninja storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-cli \
       validator-engine tos-rpc tos-wallet-index lite-client validator-engine-console blockchain-explorer \

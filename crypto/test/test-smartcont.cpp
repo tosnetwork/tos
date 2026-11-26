@@ -2012,16 +2012,7 @@ class MapDns {
   }
   using CombinedActions = tos::ManualDns::CombinedActions<Action>;
   void update_combined(td::Span<Action> actions) {
-    LOG(ERROR) << "BEGIN";
-    LOG(ERROR) << td::format::as_array(actions);
     auto combined_actions = tos::ManualDns::combine_actions(actions);
-    for (auto& c : combined_actions) {
-      LOG(ERROR) << c.name << ":" << c.category.to_hex();
-      if (c.actions) {
-        LOG(ERROR) << td::format::as_array(c.actions.value());
-      }
-    }
-    LOG(ERROR) << "END";
     for (auto& combined_action : combined_actions) {
       do_update(combined_action);
     }
@@ -2088,7 +2079,6 @@ class MapDns {
   void do_update(const CombinedActions& actions) {
     if (actions.name.empty()) {
       entries_.clear();
-      LOG(ERROR) << "CLEAR";
       if (!actions.actions) {
         return;
       }
@@ -2106,7 +2096,6 @@ class MapDns {
     }
     if (actions.category.is_zero()) {
       entries_.erase(actions.name);
-      LOG(ERROR) << "CLEAR " << actions.name;
       if (!actions.actions) {
         return;
       }
@@ -2184,46 +2173,37 @@ class CheckedDns {
     return update(td::span_one(action));
   }
 
-  std::vector<Entry> resolve(td::Slice name, td::Bits256 category) {
-    LOG(ERROR) << "RESOLVE: " << name << " " << category.to_hex();
+  // The stress loop resolves 100,000 names, so a resolve logs nothing unless the
+  // implementations disagree; the failure names the loop step (-1 outside the
+  // loop), the query and both answers.
+  std::vector<Entry> resolve(td::Slice name, td::Bits256 category, int step = -1) {
     auto res = map_dns_.resolve(name, category);
-    LOG(ERROR) << td::format::as_array(res);
-
     if (dns_.not_null()) {
       auto other_res = dns_->resolve(name, category).move_as_ok();
-
       std::sort(other_res.begin(), other_res.end());
-      if (res.size() != other_res.size()) {
-        LOG(ERROR) << td::format::as_array(res);
-        LOG(FATAL) << td::format::as_array(other_res);
-      }
-      for (size_t i = 0; i < res.size(); i++) {
-        if (!(res[i] == other_res[i])) {
-          LOG(ERROR) << td::format::as_array(res);
-          LOG(FATAL) << td::format::as_array(other_res);
-        }
-      }
+      check_same_answers("smart contract", step, name, category, res, other_res);
     }
     if (combined_map_dns_) {
       auto other_res = combined_map_dns_.value().resolve(name, category);
-
       std::sort(other_res.begin(), other_res.end());
-      if (res.size() != other_res.size()) {
-        LOG(ERROR) << td::format::as_array(res);
-        LOG(FATAL) << td::format::as_array(other_res);
-      }
-      for (size_t i = 0; i < res.size(); i++) {
-        if (!(res[i] == other_res[i])) {
-          LOG(ERROR) << td::format::as_array(res);
-          LOG(FATAL) << td::format::as_array(other_res);
-        }
-      }
+      check_same_answers("combined map", step, name, category, res, other_res);
     }
-
     return res;
   }
 
  private:
+  template <class OtherEntry>
+  static void check_same_answers(td::Slice implementation, int step, td::Slice name, const td::Bits256& category,
+                                 const std::vector<Entry>& expected, const std::vector<OtherEntry>& got) {
+    bool same = expected.size() == got.size();
+    for (size_t i = 0; same && i < expected.size(); i++) {
+      same = expected[i] == got[i];
+    }
+    LOG_IF(FATAL, !same) << "DNS resolve mismatch at step " << step << " for " << name << " " << category.to_hex()
+                         << ": reference map " << td::format::as_array(expected) << ", " << implementation << " "
+                         << td::format::as_array(got);
+  }
+
   using ManualDns = tos::ManualDns;
   td::optional<td::Ed25519::PrivateKey> key_;
   td::Ref<ManualDns> dns_;
@@ -2306,7 +2286,7 @@ void do_dns_test(CheckedDns&& dns) {
       actions.clear();
     }
     auto name = gen_name();
-    dns.resolve(name, intToCat(rnd.fast(0, 5)));
+    dns.resolve(name, intToCat(rnd.fast(0, 5)), i);
   }
 };
 

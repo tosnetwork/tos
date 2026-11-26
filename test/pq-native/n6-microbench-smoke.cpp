@@ -7,9 +7,11 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <random>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -121,24 +123,13 @@ struct Stats {
   double max_us{};
 };
 
-template <class Function>
-Stats measure(std::size_t warmup, std::size_t samples, Function &&function) {
-  for (std::size_t i = 0; i < warmup; ++i) {
-    function();
-  }
-  std::vector<double> elapsed;
-  elapsed.reserve(samples);
-  for (std::size_t i = 0; i < samples; ++i) {
-    const auto begin = Clock::now();
-    function();
-    elapsed.push_back(std::chrono::duration<double, std::micro>(Clock::now() - begin).count());
-  }
+Stats summarize(std::vector<double> elapsed) {
   std::sort(elapsed.begin(), elapsed.end());
   auto percentile = [&](double p) {
     const auto index = static_cast<std::size_t>(std::ceil(p * static_cast<double>(elapsed.size()))) - 1;
     return elapsed[std::min(index, elapsed.size() - 1)];
   };
-  return {samples, percentile(0.50), percentile(0.95), elapsed.back()};
+  return {elapsed.size(), percentile(0.50), percentile(0.95), elapsed.back()};
 }
 
 struct CountedStats {
@@ -146,14 +137,53 @@ struct CountedStats {
   std::uint64_t verify_calls{};
 };
 
-template <class Function>
-CountedStats measure_verification(std::size_t samples, Function &&function) {
-  for (std::size_t i = 0; i < 10; ++i) {
-    function();
+struct Operation {
+  std::function<void()> run;
+  std::vector<double> elapsed{};
+  std::uint64_t verify_calls{};
+};
+
+// Times every operation once per round, so the samples of all operations are
+// spread over the same wall-clock span. The large-regression bounds compare
+// operations with one another; measured one after the other, each operation's
+// samples came from its own short window, and a slower stretch of the host (a
+// busy neighbour on a shared runner, a move to a slower core) inside one window
+// moved that ratio with no change in the code. Interleaved, such a stretch
+// reaches every operation alike. Each round runs the operations in a fresh
+// random order (Fisher-Yates over a fixed-seed mt19937, whose output the
+// standard fixes, so every platform runs the same orders), so no operation
+// keeps one position or one predecessor whose cache or frequency state it
+// inherits. The verification counter is read around each call, outside its
+// timed span.
+void measure_interleaved(std::vector<Operation *> operations, std::size_t warmup, std::size_t samples) {
+  for (std::size_t i = 0; i < warmup; ++i) {
+    for (auto *operation : operations) {
+      operation->run();
+    }
   }
   tos::pq::reset_mldsa44_verification_calls_for_test();
-  auto stats = measure(0, samples, std::forward<Function>(function));
-  return {stats, tos::pq::mldsa44_verification_calls_for_test()};
+  for (auto *operation : operations) {
+    operation->elapsed.reserve(samples);
+  }
+  std::mt19937 order_rng(0x4e36);
+  auto order = operations;
+  for (std::size_t round = 0; round < samples; ++round) {
+    for (std::size_t i = order.size(); i > 1; --i) {
+      std::swap(order[i - 1], order[order_rng() % i]);
+    }
+    for (auto *operation : order) {
+      const auto calls_before = tos::pq::mldsa44_verification_calls_for_test();
+      const auto begin = Clock::now();
+      operation->run();
+      const auto end = Clock::now();
+      operation->verify_calls += tos::pq::mldsa44_verification_calls_for_test() - calls_before;
+      operation->elapsed.push_back(std::chrono::duration<double, std::micro>(end - begin).count());
+    }
+  }
+}
+
+CountedStats counted(const Operation &operation) {
+  return {summarize(operation.elapsed), operation.verify_calls};
 }
 
 struct Fixture {
@@ -276,17 +306,23 @@ void verify_raw(const Fixture &fixture) {
   }
 }
 
-CountedStats measure_certificate(const Fixture &fixture, std::size_t count, std::size_t samples) {
-  auto certificate = make_certificate(fixture, count);
-  auto bus = make_bus(fixture, count);
-  return measure_verification(samples, [&] {
+struct CertificateFixture {
+  td::BufferSlice certificate;
+  std::unique_ptr<consensus::Bus> bus;
+  std::size_t count;
+
+  CertificateFixture(const Fixture &fixture, std::size_t count)
+      : certificate(make_certificate(fixture, count)), bus(make_bus(fixture, count)), count(count) {
+  }
+
+  void verify() const {
     auto parsed = tos::fetch_tl_object<tos::tos_api::consensus_simplex_certificate>(certificate.clone(), true);
     if (parsed.is_error() ||
         simplex::Certificate<simplex::Vote>::from_tl(std::move(*parsed.move_as_ok()), *bus).is_error()) {
       fail(std::to_string(count) + "-signer certificate verification");
     }
-  });
-}
+  }
+};
 
 void write_stats(std::ostream &out, const Stats &stats) {
   out << "{\"samples\":" << stats.samples << ",\"p50_us\":" << stats.p50_us << ",\"p95_us\":" << stats.p95_us
@@ -320,24 +356,26 @@ int main(int argc, char **argv) {
 
   vm::init_vm().ensure();
   Fixture fixture;
-  const auto sign = measure(10, samples, [&] {
-    if (!fixture.stores.front().sign_consensus(std::string_view(fixture.message.data(), fixture.message.size()))) {
-      fail("single signing");
-    }
-  });
-  const auto verify = measure_verification(samples, [&] { verify_raw(fixture); });
-  const auto certificate_21 = measure_certificate(fixture, 21, samples);
-  const auto certificate_100 = measure_certificate(fixture, 100, samples);
-
+  const CertificateFixture certificate_fixture_21(fixture, 21);
+  const CertificateFixture certificate_fixture_100(fixture, 100);
   auto vset_21 = fixture.validator_set(21);
   auto signatures_21 = fixture.signature_set(21, vset_21);
   block::PQFinalityVerificationContext context_21{vset_21, fixture.block_id, fixture.session_id};
-  const auto proof_21 = measure_verification(samples, [&] {
+
+  Operation sign_operation{[&] {
+    if (!fixture.stores.front().sign_consensus(std::string_view(fixture.message.data(), fixture.message.size()))) {
+      fail("single signing");
+    }
+  }};
+  Operation verify_operation{[&] { verify_raw(fixture); }};
+  Operation certificate_21_operation{[&] { certificate_fixture_21.verify(); }};
+  Operation certificate_100_operation{[&] { certificate_fixture_100.verify(); }};
+  Operation proof_21_operation{[&] {
     if (block::verify_pq_finality(context_21, *signatures_21, block::FinalityRole::Final).is_error()) {
       fail("21-signer #13 verification");
     }
-  });
-  const auto lite_21 = measure_verification(samples, [&] {
+  }};
+  Operation lite_21_operation{[&] {
     auto serialized = tos::serialize_tl_object(signatures_21->tl_lite(), true);
     auto object = tos::fetch_tl_object<tos::lite_api::liteServer_SignatureSet>(std::move(serialized), true);
     if (object.is_error()) {
@@ -348,7 +386,16 @@ int main(int argc, char **argv) {
         block::verify_pq_finality(context_21, *parsed.ok(), block::FinalityRole::Final).is_error()) {
       fail("21-signer lite verification");
     }
-  });
+  }};
+  measure_interleaved({&sign_operation, &verify_operation, &certificate_21_operation, &certificate_100_operation,
+                       &proof_21_operation, &lite_21_operation},
+                      10, samples);
+  const auto sign = summarize(sign_operation.elapsed);
+  const auto verify = counted(verify_operation);
+  const auto certificate_21 = counted(certificate_21_operation);
+  const auto certificate_100 = counted(certificate_100_operation);
+  const auto proof_21 = counted(proof_21_operation);
+  const auto lite_21 = counted(lite_21_operation);
 
   const auto frozen_21 = frozen_signature_set_cell(21);
   const auto frozen_100 = frozen_signature_set_cell(100);
