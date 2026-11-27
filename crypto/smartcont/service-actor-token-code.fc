@@ -1422,8 +1422,8 @@ int apply_outcome(int id, int kind, int request_id, slice recipient, int amount,
     }
     query_cell = empty_query();
     int backing = backing_or_zero(msg_value);
-    ;; Saturating: the token invariant keeps every ledger sum below the wallet's
-    ;; balance, so no cap is reached; a capped sum would only under-count surplus.
+    ;; Saturating: balance + payouts in transit >= attributed and transit <= in_flight keep these
+    ;; four ledgers within the balance, so no cap is reached; a capped sum only under-counts surplus.
     int others = saturating_add_amount(saturating_add_amount(pending_liability,
       refundable_liability), saturating_add_amount(returned_liability, withdrawable_token_revenue));
     int result = err::surplus_insufficient;
