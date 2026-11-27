@@ -8,11 +8,11 @@ This bridge is not trustless. Safety depends on all of the following remaining t
 2. Oracle keys are independent, protected, and not exposed to one shared control plane.
 3. TOS ConfigParams point to the intended bridge, multisig, oracle map, fees, and EVM contract.
 4. The EVM bridge address and EVM chain ID domain-separate every signed action.
-5. The TOS and EVM contracts, compiler versions, deployment BOCs/bytecode, and constructor/config cells match audited artifacts.
+5. The TOS and EVM contracts, compiler versions, deployment BOCs/bytecode, and constructor/config cells match the pinned, reviewed release artifacts.
 6. Locked ERC-20 balances and wrapped Token supply are continuously reconciled.
 7. Every deployment satisfies the hard constraints below. The contracts price every settlement step themselves; the fees configured still decide whether new mints and burns are accepted at all.
 
-A source fork does **not** inherit an upstream deployment's audit, operational controls, or safety record.
+A source fork does **not** inherit an upstream deployment's review, operational controls, or safety record.
 
 ## Preserved contract controls
 
@@ -118,7 +118,6 @@ What remains:
 - [x] Durable, authenticated, idempotent settlement at every participant, with permissionless funded retransmission (see Completion of mints and burns).
 - [ ] A deployment inventory of every operated network before activation: the history of ConfigParams 79 and 81 to 83 since genesis, and a code-hash search for every built bridge, minter and wallet. (Development stage: satisfied for the local development network under the owner-approved revision recorded in `SETTLEMENT-PROTOCOL.md` section 16; still required in full for the first public network.)
 - [ ] The bridge listed in ConfigParam 31 on each network, and minter monitoring in operation, before activation.
-- [ ] Two independent audits covering FunC/Fift, Solidity, deployment/config scripts, compiler output, and oracle protocol.
 - [ ] Property/fuzz tests and adversarial cross-chain state-machine tests.
 - [ ] Formal or machine-checked supply-conservation and replay-safety properties.
 - [ ] Per-token, per-transaction, hourly, and daily exposure caps. The historical upstream contracts do not provide sufficient economic rate limiting by themselves. (EVM side in `Bridge.sol` `lock`, NOTICE item 18; the oracles' own check before voting and the canary values remain. The total cap is measured by the bridge's token balance: a direct donation fills the room left and blocks locks until the oracles vote a higher cap, at the cost of the donated tokens, which become unswept extra backing; an issuer burn or freeze of the bridge's balance lowers the balance but not the TOS-side supply, so the total cap then undercounts exposure, and the runbook's disable-token vote is the control.)
