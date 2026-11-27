@@ -156,22 +156,31 @@ class LocalRefusalTests(unittest.TestCase):
         hashes, roots = guard.BOC.parse_boc(nested)
         self.assertNotEqual(hashes[roots[0]].hex(), build.TEST_WALLET_CODE_HASH)
         self.assertIn(bytes.fromhex(build.TEST_WALLET_CODE_HASH), hashes)
+        # The binary form also carries the raw owner bytes, so the marker scan
+        # alone would flag it; the checks below must not rely on that.
+        self.assertIn(bytes.fromhex(build.REJECT_OWNER), nested)
+        other_hash = "00" * 32
+        self.assertNotIn(bytes.fromhex(other_hash), hashes)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for suffix, encoded in ((".boc", nested), (".boc.base64", base64.b64encode(nested))):
                 path = root / ("crypto/smartcont/wallet" + suffix)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(encoded)
-                # Isolate cell-hash detection: the binary fixture also carries
-                # raw owner bytes, which must not make this control pass.
+                relative = str(path.relative_to(root))
+                # Isolate cell-hash detection from the marker scan. The file
+                # is refused for the wallet's code hash and accepted for any
+                # other, so the refusal comes from a parsed hash match, not
+                # from the fail-closed branch for unreadable input.
                 with (
                     self.subTest(suffix=suffix),
                     mock.patch.object(guard, "forbidden", return_value=False),
                 ):
-                    self.assertIn(
-                        str(path.relative_to(root)),
+                    self.assertEqual(
                         guard.release_leaks(root, build.REJECT_OWNER, build.TEST_WALLET_CODE_HASH),
+                        [relative],
                     )
+                    self.assertEqual(guard.release_leaks(root, build.REJECT_OWNER, other_hash), [])
                 path.unlink()
 
     def test_benign_compiled_boc_with_base64_whitespace_is_accepted(self):

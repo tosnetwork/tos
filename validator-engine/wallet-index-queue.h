@@ -146,10 +146,11 @@ class BoundedWorkQueue {
     return wake_.wait_for(lock, limit, [this] { return to_record_.empty() && !degraded_unpersisted_; });
   }
 
-  // Test-only barrier with producers stopped, after wait_recorded(): the worker
-  // acknowledges only
-  // after examining all runnable items, so absence of processing while paused
-  // can be asserted without depending on which thread ran first.
+  // Test-only barrier, for use with producers stopped and after
+  // wait_recorded(). The worker acknowledges only once it holds the lock and
+  // has no runnable item left, so a test can assert that paused work was not
+  // processed without depending on which thread ran first. False at once
+  // after request_stop(), since the worker may already have exited.
   bool wait_worker_checkpoint_for_test(std::chrono::milliseconds limit) {
     std::unique_lock<std::mutex> lock(mutex_);
     if (stopping_) {
