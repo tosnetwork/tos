@@ -1,5 +1,6 @@
 """Offline controls for the local-only build, with no account-state override."""
 
+import base64
 import importlib.util
 import json
 import subprocess
@@ -130,6 +131,42 @@ class LocalRefusalTests(unittest.TestCase):
                 guard.release_leaks(root, build.REJECT_OWNER, build.TEST_WALLET_CODE_HASH),
                 ["crypto/smartcont/wallet.boc"],
             )
+
+    def test_embedded_compiled_wallet_is_detected_in_binary_and_base64_bocs(self):
+        raw = (HERE / "fixtures/refusing-wallet.boc").read_bytes()
+        # Add an ordinary empty parent without altering any cell of the real
+        # compiled fixture. All reference indexes shift together by one.
+        cells, roots = guard.BOC.read_boc(raw)
+        width = max(1, (len(cells).bit_length() + 7) // 8)
+        payload = bytes([1, 0]) + (roots[0] + 1).to_bytes(width, "big")
+        for d1, d2, data, refs in cells:
+            payload += bytes([d1, d2]) + data
+            payload += b"".join((index + 1).to_bytes(width, "big") for index in refs)
+        size_width = max(1, (len(payload).bit_length() + 7) // 8)
+        nested = (
+            bytes.fromhex("b5ee9c72")
+            + bytes([width, size_width])
+            + (len(cells) + 1).to_bytes(width, "big")
+            + (1).to_bytes(width, "big")
+            + bytes(width)
+            + len(payload).to_bytes(size_width, "big")
+            + bytes(width)
+            + payload
+        )
+        hashes, roots = guard.BOC.parse_boc(nested)
+        self.assertNotEqual(hashes[roots[0]].hex(), build.TEST_WALLET_CODE_HASH)
+        self.assertIn(bytes.fromhex(build.TEST_WALLET_CODE_HASH), hashes)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for suffix, encoded in ((".boc", nested), (".boc.base64", base64.b64encode(nested))):
+                path = root / ("crypto/smartcont/wallet" + suffix)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(encoded)
+                self.assertIn(
+                    str(path.relative_to(root)),
+                    guard.release_leaks(root, build.REJECT_OWNER, build.TEST_WALLET_CODE_HASH),
+                )
+                path.unlink()
 
     def test_compiler_hash_is_checked_before_the_marker_claims_it(self):
         with tempfile.TemporaryDirectory() as directory:
