@@ -62,13 +62,21 @@ class BoundedWorkQueue {
   BoundedWorkQueue &operator=(const BoundedWorkQueue &) = delete;
 
   ~BoundedWorkQueue() {
+    request_stop();
+    worker_.join();
+    recorder_.join();
+  }
+
+  // Nonblocking first step of shutdown, also used by the destructor. Finish
+  // all producers before calling: work in hand finishes, but no further work
+  // is taken. Separating the request from the joins lets tests order shutdown
+  // before releasing work held by a callback.
+  void request_stop() {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       stopping_ = true;
     }
     wake_.notify_all();
-    worker_.join();
-    recorder_.join();
   }
 
   // Returns at once. False when the item was dropped.
