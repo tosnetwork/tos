@@ -39,15 +39,12 @@
 #include "td/utils/tests.h"
 
 #if TD_PORT_POSIX
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include "td/utils/Observer.h"
-#include "td/utils/port/IPAddress.h"
 #include "td/utils/port/SocketFd.h"
+#include "td/utils/port/detail/NativeFd.h"
 #endif
 
 TEST(Actor2, signals) {
@@ -1240,30 +1237,23 @@ class RefusedConnection final : public td::actor::Actor, private td::ObserverBas
 // The pending wakeup of a poll actor runs from inside the poll callback, so
 // the refused connection unsubscribes and frees its socket while the poller
 // is still dispatching the batch that reported the refusal. kqueue reports the
-// refusal as two events for that socket (read and write filters).
+// end of stream as two events for that socket (read and write filters).
 TEST(Actor2, RefusedConnectionClosesInsidePollCallback) {
-  int probe = socket(AF_INET, SOCK_STREAM, 0);
-  CHECK(probe >= 0);
-  sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  CHECK(bind(probe, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
-  socklen_t addr_len = sizeof(addr);
-  CHECK(getsockname(probe, reinterpret_cast<sockaddr *>(&addr), &addr_len) == 0);
-  // Bound but not listening: a connection to it is refused.
-  td::IPAddress target;
-  target.init_ipv4_port("127.0.0.1", ntohs(addr.sin_port)).ensure();
-  auto r_fd = td::SocketFd::open(target);
+  // A stream socket whose peer is already gone stands in for the refused
+  // connection: every poller reports it closed in the first batch after
+  // subscribing, on every platform, with no timing to wait out.
+  int fds[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
+    LOG(WARNING) << "SKIPPED: socketpair failed: " << OS_ERROR("socketpair");
+    return;
+  }
+  close(fds[1]);
+  auto r_fd = td::SocketFd::from_native_fd(td::NativeFd(fds[0]));
   if (r_fd.is_error()) {
-    close(probe);
-    LOG(WARNING) << "SKIPPED: the connection was refused synchronously, nothing to poll: " << r_fd.error();
+    LOG(WARNING) << "SKIPPED: cannot wrap the socket: " << r_fd.error();
     return;
   }
   auto fd = r_fd.move_as_ok();
-  // Wait until the refusal is known, so the first poll batch reports it.
-  pollfd pfd{fd.get_native_fd().socket(), POLLOUT, 0};
-  CHECK(::poll(&pfd, 1, 5000) == 1);
-  close(probe);
 
   auto state = std::make_shared<RefusedConnectionState>();
   auto group_info = std::make_shared<core::SchedulerGroupInfo>(1);
