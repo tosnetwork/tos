@@ -3,16 +3,23 @@
 
 scripts/test-tos-service-actor-v1.sh builds the contract twice and then runs
 
-    tos_service_actor_release.py <first.boc> <build-output.txt> <func-binary> [profile]
+    tos_service_actor_release.py [--allow-missing-tos-commit] <first.boc> <build-output.txt> <func-binary> [profile]
 
 once per profile (each rail's release build, and its test-only build), which
 requires: the rebuilt BOC equals the profile's committed base64 artifact and
 its SDK constant (named by the profile, in the rail's SDK module) byte for
 byte; every manifest field equals
 what the build reported (code hash, BOC SHA-256 and size, compiler arguments)
-or what the compiler reports about itself (semantic version); and, when the
-manifest's tos_commit is in local history, that the contract source and every
-file it includes are unchanged since that commit.
+or what the compiler reports about itself (semantic version); and that the
+contract source and every file it includes are unchanged since the manifest's
+tos_commit.
+
+The tos_commit must be in local history. A checkout without it (a shallow
+clone) fails, because a provenance check that cannot run must not pass.
+--allow-missing-tos-commit is for a local shallow checkout only: with it, an
+absent commit is reported as a NOTE and the artifact is bound by the rebuild
+alone. The flag is refused when CI or GITHUB_ACTIONS is "true"; CI checks out
+full history instead.
 
 compiler.source_commit is recorded provenance: only its format is checked, as
 nothing in a built executable proves which commit produced it.
@@ -31,6 +38,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -164,9 +172,10 @@ def include_closure(source: Path, root: Path) -> list[str]:
     return sorted(str(path.relative_to(root)) for path in seen)
 
 
-def check_provenance(commit: str, paths: list[str], root: Path) -> str:
-    """'checked' when the files equal those at commit; 'unavailable' when the
-    commit is not in local history. Anything else is a refusal."""
+def check_provenance(commit: str, paths: list[str], root: Path, allow_missing: bool = False) -> str:
+    """'checked' when the files equal those at commit. A commit that is not in
+    local history is a refusal, unless allow_missing is set, when it is
+    'unavailable'. Anything else is a refusal."""
     require(COMMIT.match(commit) is not None, "tos_commit must be 40 lower-case hex digits")
     try:
         kind = subprocess.run(
@@ -176,7 +185,13 @@ def check_provenance(commit: str, paths: list[str], root: Path) -> str:
         raise ReleaseError("git is not available to check tos_commit") from error
     if kind.returncode != 0:
         if "Not a valid object name" in kind.stderr or "could not get object info" in kind.stderr:
-            return "unavailable"
+            if allow_missing:
+                return "unavailable"
+            raise ReleaseError(
+                f"tos_commit {commit} is not in local history, so provenance cannot be checked; "
+                "fetch it (git fetch origin <tos_commit>, or a full-history checkout), or pass "
+                "--allow-missing-tos-commit for a local shallow checkout"
+            )
         raise ReleaseError(f"git cat-file failed for tos_commit: {kind.stderr.strip()}")
     require(
         kind.stdout.strip() == "commit", f"tos_commit names a {kind.stdout.strip()}, not a commit"
@@ -197,6 +212,7 @@ def check_release(
     func: Path,
     root: Path = REPO,
     name: str = profiles.RELEASE,
+    allow_missing_commit: bool = False,
 ) -> list[str]:
     try:
         selected = profiles.profile(name)
@@ -253,22 +269,43 @@ def check_release(
     notes = []
     commit = manifest.get("tos_commit")
     require(isinstance(commit, str), "manifest tos_commit must be a string")
-    if check_provenance(commit, paths, root) == "unavailable":
+    if check_provenance(commit, paths, root, allow_missing_commit) == "unavailable":
         notes.append(
             f"NOTE: tos_commit {commit} not in local history; provenance not checked, artifact bound by rebuild"
         )
     return notes
 
 
-def main() -> int:
-    if len(sys.argv) not in (4, 5):
+ALLOW_MISSING_COMMIT = "--allow-missing-tos-commit"
+
+
+def in_ci(environ: dict[str, str]) -> bool:
+    return any(environ.get(name, "").lower() == "true" for name in ("CI", "GITHUB_ACTIONS"))
+
+
+def main(argv: list[str] | None = None, environ: dict[str, str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    environ = dict(os.environ if environ is None else environ)
+    allow_missing = bool(args) and args[0] == ALLOW_MISSING_COMMIT
+    if allow_missing:
+        args = args[1:]
+        if in_ci(environ):
+            print(
+                f"Service Actor release check failed: {ALLOW_MISSING_COMMIT} is for a local "
+                "shallow checkout and is refused in CI, which must fetch tos_commit",
+                file=sys.stderr,
+            )
+            return 1
+    if len(args) not in (3, 4):
         print(__doc__, file=sys.stderr)
         return 2
-    built = Path(sys.argv[1]).read_bytes()
-    build_output = Path(sys.argv[2]).read_text()
-    name = sys.argv[4] if len(sys.argv) == 5 else profiles.RELEASE
+    built = Path(args[0]).read_bytes()
+    build_output = Path(args[1]).read_text()
+    name = args[3] if len(args) == 4 else profiles.RELEASE
     try:
-        for note in check_release(built, build_output, Path(sys.argv[3]), name=name):
+        for note in check_release(
+            built, build_output, Path(args[2]), name=name, allow_missing_commit=allow_missing
+        ):
             print(note)
     except ReleaseError as error:
         print(f"Service Actor release check failed: {error}", file=sys.stderr)

@@ -29,6 +29,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The Service Actor release check compares the contract source with
+          # each manifest's tos_commit, so that commit must be in history.
+          fetch-depth: 0
       - name: Configure compiler toolchain
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build FunC and Fift
