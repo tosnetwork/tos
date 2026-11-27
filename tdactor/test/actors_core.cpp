@@ -38,6 +38,15 @@
 #include "td/utils/port/thread.h"
 #include "td/utils/tests.h"
 
+#if TD_PORT_POSIX
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include "td/utils/Observer.h"
+#include "td/utils/port/SocketFd.h"
+#include "td/utils/port/detail/NativeFd.h"
+#endif
+
 TEST(Actor2, signals) {
   using td::actor::core::ActorSignals;
   ActorSignals signals;
@@ -1167,4 +1176,101 @@ TEST(Actor2, test_stats) {
 
   scheduler.run();
 }
+
+#if TD_PORT_POSIX
+namespace {
+struct RefusedConnectionState {
+  int in_poll_callback = 0;
+  bool closed = false;
+  bool closed_inside_poll_callback = false;
+  bool timed_out = false;
+};
+
+// Closes its socket the way an external client connection does when the
+// server refuses it: start_up subscribes the socket and yields (as queuing the
+// handshake does), and the next loop sees the refusal and stops.
+class RefusedConnection final : public td::actor::Actor, private td::ObserverBase {
+ public:
+  RefusedConnection(td::SocketFd fd, std::shared_ptr<RefusedConnectionState> state)
+      : fd_(std::move(fd)), state_(std::move(state)) {
+  }
+
+ private:
+  td::SocketFd fd_;
+  std::shared_ptr<RefusedConnectionState> state_;
+  td::actor::ActorId<RefusedConnection> self_;
+
+  void notify() override {
+    // The call below may run this actor's pending wakeup and destroy it, so
+    // nothing of `this` may be touched afterwards.
+    auto state = state_;
+    state->in_poll_callback++;
+    td::actor::send_closure_later(self_, &RefusedConnection::loop);
+    state->in_poll_callback--;
+  }
+  void start_up() override {
+    self_ = actor_id(this);
+    SchedulerContext::get().get_poll().subscribe(fd_.get_poll_info().extract_pollable_fd(this),
+                                                 td::PollFlags::ReadWrite());
+    alarm_timestamp() = td::Timestamp::in(10);
+    yield();
+  }
+  void loop() override {
+    td::sync_with_poll(fd_);
+    if (fd_.get_pending_error().is_error() || td::can_close(fd_)) {
+      stop();
+    }
+  }
+  void alarm() override {
+    state_->timed_out = true;
+    stop();
+  }
+  void tear_down() override {
+    state_->closed = true;
+    state_->closed_inside_poll_callback = state_->in_poll_callback > 0;
+    SchedulerContext::get().get_poll().unsubscribe(fd_.get_poll_info().get_pollable_fd_ref());
+    SchedulerContext::get().stop();
+  }
+};
+}  // namespace
+
+// The pending wakeup of a poll actor runs from inside the poll callback, so
+// the refused connection unsubscribes and frees its socket while the poller
+// is still dispatching the batch that reported the refusal. kqueue reports the
+// end of stream as two events for that socket (read and write filters).
+TEST(Actor2, RefusedConnectionClosesInsidePollCallback) {
+  // A stream socket whose peer is already gone stands in for the refused
+  // connection: every poller reports it closed in the first batch after
+  // subscribing, on every platform, with no timing to wait out.
+  int fds[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
+    LOG(WARNING) << "SKIPPED: socketpair failed: " << OS_ERROR("socketpair");
+    return;
+  }
+  close(fds[1]);
+  auto r_fd = td::SocketFd::from_native_fd(td::NativeFd(fds[0]));
+  if (r_fd.is_error()) {
+    LOG(WARNING) << "SKIPPED: cannot wrap the socket: " << r_fd.error();
+    return;
+  }
+  auto fd = r_fd.move_as_ok();
+
+  auto state = std::make_shared<RefusedConnectionState>();
+  auto group_info = std::make_shared<core::SchedulerGroupInfo>(1);
+  core::Scheduler scheduler{group_info, SchedulerId{0}, 1};
+  scheduler.start();
+  scheduler.run_in_context([&] {
+    create_actor<RefusedConnection>(ActorOptions().with_name("RefusedConnection").with_poll(), std::move(fd), state)
+        .release();
+  });
+  while (scheduler.run(1000)) {
+  }
+  scheduler.stop();
+  core::Scheduler::close_scheduler_group(*group_info);
+
+  ASSERT_TRUE(state->closed);
+  ASSERT_TRUE(!state->timed_out);
+  ASSERT_TRUE(state->closed_inside_poll_callback);
+}
+#endif
 #endif  //!TD_THREAD_UNSUPPORTED

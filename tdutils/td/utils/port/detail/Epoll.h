@@ -63,7 +63,14 @@ class Epoll final : public PollBase {
  private:
   NativeFd epoll_fd_;
   vector<struct epoll_event> events_;
+  // The batch run() is dispatching: events_[event_pos_ + 1, events_n_) are still to come.
+  int events_n_ = 0;
+  int event_pos_ = 0;
   ListNode list_root_;
+
+  // Drops the events still to be dispatched in the current batch for an fd being
+  // unsubscribed: the callback of an earlier event may already have freed it.
+  void drop_pending_events(const ListNode *list_node);
 };
 
 }  // namespace detail
