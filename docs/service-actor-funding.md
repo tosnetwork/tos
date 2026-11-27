@@ -279,8 +279,11 @@ The token-rail actor (`crypto/smartcont/service-actor-token-code.fc`, release
 `tos-service-actor-token-v1`) keeps the native ledger above for storage fees,
 TOS revenue and the operating reserve, and adds a token ledger in the asset's
 atomic units: pending, refundable, returned, in flight and token revenue. Its
-wallet must hold at least their sum; the rest is surplus. Token principal is
-never counted as TOS backing.
+wallet balance plus the payouts in transit (debited at the actor's wallet, not
+yet credited back to it, outcome not yet applied by the actor) is at least
+their sum, so the balance alone can be below it while a payout is in transit.
+With no payout in transit, the rest of the balance is surplus. Token principal
+is never counted as TOS backing.
 
 A call is funded by a token transfer to the actor whose `forward_tos_amount`
 is at least `storage_fee` plus `MIN_FUNDING_VALUE`. A payout op attaches at

@@ -1090,8 +1090,12 @@ pub struct TokenLedger {
 }
 
 impl TokenLedger {
-    /// Every token the actor owes or holds as revenue: what its wallet must
-    /// hold at least (the token invariant). The rest is surplus.
+    /// Every token the actor owes or holds as revenue. The token invariant:
+    /// the wallet balance plus the payouts in transit (debited at S, not yet
+    /// credited back to the wallet, outcome not yet applied by the actor) is
+    /// at least this sum. The wallet balance alone can be below it while a
+    /// payout is in transit; with none in transit, the rest of the balance is
+    /// surplus.
     pub fn attributed(&self) -> Option<u128> {
         self.pending
             .checked_add(self.refundable)?
