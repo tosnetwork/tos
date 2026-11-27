@@ -22,6 +22,21 @@ TOS is derived from TON-family open-source blockchain work originally developed 
 | `third-party/sodium/` | libsodium | ISC |
 | `third-party/wingetopt/` | wingetopt | BSD-3 |
 
+## Libraries linked into the release binaries
+
+The release binaries also carry code from a system library that is not in
+`third-party/`:
+
+| Library | Version | License | How the release carries it |
+|---|---|---|---|
+| GNU Scientific Library (GSL) | 2.7.1 (Ubuntu 24.04 package `libgsl-dev` 2.7.1+dfsg-6ubuntu2) | GPL-3.0-or-later | statically linked into `validator-engine`, `tos-rpc` and `tos-wallet-index` (`TOS_STATIC_GSL=ON`); shipped as the shared libraries `libgsl.so.27` and `libgslcblas.so.0` inside the AppImage bundles |
+
+The corresponding source of that GSL build is published with every release as
+the asset `gsl-2.7.1-source.tar`. It holds the Ubuntu source package the
+binaries were built against (`gsl_2.7.1+dfsg-6ubuntu2.dsc`,
+`gsl_2.7.1+dfsg.orig.tar.gz` and `gsl_2.7.1+dfsg-6ubuntu2.debian.tar.xz`),
+whose SHA-256 digests the node-binaries workflow checks before packing them.
+
 ## License Compatibility
 
 This work is distributed under GPL-3.0. Third-party components retain their original licenses, and their license texts are included in-tree.

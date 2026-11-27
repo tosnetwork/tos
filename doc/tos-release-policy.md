@@ -396,6 +396,26 @@ for full nodes, the wallet services, DHT servers and tools only.
 | `node-build-info-linux-<arch>.txt` | the build record described below |
 | `tos-node-linux-<arch>.zip` | the workflow artifact `tos-node-<arch>-linux` itself |
 
+Three files of the node build are the same for both architectures, so the
+release publishes them once, from the x86-64 artifact, under their own names:
+
+| Asset | Content |
+|---|---|
+| `LICENSE` | the repository's licence (GPL-3.0) |
+| `THIRD_PARTY_NOTICES.md` | the third-party notices, among them the libraries linked into the binaries |
+| `gsl-2.7.1-source.tar` | the corresponding source of the GSL linked into the binaries |
+
+GSL is GPL-3.0-or-later and statically linked into `validator-engine`,
+`tos-rpc` and `tos-wallet-index`. Before the build, the node workflow
+requires the installed `libgsl-dev` to be the pinned Ubuntu version
+(`2.7.1+dfsg-6ubuntu2`), downloads that version's Ubuntu source package
+(`.dsc`, `.orig.tar.gz` and `.debian.tar.xz`) from the Ubuntu archive, checks
+each file against a SHA-256 digest pinned in the workflow and packs the three
+into `gsl-2.7.1-source.tar`, which it adds to the build output. The build
+script refuses another `libgsl-dev` version as well. All three files travel in
+the artifact like the binaries, so `SHA256SUMS`, `release-provenance.json` and
+the attestation cover them.
+
 These names, `SHA256SUMS` and `release-provenance.json` are what operator
 tooling downloads; a change to any of them is a breaking change to the
 release surface.
@@ -422,6 +442,9 @@ recipe, the same one the testnet hosts use when they build on themselves:
 - `CMAKE_BUILD_TYPE=Release`, clang-21 (`scripts/install-llvm-toolchain.sh 21`);
 - `TOS_USE_JEMALLOC=ON`: a validator's memory behaviour depends on jemalloc,
   so a node binary built without it is not the tested product;
+- `TOS_STATIC_GSL=ON`: GSL is linked from `libgsl.a` rather than its shared
+  library, so the binaries also load on an Ubuntu release that ships another
+  GSL soname. The GSL code path itself (`TOS_HAVE_GSL`) is unchanged;
 - `TOS_ARCH` and RocksDB's `PORTABLE` both set to `x86-64-v2` on x86-64 and
   `armv8-a` on arm64, never `-march=native`, so a binary does not stop with
   `SIGILL` on an older CPU;
@@ -439,7 +462,9 @@ values back from `CMakeCache.txt`, among them the backend switch of the
 architecture, which must be ON, requires `validator-engine`,
 `dht-server`, `tos-rpc` and `tos-wallet-index` (the binaries whose link line
 carries jemalloc; the two services get it through `tos_db`) to list
-`libjemalloc.so` as a dependency, runs
+`libjemalloc.so` as a dependency, requires that no binary lists the GSL
+shared library and that `validator-engine` defines
+`gsl_cdf_negative_binomial_P` (the function RLDP's send estimate calls), runs
 `validator-engine -V` under `MALLOC_CONF=stats_print:true` and requires
 jemalloc's exit statistics (so jemalloc is the allocator the process
 actually ran with), and requires every binary with `-V` to report the tagged
@@ -472,7 +497,7 @@ embeds the same text as the build the tag push started.
 `SOURCE_DATE_EPOCH`, the compiler, the flags, both SHA-256 backend switches
 (`slhdsa_sha256`), the `rustc` and `cargo`
 versions, the Rust flags (`rust_flags`), the jemalloc library and
-package, the build OS, each binary's dynamic dependencies and SHA-256.
+package, the `libgsl-dev` version (`gsl_package`), the build OS, each binary's dynamic dependencies and SHA-256.
 `scripts/test_release_artifacts.py` fails if an asset above comes from any
 other build, or if the script loses a recipe flag or a check.
 
@@ -481,15 +506,18 @@ are built on Ubuntu 24.04 and need glibc 2.39 or newer. Beyond the C and C++
 runtimes, the build links what the build host has installed, so the
 `needed` lines of the build record are the authority. A build with the
 workflow's package set links `libjemalloc.so.2` into `validator-engine`,
-`dht-server`, `tos-rpc` and `tos-wallet-index`, `libgsl.so.27` and
-`libblas.so.3` into `validator-engine`, `tos-rpc` and `tos-wallet-index`,
-`libreadline.so.8` into `validator-engine-console` and `lite-client`, and on
-arm64 `libatomic.so.1` as well. On Ubuntu 24.04 the host therefore needs
-`libjemalloc2`, `libgsl27`, `libblas3`, `libreadline8t64` and, on arm64,
-`libatomic1`; a host that runs only the wallet services needs the same
-packages except `libreadline8t64`. `tosctl` uses none of these: it links
-`libssl.so.3` and `libcrypto.so.3` (package `libssl3t64`) and `libgcc_s.so.1`
-besides the C runtime.
+`dht-server`, `tos-rpc` and `tos-wallet-index`, `libblas.so.3` into
+`validator-engine`, `tos-rpc` and `tos-wallet-index`, `libreadline.so.8` into
+`validator-engine-console` and `lite-client`, and on arm64 `libatomic.so.1`
+as well. GSL, which RLDP's loss estimate uses, is linked from its static
+archive (`TOS_STATIC_GSL=ON`, recorded in the `flags` line): its soname
+differs between Ubuntu releases (`libgsl.so.27` on 24.04, `libgsl.so.28` on
+26.04), while the other libraries keep theirs. The host therefore needs
+`libjemalloc2`, `libblas3`, `libreadline8t64` and, on arm64, `libatomic1`,
+on Ubuntu 24.04 and 26.04 alike; a host that runs only the wallet services
+needs the same packages except `libreadline8t64`. `tosctl` uses none of
+these: it links `libssl.so.3` and `libcrypto.so.3` (package `libssl3t64`) and
+`libgcc_s.so.1` besides the C runtime.
 
 The AppImages and `tos-linux-<arch>.zip` are unchanged: they remain the
 desktop and tool builds (`PORTABLE=1`, without jemalloc) and are not the

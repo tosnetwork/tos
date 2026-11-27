@@ -80,8 +80,8 @@
       "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
     },
     "repository/THIRD_PARTY_NOTICES.md": {
-      "bytes": 1188,
-      "sha256": "4e30874f0e49807d6d8d6d967649332c9370bda0449c8727a7e6bdebf3453d75"
+      "bytes": 2085,
+      "sha256": "34a9a0f6c4c9d07dbfe6252cbe2fe3b70ca97f521edbc713046f2d3f4ac23f56"
     },
     "repository/crypto/block/block.tlb": {
       "bytes": 46002,

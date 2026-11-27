@@ -146,6 +146,21 @@
           "name": "node-build-info-linux-x86_64.txt"
         },
         {
+          "artifact": "tos-node-x86_64-linux",
+          "path": "LICENSE",
+          "name": "LICENSE"
+        },
+        {
+          "artifact": "tos-node-x86_64-linux",
+          "path": "THIRD_PARTY_NOTICES.md",
+          "name": "THIRD_PARTY_NOTICES.md"
+        },
+        {
+          "artifact": "tos-node-x86_64-linux",
+          "path": "gsl-2.7.1-source.tar",
+          "name": "gsl-2.7.1-source.tar"
+        },
+        {
           "artifact": "tos-arm64-linux",
           "zip": true,
           "name": "tos-linux-arm64.zip"

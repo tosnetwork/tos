@@ -9,6 +9,7 @@ something failed.
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import importlib.util
 import io
@@ -1144,6 +1145,8 @@ class RepositoryConfigTest(unittest.TestCase):
             items = [*release_set["assets"], *release_set.get("bundles", [])]
             self.assertEqual({item["artifact"] for item in items}, expected_sets[name], name)
             for item in items:
+                if item["name"] in NodeBinaryReleaseTest.ARCH_INDEPENDENT_ASSETS:
+                    continue
                 self.assertRegex(
                     item["name"], r"(^|-)linux-(x86_64|arm64)(\.|$)|^smartcont_lib\.zip$"
                 )
@@ -1377,6 +1380,89 @@ def node_workflow_leg_problems(workflow: str) -> list[str]:
     return problems
 
 
+def gsl_source_problems(
+    config: dict[str, Any], workflow: str, script: str, notices: str
+) -> list[str]:
+    """Why a release would ship the statically linked GSL without its source.
+
+    GSL is GPL-3.0-or-later and linked into the node binaries, so the release
+    carries the licence texts and the Ubuntu source package of the exact
+    libgsl-dev the build linked, through the same artifact as the binaries.
+    """
+    problems: list[str] = []
+    workflow_name = NodeBinaryReleaseTest.WORKFLOW
+    version = NodeBinaryReleaseTest.GSL_PACKAGE_VERSION
+    by_name = {asset["name"]: asset for asset in config["release_sets"]["full"]["assets"]}
+    for name in NodeBinaryReleaseTest.ARCH_INDEPENDENT_ASSETS:
+        asset = by_name.get(name)
+        if asset is None or (asset["artifact"], asset.get("path")) != (
+            "tos-node-x86_64-linux",
+            name,
+        ):
+            problems.append(f"the full set does not publish {name} from tos-node-x86_64-linux")
+    # The build script refuses another libgsl-dev and records the one it used.
+    for line in (
+        f"\nGSL_PACKAGE_VERSION={version}\n",
+        "\nGSL_VERSION=$(dpkg-query -W -f '${Version}' libgsl-dev 2>/dev/null) "
+        '|| die "libgsl-dev is not installed"\n'
+        '[ "$GSL_VERSION" = "$GSL_PACKAGE_VERSION" ] \\\n'
+        '  || die "libgsl-dev is $GSL_VERSION, not the pinned $GSL_PACKAGE_VERSION"\n',
+        '\n  echo "gsl_package libgsl-dev $GSL_VERSION"\n',
+        '\ninstall -m 0644 LICENSE THIRD_PARTY_NOTICES.md "$OUT/"\n',
+    ):
+        if line not in script:
+            problems.append(f"the node build script lost {line.strip()!r}")
+    if not 0 <= script.find("\nGSL_VERSION=$(") < script.find("\ncmake -S . -B"):
+        problems.append("the node build script checks the GSL package after the C++ build")
+    # The workflow fetches that version's source package, checks it against
+    # pinned digests and adds it to the uploaded build output.
+    fetch = workflow.find("    - name: Fetch the corresponding source of GSL\n")
+    install = workflow.find("    - name: Install system libraries\n")
+    build = workflow.find("      run: assembly/native/build-node-binaries.sh node-binaries\n")
+    add = workflow.find(
+        '      run: install -m 0644 "$RUNNER_TEMP/gsl-2.7.1-source.tar" node-binaries/\n'
+    )
+    upload = workflow.find("        path: node-binaries\n")
+    if not 0 <= install < fetch < build < add < upload:
+        problems.append(
+            f"{workflow_name} does not fetch GSL's source before the build and add it after"
+        )
+    step = workflow[fetch : workflow.find("\n\n", fetch)] if fetch >= 0 else ""
+    for line in (
+        f"        version={version}\n",
+        "        installed=$(dpkg-query -W -f '${source:Version}' libgsl-dev)\n",
+        '        if [ "$installed" != "$version" ]; then\n',
+        "          exit 1\n",
+        "        (cd \"$dir\" && sha256sum --check --strict) <<'SUMS'\n",
+        '          -C "$dir" -cf "$RUNNER_TEMP/gsl-2.7.1-source.tar" \\\n',
+    ):
+        if line not in step:
+            problems.append(f"{workflow_name} lost {line.strip()!r}")
+    sums = re.search(r"<<'SUMS'\n((?:        [0-9a-f]{64}  \S+\n)*)        SUMS\n", step)
+    files = re.findall(r"  (\S+)\n", sums.group(1)) if sums else []
+    expected = [
+        f"gsl_{version}.dsc",
+        "gsl_2.7.1+dfsg.orig.tar.gz",
+        f"gsl_{version}.debian.tar.xz",
+    ]
+    if files != expected:
+        problems.append(f"{workflow_name} does not pin the digests of {expected}")
+    for name in expected:
+        if f"/{name}" not in step and f" {name}" not in step.split("<<'SUMS'", 1)[0]:
+            problems.append(f"{workflow_name} does not download {name}")
+    # The notices name the library, its licence, the binaries and the asset.
+    for text in (
+        "GNU Scientific Library",
+        version,
+        "GPL-3.0-or-later",
+        "`validator-engine`, `tos-rpc` and `tos-wallet-index`",
+        "`gsl-2.7.1-source.tar`",
+    ):
+        if text not in notices:
+            problems.append(f"THIRD_PARTY_NOTICES.md does not name {text}")
+    return problems
+
+
 def node_release_problems(config: dict[str, Any], workflow: str, script: str) -> list[str]:
     """Why the published node binaries would not be the node-recipe build.
 
@@ -1442,10 +1528,24 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
         "-DCMAKE_BUILD_TYPE=Release \\\n",
         "-DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \\\n",
         '-DTOS_ARCH="$CPU" -DPORTABLE="$CPU" \\\n',
+        "-DTOS_STATIC_GSL=ON \\\n",
         "-DTOS_USE_JEMALLOC=ON\n",
         "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct HEAD)\nexport SOURCE_DATE_EPOCH\n",
         "export CCACHE_DISABLE=1\n",
         '[ "$(cached TOS_USE_JEMALLOC)" = ON ]',
+        # GSL is linked from its archive, whose soname would tie the binaries
+        # to one Ubuntu release, and the GSL code path is still compiled in.
+        '\n[ "$(cached TOS_STATIC_GSL)" = ON ] || die "TOS_STATIC_GSL is not ON"\n',
+        '\nfor t in "${TARGETS[@]}"; do\n'
+        '  bin="$BUILD/${PATHS[$t]}"\n'
+        '  readelf -d "$bin" >/dev/null || die "readelf cannot read $t"\n'
+        "  if readelf -d \"$bin\" | grep 'NEEDED.*\\[libgsl' >/dev/null; "
+        'then die "$t needs the GSL shared library"; fi\n'
+        "done\n",
+        '\nnm --defined-only "$BUILD/${PATHS[validator-engine]}" '
+        "| grep -E ' [Tt] gsl_cdf_negative_binomial_P$' >/dev/null \\\n"
+        '  || die "validator-engine does not carry the GSL functions"\n',
+        'TOS_USE_JEMALLOC=ON TOS_STATIC_GSL=ON"\n',
         # ... and with the hardware SHA-256 backend of its architecture, which
         # the build record names.
         "\nunset TOS_SLHDSA_SHA_NI TOS_SLHDSA_ARMV8_SHA2\n",
@@ -1564,6 +1664,12 @@ class NodeBinaryReleaseTest(unittest.TestCase):
     )
     # Built by cargo in the same script run, published from the same artifact.
     RUST_BINARIES = ("tosctl",)
+    # Files of the node build that are the same for both architectures, so the
+    # full set publishes them once, from the x86-64 leg, under their own names.
+    ARCH_INDEPENDENT_ASSETS = ("LICENSE", "THIRD_PARTY_NOTICES.md", "gsl-2.7.1-source.tar")
+    # The libgsl-dev whose archive the node binaries link and whose source the
+    # release publishes.
+    GSL_PACKAGE_VERSION = "2.7.1+dfsg-6ubuntu2"
     # What the Rust half of the recipe reads besides the script itself.
     RUST_INPUTS = (
         "rust-toolchain.toml",
@@ -1686,6 +1792,94 @@ class NodeBinaryReleaseTest(unittest.TestCase):
             "stats check deleted": script.replace(stats, ""),
             "commit check deleted": script.replace(
                 '  "$BUILD/${PATHS[$t]}" -V | grep -q "Commit: $REV" ', "  true "
+            ),
+        }
+        for label, mutant in mutants.items():
+            with self.subTest(mutant=label):
+                self.assertNotEqual(mutant, script)
+                self.assertNotEqual(node_release_problems(config, workflow, mutant), [])
+
+    def test_the_gsl_source_and_notices_are_published(self) -> None:
+        config, workflow, script = self.inputs()
+        notices = (HERE.parent / "THIRD_PARTY_NOTICES.md").read_text()
+        self.assertEqual(gsl_source_problems(config, workflow, script, notices), [])
+        version = self.GSL_PACKAGE_VERSION
+        dropped_asset = copy.deepcopy(config)
+        dropped_asset["release_sets"]["full"]["assets"] = [
+            asset
+            for asset in config["release_sets"]["full"]["assets"]
+            if asset["name"] != "gsl-2.7.1-source.tar"
+        ]
+        arm_asset = copy.deepcopy(config)
+        for asset in arm_asset["release_sets"]["full"]["assets"]:
+            if asset["name"] == "LICENSE":
+                asset["artifact"] = "tos-node-arm64-linux"
+        self.assertNotEqual(gsl_source_problems(dropped_asset, workflow, script, notices), [])
+        self.assertNotEqual(gsl_source_problems(arm_asset, workflow, script, notices), [])
+        add_step = (
+            "    - name: Add the corresponding source of GSL to the build output\n"
+            '      run: install -m 0644 "$RUNNER_TEMP/gsl-2.7.1-source.tar" node-binaries/\n'
+        )
+        workflow_mutants = {
+            "version check tolerated": workflow.replace(
+                "          exit 1\n", "          true\n", 1
+            ),
+            "digest check dropped": workflow.replace(
+                "        (cd \"$dir\" && sha256sum --check --strict) <<'SUMS'\n",
+                "        (cd \"$dir\" && sha256sum) <<'SUMS'\n",
+            ),
+            "a digest dropped": re.sub(
+                r"(?m)^        [0-9a-f]{64}  gsl_2\.7\.1\+dfsg\.orig\.tar\.gz\n", "", workflow
+            ),
+            "source not added": workflow.replace(add_step, ""),
+            "another version": workflow.replace(f"version={version}", "version=2.7.1+dfsg-6"),
+        }
+        script_mutants = {
+            "version check deleted": script.replace(
+                '  || die "libgsl-dev is $GSL_VERSION, not the pinned $GSL_PACKAGE_VERSION"\n', ""
+            ),
+            "no gsl_package line": script.replace(
+                '  echo "gsl_package libgsl-dev $GSL_VERSION"\n', ""
+            ),
+            "licences not copied": script.replace(
+                'install -m 0644 LICENSE THIRD_PARTY_NOTICES.md "$OUT/"\n', ""
+            ),
+        }
+        for label, mutant in workflow_mutants.items():
+            with self.subTest(mutant=label):
+                self.assertNotEqual(mutant, workflow)
+                self.assertNotEqual(gsl_source_problems(config, mutant, script, notices), [])
+        for label, mutant in script_mutants.items():
+            with self.subTest(mutant=label):
+                self.assertNotEqual(mutant, script)
+                self.assertNotEqual(gsl_source_problems(config, workflow, mutant, notices), [])
+        self.assertNotEqual(
+            gsl_source_problems(
+                config, workflow, script, notices.replace("GPL-3.0-or-later", "GPL")
+            ),
+            [],
+        )
+
+    def test_a_dropped_static_gsl_check_is_refused(self) -> None:
+        config, workflow, script = self.inputs()
+        self.assertEqual(node_release_problems(config, workflow, script), [])
+        mutants = {
+            "static GSL not configured": script.replace("  -DTOS_STATIC_GSL=ON \\\n", ""),
+            "static GSL configured OFF": script.replace(
+                "-DTOS_STATIC_GSL=ON", "-DTOS_STATIC_GSL=OFF"
+            ),
+            "cache check deleted": script.replace(
+                '[ "$(cached TOS_STATIC_GSL)" = ON ] || die "TOS_STATIC_GSL is not ON"\n', ""
+            ),
+            "NEEDED check tolerated": script.replace(
+                'then die "$t needs the GSL shared library"',
+                'then echo "$t needs the GSL shared library"',
+            ),
+            "symbol check deleted": script.replace(
+                '  || die "validator-engine does not carry the GSL functions"\n', ""
+            ),
+            "build record drops the flag": script.replace(
+                'TOS_USE_JEMALLOC=ON TOS_STATIC_GSL=ON"', 'TOS_USE_JEMALLOC=ON"'
             ),
         }
         for label, mutant in mutants.items():

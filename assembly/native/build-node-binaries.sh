@@ -6,7 +6,7 @@
 # Run from the root of a clean checkout of the commit to release. The recipe is
 # the one the testnet hosts build on themselves:
 #
-#   Release, clang-21, TOS_USE_JEMALLOC=ON,
+#   Release, clang-21, TOS_USE_JEMALLOC=ON, TOS_STATIC_GSL=ON,
 #   TOS_ARCH = PORTABLE = x86-64-v2 (x86-64) or armv8-a (arm64),
 #   SOURCE_DATE_EPOCH = the commit time of HEAD.
 #
@@ -14,11 +14,17 @@
 # without it is not the tested product. The fixed CPU level, rather than
 # -march=native, keeps a binary from stopping with SIGILL on an older CPU; the
 # fixed SOURCE_DATE_EPOCH keeps third-party build timestamps from varying.
+# GSL is linked from its static archive: its soname differs between Ubuntu
+# releases (libgsl.so.27 on 24.04, libgsl.so.28 on 26.04), and every other
+# library the binaries need keeps its soname across them. The release
+# publishes the corresponding source of exactly one libgsl-dev version
+# (THIRD_PARTY_NOTICES.md), so the build refuses any other.
 #
 # The script refuses to finish unless the recipe is in effect: the configured
 # cache holds these values, the binaries that link jemalloc load it,
-# validator-engine allocates through it, and every binary with -V reports the
-# commit it was built from.
+# validator-engine allocates through it, no binary needs the GSL shared
+# library while validator-engine carries the GSL functions RLDP uses, and every
+# binary with -V reports the commit it was built from.
 #
 # tosctl, the Rust tool an operator drives the node with, is built from the
 # same commit in the same run:
@@ -34,7 +40,8 @@
 # the build left the checkout unchanged and tosctl --version reports the
 # commit.
 #
-# The output directory receives the eight node binaries, tosctl and BUILD-INFO.
+# The output directory receives the eight node binaries, tosctl, BUILD-INFO,
+# and the repository's LICENSE and THIRD_PARTY_NOTICES.md.
 set -euo pipefail
 
 die() { echo "build-node-binaries: $*" >&2; exit 1; }
@@ -66,6 +73,13 @@ RUSTC_VERSION=$(cd tosctl/src && rustc --version)
 CARGO_VERSION=$(cd tosctl/src && cargo --version)
 [[ "$RUSTC_VERSION" == "rustc $RUST_CHANNEL "* ]] || die "rustc is '$RUSTC_VERSION', not the pinned $RUST_CHANNEL"
 [[ "$CARGO_VERSION" == "cargo $RUST_CHANNEL "* ]] || die "cargo is '$CARGO_VERSION', not the pinned $RUST_CHANNEL"
+# The GSL archive linked in must be the one whose source the release publishes;
+# the node-binaries workflow pins the same version.
+GSL_PACKAGE_VERSION=2.7.1+dfsg-6ubuntu2
+command -v dpkg-query >/dev/null || die "dpkg-query is missing; the recipe needs the Ubuntu libgsl-dev package"
+GSL_VERSION=$(dpkg-query -W -f '${Version}' libgsl-dev 2>/dev/null) || die "libgsl-dev is not installed"
+[ "$GSL_VERSION" = "$GSL_PACKAGE_VERSION" ] \
+  || die "libgsl-dev is $GSL_VERSION, not the pinned $GSL_PACKAGE_VERSION"
 # No compiler cache: a release binary is compiled from source, never taken
 # from objects another run left behind.
 export CCACHE_DISABLE=1
@@ -99,6 +113,7 @@ cmake -S . -B "$BUILD" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
   -DTOS_ARCH="$CPU" -DPORTABLE="$CPU" \
+  -DTOS_STATIC_GSL=ON \
   -DTOS_USE_JEMALLOC=ON
 cmake --build "$BUILD" --parallel "$JOBS" --target "${TARGETS[@]}"
 
@@ -106,6 +121,7 @@ cmake --build "$BUILD" --parallel "$JOBS" --target "${TARGETS[@]}"
 cached() { sed -n "s/^$1:[A-Z]*=//p" "$BUILD/CMakeCache.txt"; }
 [ "$(cached CMAKE_BUILD_TYPE)" = Release ] || die "CMAKE_BUILD_TYPE is not Release"
 [ "$(cached TOS_USE_JEMALLOC)" = ON ] || die "TOS_USE_JEMALLOC is not ON"
+[ "$(cached TOS_STATIC_GSL)" = ON ] || die "TOS_STATIC_GSL is not ON"
 [ "$(cached TOS_ARCH)" = "$CPU" ] || die "TOS_ARCH is not $CPU"
 [ "$(cached PORTABLE)" = "$CPU" ] || die "PORTABLE is not $CPU"
 [ "$(basename "$(cached CMAKE_CXX_COMPILER)")" = clang++-21 ] || die "the C++ compiler is not clang++-21"
@@ -124,6 +140,18 @@ for t in "${JEMALLOC_TARGETS[@]}"; do
   bin="$BUILD/${PATHS[$t]}"
   readelf -d "$bin" | grep -q 'NEEDED.*\[libjemalloc\.so' || die "$t does not link jemalloc"
 done
+# GSL is in the binaries, not a dependency of them: RLDP's loss estimate is
+# compiled with it (TOS_HAVE_GSL), and the archive's functions are linked in.
+for t in "${TARGETS[@]}"; do
+  bin="$BUILD/${PATHS[$t]}"
+  readelf -d "$bin" >/dev/null || die "readelf cannot read $t"
+  if readelf -d "$bin" | grep 'NEEDED.*\[libgsl' >/dev/null; then die "$t needs the GSL shared library"; fi
+done
+# The function RLDP's send estimate calls; --exclude-libs makes the archive's
+# symbols local (t). grep reads all of nm's output, so a pipefail cannot come
+# from nm's SIGPIPE.
+nm --defined-only "$BUILD/${PATHS[validator-engine]}" | grep -E ' [Tt] gsl_cdf_negative_binomial_P$' >/dev/null \
+  || die "validator-engine does not carry the GSL functions"
 # Linked is not the same as used: jemalloc prints its statistics at exit only
 # when it is the allocator the process ran with.
 MALLOC_CONF=stats_print:true "$BUILD/${PATHS[validator-engine]}" -V >"$BUILD/jemalloc-stats.txt" 2>&1 \
@@ -162,12 +190,13 @@ for t in "${TARGETS[@]}"; do
   install -m 0755 "$BUILD/${PATHS[$t]}" "$OUT/$t"
 done
 install -m 0755 "$TOSCTL" "$OUT/tosctl"
+install -m 0644 LICENSE THIRD_PARTY_NOTICES.md "$OUT/"
 {
   echo "tos_revision $REV"
   echo "source_date_epoch $SOURCE_DATE_EPOCH"
   echo "architecture $(uname -m)"
   echo "compiler $(clang++-21 --version | head -1)"
-  echo "flags CMAKE_BUILD_TYPE=Release TOS_ARCH=$CPU PORTABLE=$CPU TOS_USE_JEMALLOC=ON"
+  echo "flags CMAKE_BUILD_TYPE=Release TOS_ARCH=$CPU PORTABLE=$CPU TOS_USE_JEMALLOC=ON TOS_STATIC_GSL=ON"
   echo "slhdsa_sha256 TOS_SLHDSA_SHA_NI=$(cached TOS_SLHDSA_SHA_NI) TOS_SLHDSA_ARMV8_SHA2=$(cached TOS_SLHDSA_ARMV8_SHA2)"
   echo "$RUSTC_VERSION"
   echo "$CARGO_VERSION"
@@ -177,6 +206,7 @@ install -m 0755 "$TOSCTL" "$OUT/tosctl"
     package=$(dpkg -S "$(readlink -f "$JEMALLOC_LIB")" 2>/dev/null | cut -d: -f1 || true)
     echo "jemalloc_package ${package:-unknown} $(dpkg-query -W -f '${Version}' "${package:-none}" 2>/dev/null || true)"
   fi
+  echo "gsl_package libgsl-dev $GSL_VERSION"
   if [ -r /etc/os-release ]; then
     # shellcheck source=/dev/null
     echo "build_os $(. /etc/os-release && echo "$PRETTY_NAME")"
