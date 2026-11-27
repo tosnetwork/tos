@@ -162,10 +162,42 @@ class LocalRefusalTests(unittest.TestCase):
                 path = root / ("crypto/smartcont/wallet" + suffix)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(encoded)
-                self.assertIn(
-                    str(path.relative_to(root)),
-                    guard.release_leaks(root, build.REJECT_OWNER, build.TEST_WALLET_CODE_HASH),
-                )
+                # Isolate cell-hash detection: the binary fixture also carries
+                # raw owner bytes, which must not make this control pass.
+                with (
+                    self.subTest(suffix=suffix),
+                    mock.patch.object(guard, "forbidden", return_value=False),
+                ):
+                    self.assertIn(
+                        str(path.relative_to(root)),
+                        guard.release_leaks(root, build.REJECT_OWNER, build.TEST_WALLET_CODE_HASH),
+                    )
+                path.unlink()
+
+    def test_trailing_wallet_after_a_benign_boc_is_refused(self):
+        benign = base64.b64decode("te6ccgEBAQEAAgAAAA==")
+        wallet = (HERE / "fixtures/refusing-wallet.boc").read_bytes()
+        self.assertNotIn(
+            bytes.fromhex(build.TEST_WALLET_CODE_HASH), guard.BOC.boc_cell_hashes(benign)
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for suffix, raw in (
+                (".boc", benign + wallet),
+                (".boc.base64", base64.b64encode(benign + wallet)),
+            ):
+                path = root / ("crypto/smartcont/wallet" + suffix)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(raw)
+                # Refusal must come from strict BOC parsing, not raw markers.
+                with (
+                    self.subTest(suffix=suffix),
+                    mock.patch.object(guard, "forbidden", return_value=False),
+                ):
+                    self.assertEqual(
+                        guard.release_leaks(root, build.REJECT_OWNER, build.TEST_WALLET_CODE_HASH),
+                        [str(path.relative_to(root))],
+                    )
                 path.unlink()
 
     def test_compiler_hash_is_checked_before_the_marker_claims_it(self):

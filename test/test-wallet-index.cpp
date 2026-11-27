@@ -1332,8 +1332,10 @@ TEST(WalletIndex, AnEntryDroppedAsMalformedDoesNotHideItsCandidateDeferredInTheS
 namespace {
 
 // A timeout is only a broken-handshake watchdog, never how ordering advances.
-// Keep it well beyond thermal pauses; each event must actually be signalled.
-constexpr auto kQueueTestWatchdog = std::chrono::hours(1);
+// These handshakes normally take microseconds (retry cases below 200 ms).
+// Two minutes allows large loaded-CI scheduling delays while bounding a broken
+// push/worker handshake promptly; this limit never establishes ordering.
+constexpr auto kQueueTestWatchdog = std::chrono::seconds(120);
 
 class QueueEvent {
  public:
@@ -1514,6 +1516,7 @@ TEST(WalletIndexQueue, WorkLeftAtShutdownStaysRecordedAndUndone) {
     // The same stop request as destruction, completed before item 0 may
     // finish. No scheduler can let the worker drain items 1 through 4 first.
     queue.request_stop();
+    ASSERT_TRUE(!queue.wait_worker_checkpoint_for_test(kQueueTestWatchdog));
     release.signal();
   }
   ASSERT_EQ(log.processed, (std::vector<int>{0}));
@@ -1773,6 +1776,9 @@ TEST(WalletIndexQueue, APausedQueueRecordsButDoesNotProcess) {
   queue.push(1, 1);
   queue.push(2, 2);
   ASSERT_TRUE(queue.wait_recorded(kQueueTestWatchdog));
+  // A record acknowledgement alone leaves these negative checks racing the
+  // worker. Its checkpoint proves it examined the now-recorded work first.
+  ASSERT_TRUE(queue.wait_worker_checkpoint_for_test(kQueueTestWatchdog));
   ASSERT_EQ(recorded.load(), 2);
   ASSERT_EQ(processed.load(), 0);
   queue.resume();
@@ -1782,6 +1788,7 @@ TEST(WalletIndexQueue, APausedQueueRecordsButDoesNotProcess) {
   queue.pause();
   queue.push(3, 3);
   ASSERT_TRUE(queue.wait_recorded(kQueueTestWatchdog));
+  ASSERT_TRUE(queue.wait_worker_checkpoint_for_test(kQueueTestWatchdog));
   ASSERT_EQ(recorded.load(), 3);
   ASSERT_EQ(processed.load(), 2);
 }

@@ -247,10 +247,7 @@ def _uint(data: bytes, offset: int, size: int) -> int:
     return int.from_bytes(data[offset:end], "big")
 
 
-def read_boc(data: bytes) -> tuple[list[tuple[int, int, bytes, list[int]]], list[int]]:
-    """The cells (d1, d2, data, reference indexes) and root indexes of a
-    standard BOC. Raises BocError for anything that is not a well-formed
-    standard BOC."""
+def _boc_header(data: bytes) -> tuple[int, int, list[int], int, int, int]:
     if data[:4] != BOC_MAGIC:
         raise BocError("not a standard BOC")
     flags = _uint(data, 4, 1)
@@ -273,8 +270,16 @@ def read_boc(data: bytes) -> tuple[list[tuple[int, int, bytes, list[int]]], list
     if has_index:
         position += cell_count * offset_size
     end = position + total_size
-    if end + (4 if has_crc else 0) > len(data):
+    return size, cell_count, roots, position, end, end + (4 if has_crc else 0)
+
+
+def read_boc(data: bytes) -> tuple[list[tuple[int, int, bytes, list[int]]], list[int]]:
+    """The cells and roots of one complete standard BOC, with no trailing bytes."""
+    size, cell_count, roots, position, end, declared_end = _boc_header(data)
+    if declared_end > len(data):
         raise BocError("truncated BOC cell data")
+    if declared_end != len(data):
+        raise BocError("trailing bytes after BOC")
 
     cells = []
     for _ in range(cell_count):
@@ -296,6 +301,8 @@ def read_boc(data: bytes) -> tuple[list[tuple[int, int, bytes, list[int]]], list
         cells.append((d1, d2, payload, refs))
     if position > end:
         raise BocError("cell data overruns its declared size")
+    if position != end:
+        raise BocError("cell data does not match its declared size")
     return cells, roots
 
 
@@ -445,7 +452,11 @@ def scan_file(path: str, content: bytes) -> list[str]:
         if hashlib.sha256(boc).hexdigest() in boc_digests:
             failures.append(f"{path}: embeds a removed escrow BOC artifact")
         try:
-            hashes = boc_cell_hashes(boc)
+            # Source-literal extraction can include following hex/base64
+            # characters. Scan the declared BOC prefix for fingerprints;
+            # whole-input validation still uses the strict reader directly.
+            *_, declared_end = _boc_header(boc)
+            hashes = boc_cell_hashes(boc[:declared_end])
         except BocError:
             continue
         for value in code_hashes.intersection(hashes):
