@@ -777,6 +777,11 @@ fn usdt_returned_and_claim_match_the_usdc_path() {
             w.asset_record(chain_block::SettlementAssetStatus::Active, 10_000, None).decimals,
             6
         );
+        assert_eq!(
+            w.net.get(&w.init.route.master, "get_wrapped_token_data", vec![]).int_at(2),
+            6,
+            "the minter reports the source's 6 decimals"
+        );
         let request = expired(&mut w, &buyer);
         let funding = w.payout_funding();
         let message =
