@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Controls for the Service Actor release check that need no compiler.
 
-The provenance check must distinguish exactly: a matching commit (checked), a
-commit absent from a shallow history (explicit note), and three refusals -- a
-differing source or include, an object that is not a commit, and a Git failure.
+The provenance check must distinguish exactly: a matching commit (checked), and
+refusals -- a commit absent from local history (including a shallow clone), a
+differing source or include, an object that is not a commit, and a Git
+failure. An absent commit is reported as unavailable only with the explicit
+local-shallow flag, which is refused in CI.
 The include closure must follow nested includes. The SDK and artifact decoders
 must refuse a different BOC even when the root cell is the same.
 
@@ -12,7 +14,9 @@ Runs with the standard library only: python3 scripts/test_tos_service_actor_rele
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -69,9 +73,49 @@ class Provenance(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "differs from tos_commit"):
             release.check_provenance(self.commit, self.paths, self.repo)
 
-    def test_an_absent_commit_is_reported_unavailable(self):
+    def test_an_absent_commit_is_refused(self):
         absent = "1" * 40
-        self.assertEqual(release.check_provenance(absent, self.paths, self.repo), "unavailable")
+        with self.assertRaisesRegex(release.ReleaseError, "not in local history"):
+            release.check_provenance(absent, self.paths, self.repo)
+
+    def test_an_absent_commit_is_unavailable_only_when_explicitly_allowed(self):
+        absent = "1" * 40
+        self.assertEqual(
+            release.check_provenance(absent, self.paths, self.repo, allow_missing=True),
+            "unavailable",
+        )
+
+    def test_a_shallow_clone_without_the_commit_is_refused(self):
+        (self.repo / "c.fc").write_text("() c() { later(); }\n")
+        git(self.repo, "commit", "-q", "-am", "later")
+        clone = tempfile.TemporaryDirectory()
+        self.addCleanup(clone.cleanup)
+        shallow = Path(clone.name) / "shallow"
+        git(Path(clone.name), "clone", "-q", "--depth", "1", self.repo.as_uri(), str(shallow))
+        self.assertEqual(git(shallow, "rev-parse", "--is-shallow-repository"), "true")
+        # The released commit is not in the shallow history: the check must fail,
+        # not report success without having compared anything.
+        with self.assertRaisesRegex(release.ReleaseError, "not in local history"):
+            release.check_provenance(self.commit, self.paths, shallow)
+        # Fetching the released commit makes the check run, and it sees the change.
+        git(shallow, "fetch", "-q", "--depth", "1", "origin", self.commit)
+        with self.assertRaisesRegex(release.ReleaseError, "differs from tos_commit"):
+            release.check_provenance(self.commit, self.paths, shallow)
+
+    def test_the_allow_flag_is_refused_in_ci(self):
+        boc, output = self.repo / "a.boc", self.repo / "build.txt"
+        boc.write_bytes(b"not a release")
+        output.write_text("")
+        for variable in ("CI", "GITHUB_ACTIONS"):
+            with self.subTest(variable=variable):
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors):
+                    code = release.main(
+                        [release.ALLOW_MISSING_COMMIT, str(boc), str(output), "func"],
+                        {variable: "true"},
+                    )
+                self.assertEqual(code, 1)
+                self.assertIn("refused in CI", errors.getvalue())
 
     def test_an_object_that_is_not_a_commit_is_refused(self):
         tree = git(self.repo, "rev-parse", "HEAD^{tree}")
