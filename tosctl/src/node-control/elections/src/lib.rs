@@ -10,6 +10,7 @@ pub mod election_task;
 pub mod providers;
 mod registration;
 pub(crate) mod runner;
+mod tick_clock;
 
 /// Registration deadline covering a postponed election and its full duty.
 pub use registration::pending_until as pending_registration_until;

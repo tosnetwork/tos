@@ -643,6 +643,7 @@ async fn a_failed_control_snapshot_changes_no_acceptance_or_snapshot_state() -> 
 async fn the_runner_loop_propagates_the_named_upgrade_error_before_publishing() -> anyhow::Result<()>
 {
     use std::sync::atomic::Ordering;
+    let _network_time = crate::tick_clock::testing::freeze_network_time().await;
     let fixture = elector_fixture::Fixture::new(elector_fixture::Reply {
         unsupported: true,
         ..Default::default()
@@ -650,19 +651,30 @@ async fn the_runner_loop_propagates_the_named_upgrade_error_before_publishing() 
     .await?;
     let mut runner = control_runner(&fixture).await?;
     let store = Arc::new(SnapshotStore::new());
-    let error = tokio::time::timeout(
-        Duration::from_secs(10),
-        runner.run_loop(Duration::from_secs(60), CancellationCtx::new(), store.clone(), None),
-    )
-    .await?
-    .err()
-    .context("unsupported node did not stop the runner")?;
+    let clock = crate::tick_clock::testing::FakeClock::default();
+    let error = clock
+        .timeout(
+            Duration::from_secs(10),
+            runner.run_loop_with_clock(
+                Duration::from_secs(60),
+                CancellationCtx::new(),
+                store.clone(),
+                None,
+                &clock,
+            ),
+        )
+        .await?
+        .err()
+        .context("unsupported node did not stop the runner")?;
     assert!(
         error.downcast_ref::<control_client::UnsupportedControlQuery>().is_some(),
         "upgrade error lost: {error:#}"
     );
     assert!(runner.snapshot_cache.last_elections.is_none());
     assert_eq!(fixture.counts.control.load(Ordering::SeqCst), 1);
+    // The first tick, at once: the error ended the loop on no logical time.
+    assert_eq!(clock.ticks_completed(), 1);
+    assert_eq!(clock.elapsed(), Duration::ZERO);
     fixture.no_public_elector()?;
     runner.shutdown().await?;
     fixture.stop().await;
@@ -699,17 +711,71 @@ async fn one_runner_tick_requests_exactly_one_elector_snapshot() -> anyhow::Resu
         })
     });
     let mut runner = harness.build("node-1");
-    tokio::time::timeout(
-        Duration::from_secs(10),
-        runner.run_loop(
-            Duration::from_secs(600),
-            cancellation,
-            Arc::new(SnapshotStore::new()),
-            None,
-        ),
-    )
-    .await??;
+    let _network_time = crate::tick_clock::testing::freeze_network_time().await;
+    let clock = crate::tick_clock::testing::FakeClock::default();
+    clock
+        .timeout(
+            Duration::from_secs(10),
+            runner.run_loop_with_clock(
+                Duration::from_secs(600),
+                cancellation,
+                Arc::new(SnapshotStore::new()),
+                None,
+                &clock,
+            ),
+        )
+        .await??;
     assert_eq!(reads.load(Ordering::SeqCst), 1, "one elector query per runner tick");
+    assert_eq!(clock.ticks_completed(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn runner_ticks_count_logical_intervals() -> anyhow::Result<()> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut harness = TestHarness::new();
+    harness.elector_mock.expect_address().returning(elector_address);
+    setup_wallet(&mut harness.wallet_mock);
+    setup_default_provider(&mut harness.provider_mock, WALLET_BALANCE, None);
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counter = reads.clone();
+    harness.provider_mock.expect_elector_snapshot().returning(move |wallets| {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Ok(ElectorSnapshot {
+            block: snapshot_block(),
+            elections: ElectionsInfo {
+                election_id: 0,
+                elect_close: 0,
+                min_stake: 0,
+                total_stake: 0,
+                failed: false,
+                finished: false,
+                participants: vec![],
+            },
+            past_elections: vec![],
+            returned: wallets.iter().map(|wallet| (*wallet, 0)).collect(),
+        })
+    });
+    let mut runner = harness.build("node-1");
+    let clock = crate::tick_clock::testing::FakeClock::default();
+    let interval = Duration::from_secs(600);
+    let result = clock
+        .timeout(
+            Duration::from_secs(1500),
+            runner.run_loop_with_clock(
+                interval,
+                CancellationCtx::new(),
+                Arc::new(SnapshotStore::new()),
+                None,
+                &clock,
+            ),
+        )
+        .await;
+    assert!(result.is_err(), "the loop runs until the deadline");
+    // Ticks at 0, 600 and 1200 s, each reading one snapshot; then the deadline.
+    assert_eq!(reads.load(Ordering::SeqCst), 3);
+    assert_eq!(clock.ticks_completed(), 3);
+    assert_eq!(clock.elapsed(), Duration::from_secs(1500));
     Ok(())
 }
 
@@ -1474,6 +1540,9 @@ async fn test_elections_finished_stake_accepted() {
 async fn test_run_loop_cancellation() {
     let node_id = "node-1";
     let mut harness = TestHarness::new();
+    // The delay and the guard below run on paused Tokio time, advanced in fixed
+    // steps, so a suspended process cannot let the guard fire first.
+    let _network_time = crate::tick_clock::testing::freeze_network_time().await;
 
     setup_default_provider(&mut harness.provider_mock, WALLET_BALANCE, Some(POOL_BALANCE));
     setup_elector_no_elections(&mut harness.elector_mock);
@@ -1490,6 +1559,7 @@ async fn test_run_loop_cancellation() {
         tokio::time::sleep(Duration::from_millis(100)).await;
         ctx.cancel(CancellationReason::GracefullyShutdown());
     });
+    crate::tick_clock::testing::pause_gate();
 
     let result = runner.run_loop(Duration::from_secs(600), cancel_ctx, store, None).await;
     assert!(result.is_ok(), "run_loop should return Ok on cancel");
@@ -1538,6 +1608,8 @@ async fn test_run_loop_tick_then_cancel() {
     setup_default_provider(&mut harness.provider_mock, WALLET_BALANCE, None);
 
     let mut runner = harness.build(node_id);
+    // The ticks and the delay run on paused Tokio time, advanced in fixed steps.
+    let _network_time = crate::tick_clock::testing::freeze_network_time().await;
     let mut ctx = CancellationCtx::new();
     let cancel_ctx = ctx.clone();
     let store = Arc::new(SnapshotStore::new());
@@ -2661,6 +2733,8 @@ async fn fee_warning_is_visible_with_closed_elections_and_does_not_send() {
     harness.provider_mock.expect_validator_config().returning(|| Ok(ValidatorConfig::new()));
     harness.provider_mock.expect_shutdown().times(1).returning(|| Ok(()));
     let mut runner = harness.build("node-1");
+    // The delay runs on paused Tokio time, advanced in fixed steps.
+    let _network_time = crate::tick_clock::testing::freeze_network_time().await;
     let mut cancellation = CancellationCtx::new();
     let signal = cancellation.clone();
     let close = tokio::spawn(async move {

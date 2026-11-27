@@ -279,9 +279,28 @@ impl ElectionRunner {
         store: Arc<SnapshotStore>,
         on_status_change: Option<OnStatusChange>,
     ) -> anyhow::Result<()> {
+        self.run_loop_with_clock(
+            tick_interval,
+            cancellation_ctx,
+            store,
+            on_status_change,
+            &crate::tick_clock::TokioClock,
+        )
+        .await
+    }
+
+    pub(crate) async fn run_loop_with_clock<C: crate::tick_clock::TickClock>(
+        &mut self,
+        tick_interval: Duration,
+        cancellation_ctx: CancellationCtx,
+        store: Arc<SnapshotStore>,
+        on_status_change: Option<OnStatusChange>,
+        clock: &C,
+    ) -> anyhow::Result<()> {
+        use crate::tick_clock::Ticks as _;
         let mut cancellation_rx = cancellation_ctx.subscribe();
         tracing::info!("tick interval: {} seconds", tick_interval.as_secs());
-        let mut interval = tokio::time::interval(tick_interval);
+        let mut interval = clock.ticks(tick_interval);
         loop {
             tokio::select! {
                 _ = interval.tick() => {
