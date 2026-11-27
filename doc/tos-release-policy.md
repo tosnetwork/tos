@@ -396,6 +396,26 @@ for full nodes, the wallet services, DHT servers and tools only.
 | `node-build-info-linux-<arch>.txt` | the build record described below |
 | `tos-node-linux-<arch>.zip` | the workflow artifact `tos-node-<arch>-linux` itself |
 
+Three files of the node build are the same for both architectures, so the
+release publishes them once, from the x86-64 artifact, under their own names:
+
+| Asset | Content |
+|---|---|
+| `LICENSE` | the repository's licence (GPL-3.0) |
+| `THIRD_PARTY_NOTICES.md` | the third-party notices, among them the libraries linked into the binaries |
+| `gsl-2.7.1-source.tar` | the corresponding source of the GSL linked into the binaries |
+
+GSL is GPL-3.0-or-later and statically linked into `validator-engine`,
+`tos-rpc` and `tos-wallet-index`. Before the build, the node workflow
+requires the installed `libgsl-dev` to be the pinned Ubuntu version
+(`2.7.1+dfsg-6ubuntu2`), downloads that version's Ubuntu source package
+(`.dsc`, `.orig.tar.gz` and `.debian.tar.xz`) from the Ubuntu archive, checks
+each file against a SHA-256 digest pinned in the workflow and packs the three
+into `gsl-2.7.1-source.tar`, which it adds to the build output. The build
+script refuses another `libgsl-dev` version as well. All three files travel in
+the artifact like the binaries, so `SHA256SUMS`, `release-provenance.json` and
+the attestation cover them.
+
 These names, `SHA256SUMS` and `release-provenance.json` are what operator
 tooling downloads; a change to any of them is a breaking change to the
 release surface.
@@ -417,8 +437,7 @@ itself and `SHA256SUMS` (releases after `v2026.11`).
 The node binaries are plain ELF executables, not AppImages, built by
 `.github/workflows/build-tos-linux-node-binaries.yml` with
 `assembly/native/build-node-binaries.sh`. That script is the production node
-recipe, the same one the testnet hosts use when they build on themselves
-(except for how GSL is linked):
+recipe, the same one the testnet hosts use when they build on themselves:
 
 - `CMAKE_BUILD_TYPE=Release`, clang-21 (`scripts/install-llvm-toolchain.sh 21`);
 - `TOS_USE_JEMALLOC=ON`: a validator's memory behaviour depends on jemalloc,
@@ -478,7 +497,7 @@ embeds the same text as the build the tag push started.
 `SOURCE_DATE_EPOCH`, the compiler, the flags, both SHA-256 backend switches
 (`slhdsa_sha256`), the `rustc` and `cargo`
 versions, the Rust flags (`rust_flags`), the jemalloc library and
-package, the build OS, each binary's dynamic dependencies and SHA-256.
+package, the `libgsl-dev` version (`gsl_package`), the build OS, each binary's dynamic dependencies and SHA-256.
 `scripts/test_release_artifacts.py` fails if an asset above comes from any
 other build, or if the script loses a recipe flag or a check.
 

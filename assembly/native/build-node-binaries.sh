@@ -16,7 +16,9 @@
 # fixed SOURCE_DATE_EPOCH keeps third-party build timestamps from varying.
 # GSL is linked from its static archive: its soname differs between Ubuntu
 # releases (libgsl.so.27 on 24.04, libgsl.so.28 on 26.04), and every other
-# library the binaries need keeps its soname across them.
+# library the binaries need keeps its soname across them. The release
+# publishes the corresponding source of exactly one libgsl-dev version
+# (THIRD_PARTY_NOTICES.md), so the build refuses any other.
 #
 # The script refuses to finish unless the recipe is in effect: the configured
 # cache holds these values, the binaries that link jemalloc load it,
@@ -38,7 +40,8 @@
 # the build left the checkout unchanged and tosctl --version reports the
 # commit.
 #
-# The output directory receives the eight node binaries, tosctl and BUILD-INFO.
+# The output directory receives the eight node binaries, tosctl, BUILD-INFO,
+# and the repository's LICENSE and THIRD_PARTY_NOTICES.md.
 set -euo pipefail
 
 die() { echo "build-node-binaries: $*" >&2; exit 1; }
@@ -70,6 +73,13 @@ RUSTC_VERSION=$(cd tosctl/src && rustc --version)
 CARGO_VERSION=$(cd tosctl/src && cargo --version)
 [[ "$RUSTC_VERSION" == "rustc $RUST_CHANNEL "* ]] || die "rustc is '$RUSTC_VERSION', not the pinned $RUST_CHANNEL"
 [[ "$CARGO_VERSION" == "cargo $RUST_CHANNEL "* ]] || die "cargo is '$CARGO_VERSION', not the pinned $RUST_CHANNEL"
+# The GSL archive linked in must be the one whose source the release publishes;
+# the node-binaries workflow pins the same version.
+GSL_PACKAGE_VERSION=2.7.1+dfsg-6ubuntu2
+command -v dpkg-query >/dev/null || die "dpkg-query is missing; the recipe needs the Ubuntu libgsl-dev package"
+GSL_VERSION=$(dpkg-query -W -f '${Version}' libgsl-dev 2>/dev/null) || die "libgsl-dev is not installed"
+[ "$GSL_VERSION" = "$GSL_PACKAGE_VERSION" ] \
+  || die "libgsl-dev is $GSL_VERSION, not the pinned $GSL_PACKAGE_VERSION"
 # No compiler cache: a release binary is compiled from source, never taken
 # from objects another run left behind.
 export CCACHE_DISABLE=1
@@ -134,6 +144,7 @@ done
 # compiled with it (TOS_HAVE_GSL), and the archive's functions are linked in.
 for t in "${TARGETS[@]}"; do
   bin="$BUILD/${PATHS[$t]}"
+  readelf -d "$bin" >/dev/null || die "readelf cannot read $t"
   if readelf -d "$bin" | grep 'NEEDED.*\[libgsl' >/dev/null; then die "$t needs the GSL shared library"; fi
 done
 # The function RLDP's send estimate calls; --exclude-libs makes the archive's
@@ -179,6 +190,7 @@ for t in "${TARGETS[@]}"; do
   install -m 0755 "$BUILD/${PATHS[$t]}" "$OUT/$t"
 done
 install -m 0755 "$TOSCTL" "$OUT/tosctl"
+install -m 0644 LICENSE THIRD_PARTY_NOTICES.md "$OUT/"
 {
   echo "tos_revision $REV"
   echo "source_date_epoch $SOURCE_DATE_EPOCH"
@@ -194,6 +206,7 @@ install -m 0755 "$TOSCTL" "$OUT/tosctl"
     package=$(dpkg -S "$(readlink -f "$JEMALLOC_LIB")" 2>/dev/null | cut -d: -f1 || true)
     echo "jemalloc_package ${package:-unknown} $(dpkg-query -W -f '${Version}' "${package:-none}" 2>/dev/null || true)"
   fi
+  echo "gsl_package libgsl-dev $GSL_VERSION"
   if [ -r /etc/os-release ]; then
     # shellcheck source=/dev/null
     echo "build_os $(. /etc/os-release && echo "$PRETTY_NAME")"

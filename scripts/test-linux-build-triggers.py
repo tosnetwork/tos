@@ -209,6 +209,7 @@ class TreeTest(unittest.TestCase):
                         "scripts/install-llvm-toolchain.sh",
                         "scripts/keys/apt-llvm-org.asc",
                         "CMake/Findjemalloc.cmake",
+                        "rldp2/CMakeLists.txt",
                         "rust-toolchain.toml",
                         "scripts/install-rust-toolchain.sh",
                         "tosctl/src/Cargo.lock",

@@ -70,6 +70,33 @@ jobs:
           texinfo pkg-config python3 libgflags-dev libreadline-dev libgsl-dev libblas-dev \
           libgslcblas0 libjemalloc-dev libgmp-dev gperf libssl-dev
 
+    # GSL is linked statically into the node binaries and is GPL-3.0-or-later,
+    # so the release publishes the corresponding source of the libgsl-dev the
+    # build links: the Ubuntu source package of that exact version, checked
+    # against digests pinned here. The build script refuses any other version.
+    - name: Fetch the corresponding source of GSL
+      run: |
+        version=2.7.1+dfsg-6ubuntu2
+        installed=$(dpkg-query -W -f '${source:Version}' libgsl-dev)
+        if [ "$installed" != "$version" ]; then
+          echo "libgsl-dev is $installed, not the pinned $version" >&2
+          exit 1
+        fi
+        dir="$RUNNER_TEMP/gsl-source"
+        mkdir "$dir"
+        base=https://archive.ubuntu.com/ubuntu/pool/universe/g/gsl
+        for file in gsl_2.7.1+dfsg-6ubuntu2.dsc gsl_2.7.1+dfsg.orig.tar.gz gsl_2.7.1+dfsg-6ubuntu2.debian.tar.xz; do
+          curl -fsSL --retry 3 -o "$dir/$file" "$base/$file"
+        done
+        (cd "$dir" && sha256sum --check --strict) <<'SUMS'
+        aac8cb968eb8da9ad63e85c7764c06e2f54cd48c5d82dc7c2d670cd3ae68c291  gsl_2.7.1+dfsg-6ubuntu2.dsc
+        e560d6b9c6e254e46769bbb03583c00ecafbdd51b062c55db23b3b9612868567  gsl_2.7.1+dfsg.orig.tar.gz
+        361386353e07347f6e66673a8c7f4bb96685e62960ec45df7e15d78e798fcfa9  gsl_2.7.1+dfsg-6ubuntu2.debian.tar.xz
+        SUMS
+        tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 \
+          -C "$dir" -cf "$RUNNER_TEMP/gsl-2.7.1-source.tar" \
+          gsl_2.7.1+dfsg-6ubuntu2.dsc gsl_2.7.1+dfsg.orig.tar.gz gsl_2.7.1+dfsg-6ubuntu2.debian.tar.xz
+
     - name: Install clang-21
       run: sudo scripts/install-llvm-toolchain.sh 21
 
@@ -79,6 +106,9 @@ jobs:
 
     - name: Build the node binaries with the node recipe
       run: assembly/native/build-node-binaries.sh node-binaries
+
+    - name: Add the corresponding source of GSL to the build output
+      run: install -m 0644 "$RUNNER_TEMP/gsl-2.7.1-source.tar" node-binaries/
 
     - name: Upload artifacts
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
