@@ -78,8 +78,8 @@ def release_leaks(root, reject_owner, code_hash):
         ):
             try:
                 raw = base64.b64decode(data, validate=False) if path.suffix == ".base64" else data
-                hashes, roots = BOC.parse_boc(raw)
-                compiled_leak = any(hashes[index] == bytes.fromhex(code_hash) for index in roots)
+                hashes, _ = BOC.parse_boc(raw)
+                compiled_leak = bytes.fromhex(code_hash) in hashes
             except (BOC.BocError, ValueError, OverflowError):
                 # An unreadable compiled release input is not proof of isolation.
                 compiled_leak = True
