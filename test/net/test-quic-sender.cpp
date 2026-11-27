@@ -58,6 +58,8 @@
 #include "td/utils/Timer.h"
 #include "td/utils/crypto.h"
 #include "td/utils/format.h"
+#include "td/utils/port/IPAddress.h"
+#include "td/utils/port/UdpSocketFd.h"
 #include "td/utils/port/path.h"
 #include "td/utils/port/signals.h"
 #include "td/utils/tests.h"
@@ -848,12 +850,52 @@ class RawQuicTestRunner final : public td::actor::Actor {
     co_return endpoint;
   }
 
+  // A sender node binds a pair of UDP ports: its ADNL port and, at
+  // QuicSender::NODE_PORT_OFFSET above it, its QUIC port. Either one can be
+  // held by another socket, as for a raw endpoint above, but neither bind
+  // reports back to the test: a busy ADNL port aborts inside the network
+  // manager, and a busy QUIC port only fails the sender's detached local-id
+  // registration, so the test times out later. Each port of the pair is
+  // therefore bound first the way the node binds it (UdpSocketFd::open: the
+  // any address, SO_REUSEADDR) and released again; a pair with a port in use
+  // is replaced by a fresh pair, and any other failure ends the test with its
+  // cause. Returns the ADNL port of the first pair that was free.
+  static int free_sender_port_pair(int port) {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    constexpr int kMaxAttempts = 5;
+    for (int attempt = 1;; ++attempt) {
+      bool in_use = false;
+      for (int candidate : {port, port + kQuicPortOffset}) {
+        td::IPAddress address;
+        address.init_ipv4_port("0.0.0.0", candidate).ensure();
+        auto probe = td::UdpSocketFd::open(address);
+        if (probe.is_ok()) {
+          probe.ok_ref().close();
+          continue;
+        }
+        auto error = probe.move_as_error();
+        LOG_IF(FATAL, error.code() != EADDRINUSE || attempt == kMaxAttempts)
+            << "sender node port pair " << port << "/" << port + kQuicPortOffset << ": port " << candidate
+            << " (attempt " << attempt << "): " << error;
+        LOG(WARNING) << "sender node port " << candidate << " is in use, trying a fresh port pair: " << error;
+        in_use = true;
+        break;
+      }
+      if (!in_use) {
+        return port;
+      }
+      port = next_port();
+    }
+  }
+
   // Create a full QuicSender-backed node (the production inbound path, including
   // the ServerCallback that owns the inbound-stream timeout). Mirrors the setup
   // in TestRunner::create_node; the node's QUIC server listens on
-  // port + QuicSender::NODE_PORT_OFFSET.
+  // port + QuicSender::NODE_PORT_OFFSET. When `port` or its QUIC port is in
+  // use, the node takes a fresh pair instead; node.port is the one it bound.
   td::actor::Task<TestNode> create_sender_node(std::string name, int port, tos::quic::QuicServer::Options options,
                                                std::shared_ptr<PausedDeliveries> paused = nullptr) {
+    port = free_sender_port_pair(port);
     TestNode node;
     node.ip = "127.0.0.1";
     node.port = port;
