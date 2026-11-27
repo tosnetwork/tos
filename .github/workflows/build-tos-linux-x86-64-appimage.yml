@@ -34,6 +34,20 @@ jobs:
         sudo apt install -y build-essential git cmake ninja-build ccache libgsl-dev libblas-dev libgslcblas0
         mkdir ~/.ccache
 
+    # The AppImages bundle libgsl.so.27 and libgslcblas.so.0 (GPL-3.0-or-later).
+    # The release publishes the corresponding source of one GSL package version
+    # (gsl-2.7.1-source.tar, THIRD_PARTY_NOTICES.md), so the libraries bundled
+    # here must come from that version. libgsl-dev depends on exactly its own
+    # version of both runtime packages.
+    - name: Check the GSL package against the published source
+      run: |
+        version=2.7.1+dfsg-6ubuntu2
+        installed=$(dpkg-query -W -f '${source:Version}' libgsl-dev)
+        if [ "$installed" != "$version" ]; then
+          echo "libgsl-dev is $installed, not the pinned $version" >&2
+          exit 1
+        fi
+
     - name: Install clang-21
       run: sudo scripts/install-llvm-toolchain.sh 21
 
