@@ -150,7 +150,9 @@ class BoundedWorkQueue {
   // wait_recorded(). The worker acknowledges only once it holds the lock and
   // has no runnable item left, so a test can assert that paused work was not
   // processed without depending on which thread ran first. False at once
-  // after request_stop(), since the worker may already have exited.
+  // after request_stop(), since the worker may already have exited, and as
+  // soon as request_stop() lands during the wait: a stopping worker exits
+  // without acknowledging.
   bool wait_worker_checkpoint_for_test(std::chrono::milliseconds limit) {
     std::unique_lock<std::mutex> lock(mutex_);
     if (stopping_) {
@@ -158,7 +160,8 @@ class BoundedWorkQueue {
     }
     worker_checkpoint_requested_ = true;
     wake_.notify_all();
-    return wake_.wait_for(lock, limit, [this] { return !worker_checkpoint_requested_; });
+    return wake_.wait_for(lock, limit, [this] { return stopping_ || !worker_checkpoint_requested_; }) &&
+           !worker_checkpoint_requested_;
   }
 
   size_t dropped() const {
