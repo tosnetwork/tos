@@ -235,20 +235,27 @@ Common path, preserving the current replay boundary:
    preconditions. Check threshold authorization under the current policy, with
    existing possession/consent rules where a new policy is admitted. No state
    is saved if any check/signature fails.
-6. Construct the complete next state with checked counters/epoch; atomically
-   save once. There is no intermediate state with the epoch changed but live
-   entries retained, nor live removed without withdrawn recorded.
+6. Construct the complete next state; explicitly check epoch overflow and
+   atomically save once. There is no intermediate state with the epoch changed
+   but live entries retained, nor live removed without withdrawn recorded.
 
 | Action | Checks after common replay/order checks | State transition |
 | --- | --- | --- |
-| Register Agent | Absent target, existing identity derivation/initial-policy possession and consent | Epoch 1; empty entries; open admission; existing generation/sequence 1 |
-| Add delegation | expected_epoch=current; nonzero digest absent from both logical sets; live<128 and total<384; delegation-purpose authorization | Insert `(current_epoch,false)`; checked live+1,total+1; epoch/policy/recovery unchanged |
-| Withdraw delegation | expected_epoch=current; digest exists and withdrawn=false; same purpose authorization | Flip withdrawn=true; checked live-1; total/epoch unchanged; no capacity check and no separate-map insert |
+| Register Agent | Absent target, existing identity derivation/initial-policy possession and consent | Epoch 1; empty entries and zero counts; existing generation/sequence 1 |
+| Add delegation | expected_epoch=current; nonzero digest absent from both logical sets; live<128 and total<384; delegation-purpose authorization | Insert `(current_epoch,false)`; live+1,total+1; epoch/policy/recovery unchanged |
+| Withdraw delegation | expected_epoch=current; digest exists and withdrawn=false; same purpose authorization | Flip withdrawn=true; live-1; total/epoch unchanged; no capacity check and no separate-map insert |
 | Update policy | Current-policy authorization, new-policy possession and shape/threshold rules, epoch<MAX | Epoch+1; new policy, both sets cleared; clear pending recovery even for identical policy bytes |
 | Initiate recovery | Existing recovery authorization/new-policy possession and timelock checks | Pending recovery changes only; epoch and entries unchanged |
 | Complete recovery | Exact pending initiation, initiating-policy hash, timelock and recovery authorization; generation and epoch below MAX | Existing generation reset, epoch+1; promote policy; clear recovery and both sets |
 | Tombstone | Existing Agent-control authorization, epoch<MAX | Epoch+1; tombstone=true; clear recovery/both sets; no future action except exact replay |
 | Capability operations | Existing owner/threshold, generation/sequence/version checks | No owner-Agent epoch change; Capability schema 2 with otherwise unchanged layout |
+
+Counter arithmetic needs no separate throw: the preceding live/total bounds
+and live-entry status checks imply that `live+1`, `total+1` and `live-1` fit
+their fields. `store_uint` retains its implicit range check; strict readers
+validate counts against the dictionary and `0 <= live <= total <= 384`, with
+`live <= 128`. Do not introduce unreachable counter-overflow/underflow errors.
+The independent u64 epoch bump still requires its explicit overflow check.
 
 A duplicate digest in a **new** add action refuses; identical last-action replay
 succeeds as a no-op. Withdrawing a non-live or already withdrawn digest refuses;
@@ -328,15 +335,27 @@ its wire bytes do not change. A network profile selects **one** registry release
   real epoch-aware adapter, not synthetic Snapshot tests. Never infer epoch zero
   for malformed/uninitialized new state. Historical inspection is not authority.
 
-The **Agent** identity preimage byte changes from 1 to **2** at
-`native-registry-code.fc:711` and the mirrored Rust/Go Agent derivation. All
-remaining fields keep their order. The existing Capability identity already
-uses byte 2 (`:737`) and two references; do not add another byte or mistakenly
-shift that layout. Its owner is a new v2 Agent id, so new Capability ids follow
-from that new owner binding. Agent and Capability preimages remain structurally
-distinct (one versus two references), with typed ids and account kinds. Thus v2
-Agent ids differ, not merely their account addresses. Combined with v2-only code-hash
-selection this prevents v1 identity re-registration/lookup from reviving a v2
+The identity preimage byte is an **object-kind tag**, not a version byte:
+legacy Agent is 1 and Capability is 2. V2 Agent uses **tag 3**. Change the Agent
+builder in `native-registry-code.fc:711`, Rust
+`tosctl/src/node-control/contracts/src/native_registry.rs` (`build_native_agent_registration`:783),
+and Go `protocol/pkg/nativecore/locator.go:92` (`DeriveAgentID`) together.
+All remaining Agent fields keep their order. The Capability builder remains
+tag 2 at `native-registry-code.fc:737`, Rust `build_native_capability_registration`:813
+and Go `locator.go:115` (`DeriveCapabilityID`); its two-reference layout does
+not change. Its owner is a new v2 Agent id, so new Capability ids follow from
+that new owner binding. Tag 3 separates Agent v2 from Capability in the data
+bits themselves, without relying on their different reference counts and
+without adding a byte.
+
+For fixed identical network, nonce and policy inputs, the old Agent preimage
+(tag 1) and v2 Agent preimage (tag 3) differ in that byte. Under the cell hash's
+collision-resistance assumption their ids are distinct; vector tests must
+construct both and assert that distinction, and assert the respective tag bits
+against the unchanged tag-2 Capability. These are identity-preimage tags only;
+the account-kind discriminants remain Agent 1 and Capability 2. Cross-language vectors must match all
+three builders. Combined with typed ids/account kinds and v2-only code-hash
+selection, this prevents v1 identity re-registration/lookup from reviving a v2
 withdrawn digest. Recompute all id/StateInit/address/signature vectors; an alias
 from an old id would undo this boundary and is forbidden.
 
@@ -503,6 +522,20 @@ Additional caller/pin inventory from re-review (all searched/read):
   and compare the journaled action's epoch with the decoded delegation and fresh
   finalized state. Also update its transport/storage tests and
   `protocol/cmd/tos-service-wallet/{main,transport,transport_test}.go`.
+  Name and replace the legacy epoch-zero gates as part of adopted-v2 wiring:
+  `protocol/pkg/nativewallet/transport.go` constructs the legacy verifier via
+  `agenttransport.NewVerifier` and runs `CheckState`/delegation verification;
+  those paths currently require zero epoch and absent epoch-aware projections.
+  `protocol/cmd/tos-service-wallet/transport.go:87` explicitly refuses a nonzero
+  `--authorization-epoch`. The v2 path instead requires a nonzero current epoch
+  with encoded/admitted/current equality; retain the December v1 legacy path
+  only in its separate approved profile, never as a v2 fallback.
+  Update `protocol/scripts/transport-wallet-mutants.py`: the `epoch` case at
+  lines 24–27 currently removes the verifier's epoch-zero gate, and
+  `epoch-command` at lines 160–165 removes the CLI gate. Retarget both to kill
+  bypasses of v2 epoch checks, with separate legacy-profile coverage. Update
+  `protocol/pkg/nativewallet/README.md` for the profile, issuance and journal
+  boundaries; its current epoch-zero instructions do not describe v2.
   Never rewrite an old signed journal draft to add an epoch: reconcile its exact
   bytes, refuse incompatible drafts and obtain a fresh approved action if needed.
   Re-check this inventory after that branch merges.
@@ -598,9 +631,13 @@ join two checkpoints; skip endpoint canonical epoch binding; treat observed
 revocation as ErrUnavailable; leave a CLI/relay caller on digest-only preflight. Add separate controls where
 withdrawal changes total_count or its registry transaction emits any out-action;
 neither is allowed (wallet change elsewhere in the transport graph is separate).
-Add identity-byte-1, schema-1 Capability, mixed Registries (selected v2 but accepted
+Add separate Agent-tag-3-to-1 and Agent-tag-3-to-2 controls, plus an unchanged
+Capability-tag-2 assertion, schema-1 Capability, mixed Registries (selected v2 but accepted
 v1), and legacy fallback under an adopted-v2 profile controls. Isolate these from
 other identity checks with matching ids/policy/network for the intended branch.
+Run tag-reversion controls independently at the contract, Rust and Go Agent
+derivation sites, so agreement between two identically wrong builders is not
+accepted as the independent identity proof.
 Keep independent red controls for live cap, total cap and their reset.
 
 Fuzz small valid action sequences against a simple Go reference set model and
@@ -612,7 +649,7 @@ minimal failing sequence. Counter/epoch mutations include every boundary.
 
 1. Non-author design approval first. No contract/client implementation here.
 2. Coordinated normative ai schema/vector changes and FunC/Rust/Go implementation:
-   oneof 31, Agent identity preimage byte 2, both state kinds schema 2, count-only bounds,
+   oneof 31, Agent identity object-kind tag 3, both state kinds schema 2, count-only bounds,
    and explicit layer ownership. Correct the transport spec's “until next bump”
    wording to “while full” and its approximate storage figure to **15.2 KiB of
    bits** (plus cell overhead/policy/etc). Record Endpoint v3 as a deliberate
@@ -650,8 +687,8 @@ adopts one profile at a time; a code list containing both v1 and v2 is invalid f
 an adopted-v2 network. No v1 fallback after withdrawal or read failure.
 
 No in-place migration is required pre-launch. V2 registration derives ids with
-identity version byte 2; keep fresh registration nonces as well. An old v1 id is
-never registered as a v2 id, and there is no alias mapping its old delegation to
+Agent identity object-kind tag 3; keep fresh registration nonces as well. An
+old v1 id is never registered as a v2 id, and there is no alias mapping its old delegation to
 v2. Future schema migrations of existing v2 state must preserve or advance its
 proven u64 epoch and linkage, never reset/saturate/wrap it. Do not downgrade an
 adopted-v2 network to legacy acceptance to recover a rejected delegation.
