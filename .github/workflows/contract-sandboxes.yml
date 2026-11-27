@@ -679,7 +679,7 @@ jobs:
         run: |
           test ! -e "$TOKEN_BRIDGE_TRACE_DIR"
           cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test service_actor_token_sandbox
-          python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR" --expected-records 15900
+          python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR" --expected-records 16034
 
       - name: Compile cache statistics
         if: always()

@@ -761,3 +761,71 @@ fn payouts_still_deliver_after_a_bridge_parameter_vote_raises_the_wallet_terms()
     );
     assert_eq!(w.tokens(&buyer), tokens + PRICE);
 }
+
+#[test]
+fn usdt_returned_and_claim_match_the_usdc_path() {
+    let mut results = Vec::new();
+    let mut masters = Vec::new();
+    let mut bridges = Vec::new();
+    for asset in [(0x5a, 6), (0x74, 6)] {
+        let mut w = World::with(Options { asset, ..Options::default() });
+        let buyer = w.user(0);
+        let destination = w.user(1);
+        masters.push(w.init.route.master.clone());
+        bridges.push(w.net.bridge.clone());
+        assert_eq!(
+            w.asset_record(chain_block::SettlementAssetStatus::Active, 10_000, None).decimals,
+            6
+        );
+        assert_eq!(
+            w.net.get(&w.init.route.master, "get_wrapped_token_data", vec![]).int_at(2),
+            6,
+            "the minter reports the source's 6 decimals"
+        );
+        let request = expired(&mut w, &buyer);
+        let funding = w.payout_funding();
+        let message =
+            w.op_message(&buyer, Actor::claim_refund(11, request, &destination).unwrap(), funding);
+        let start = w.refusing_at_r(message, false);
+        let logs = w.outcome_logs_since(start);
+        assert_eq!(logs.len(), 1);
+        let refusal = &logs[0];
+        assert_eq!(
+            (refusal.kind, refusal.outcome, refusal.amount),
+            (kind::REFUND, outcome::REFUSED, PRICE)
+        );
+        let entry = w.returned(refusal.payout_id).expect("the refused payout has a returned entry");
+        assert_eq!(entry.caller, buyer);
+        assert_eq!(entry.amount, PRICE);
+        assert_eq!(w.ledger().returned, PRICE);
+        let before = w.tokens(&destination);
+        let start = w.net.delivered.len();
+        let message = w.op_message(
+            &buyer,
+            Actor::claim_returned(12, refusal.payout_id, &destination).unwrap(),
+            funding,
+        );
+        w.send(message);
+        let delivered = w.outcome_logs_since(start);
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(
+            (delivered[0].kind, delivered[0].outcome, delivered[0].amount),
+            (kind::RETURNED_CLAIM, outcome::DELIVERED, PRICE)
+        );
+        assert!(w.returned(refusal.payout_id).is_none());
+        assert_eq!(w.tokens(&destination), before + PRICE);
+        assert_eq!(w.ledger().returned, 0);
+        assert_eq!(w.ledger().in_flight, 0);
+        assert_eq!(w.surplus(), 0);
+        results.push((
+            refusal.kind,
+            refusal.outcome,
+            delivered[0].kind,
+            delivered[0].outcome,
+            w.ledger().returned,
+        ));
+    }
+    assert_ne!(masters[0], masters[1], "each actor uses its own recognized master");
+    assert_eq!(bridges[0], bridges[1], "both assets use the same bridge codes and identity");
+    assert_eq!(results[0], results[1]);
+}
