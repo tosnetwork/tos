@@ -377,10 +377,14 @@ pub fn slice_arg(addr: &MsgAddressInt) -> StackItem {
 }
 
 pub fn wrapped_token_data(token: u8) -> Cell {
+    wrapped_token_data_with_decimals(token, 18)
+}
+
+pub fn wrapped_token_data_with_decimals(token: u8, decimals: u8) -> Cell {
     cell(|b| {
         b.append_u32(CHAIN_ID).unwrap();
         b.append_raw(&[token; 20], 160).unwrap();
-        b.append_u8(18).unwrap();
+        b.append_u8(decimals).unwrap();
     })
 }
 
@@ -474,6 +478,8 @@ pub struct Delivery {
 }
 
 pub struct Net {
+    /// Primary fixture asset; other token bytes retain the default metadata.
+    pub primary_asset: (u8, u8),
     pub bc: Blockchain,
     pub oracles: Treasury,
     /// The oracle account ConfigParam 79 names when it is not `oracles`: a
@@ -537,6 +543,17 @@ impl Net {
         Self::deployed(Deployment::Direct)
     }
 
+    pub fn with_asset(token: u8, decimals: u8) -> Self {
+        let mut net = Self::new();
+        net.primary_asset = (token, decimals);
+        net
+    }
+
+    fn asset_data(&self, token: u8) -> Cell {
+        let decimals = if token == self.primary_asset.0 { self.primary_asset.1 } else { 18 };
+        wrapped_token_data_with_decimals(token, decimals)
+    }
+
     pub fn deployed(how: Deployment) -> Self {
         let mut net = Self::unactivated(how);
         net.activate(GENERATION, 0);
@@ -585,6 +602,7 @@ impl Net {
         };
 
         let mut net = Self {
+            primary_asset: (0x5a, 18),
             bc,
             oracles,
             oracles_account: None,
@@ -1120,7 +1138,7 @@ impl Net {
     }
 
     pub fn minter(&self) -> MsgAddressInt {
-        self.minter_of(0x5a)
+        self.minter_of(self.primary_asset.0)
     }
 
     pub fn minter_of(&self, token: u8) -> MsgAddressInt {
@@ -1130,7 +1148,7 @@ impl Net {
         let r = self.get(
             &self.bridge,
             "get_minter_address",
-            vec![StackItem::cell(wrapped_token_data(token))],
+            vec![StackItem::cell(self.asset_data(token))],
         );
         MsgAddressInt::construct_from(&mut r.slice_at(0)).expect("a minter")
     }
@@ -1348,13 +1366,13 @@ impl Net {
             b.append_raw(&EVM_BRIDGE, 160).unwrap();
             b.append_raw(&account_hash(recipient), 256).unwrap();
             coins(b, amount);
-            b.checked_append_reference(wrapped_token_data(token)).unwrap();
+            b.checked_append_reference(self.asset_data(token)).unwrap();
         })
     }
 
     /// Pays for lock n and queues its vote.
     pub fn start_swap_to(&mut self, recipient: &MsgAddressInt, amount: u128) -> u64 {
-        self.start_swap_token(recipient, amount, 0x5a)
+        self.start_swap_token(recipient, amount, self.primary_asset.0)
     }
 
     pub fn start_swap_token(&mut self, recipient: &MsgAddressInt, amount: u128, token: u8) -> u64 {
@@ -1943,12 +1961,16 @@ pub fn forward_fee_of(net: &Net, msg: &Message, masterchain: bool) -> u128 {
 /// A minter's initial state: utils.fc, pack_minter_initial_data, with the
 /// bridge pinned in.
 pub fn minter_state_init(bridge: &MsgAddressInt, token: u8) -> StateInit {
+    minter_state_init_with_decimals(bridge, token, 18)
+}
+
+fn minter_state_init_with_decimals(bridge: &MsgAddressInt, token: u8, decimals: u8) -> StateInit {
     let data = cell(|b| {
         b.append_raw(&[0u8; 16], 128).unwrap();
         for _ in 0..4 {
             coins(b, 0);
         }
-        b.checked_append_reference(wrapped_token_data(token)).unwrap();
+        b.checked_append_reference(wrapped_token_data_with_decimals(token, decimals)).unwrap();
         b.checked_append_reference(codes().wallet.clone()).unwrap();
         b.checked_append_reference(cell(|a| {
             bridge.write_to(a).unwrap();
@@ -1984,7 +2006,11 @@ impl Net {
     }
 
     pub fn recreate_minter(&mut self) -> MsgAddressInt {
-        let init = minter_state_init(&self.bridge, 0x5a);
+        let init = minter_state_init_with_decimals(
+            &self.bridge,
+            self.primary_asset.0,
+            self.primary_asset.1,
+        );
         let addr = self.deploy_initial(init, 0);
         assert_eq!(addr, self.minter(), "the minter's initial state reproduces its address");
         addr

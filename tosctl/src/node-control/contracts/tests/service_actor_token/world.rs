@@ -92,6 +92,8 @@ pub fn actor_variant(tag: &str, edit: impl Fn(String) -> String) -> Cell {
 
 #[derive(Clone, Debug)]
 pub struct Options {
+    /// Primary source token byte and decimals for this sandbox world.
+    pub asset: (u8, u8),
     pub profile: ServiceActorTokenCodeProfile,
     pub code: Option<Cell>,
     pub price: u128,
@@ -113,6 +115,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            asset: (0x5a, 18),
             profile: ServiceActorTokenCodeProfile::Release,
             code: None,
             price: PRICE,
@@ -158,7 +161,7 @@ impl World {
     /// Deploys with the data rewritten by `rewrite`, as a deployer controlling
     /// its own StateInit can.
     pub fn with_data(options: Options, rewrite: impl FnOnce(Cell) -> Cell) -> Self {
-        let mut net = Net::new();
+        let mut net = Net::with_asset(options.asset.0, options.asset.1);
         let owner = net.bc.treasury("token-actor-owner", 10_000 * TOS).expect("an owner");
         let owner = owner.address().clone();
         for i in 0..net.users.len() {
@@ -226,7 +229,7 @@ impl World {
     ) -> SettlementAsset {
         SettlementAsset {
             status,
-            decimals: 18,
+            decimals: self.net.primary_asset.1,
             minter_code_hash: codes().minter.repr_hash(),
             wallet_code_hash: wallet_code_hash
                 .map(UInt256::from)
@@ -236,7 +239,7 @@ impl World {
                 kind: SettlementAssetOriginKind::TokenBridge,
                 bridge_address: UInt256::from_slice(&account_hash(&self.net.bridge)),
                 source_chain_id: CHAIN_ID,
-                source_token: [0x5a; 20],
+                source_token: [self.net.primary_asset.0; 20],
             },
         }
     }
