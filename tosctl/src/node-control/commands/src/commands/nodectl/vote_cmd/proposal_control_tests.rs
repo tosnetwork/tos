@@ -55,6 +55,7 @@ impl Subscriber for ControlReplies {
         object: TLObject,
         _: &AdnlPeers,
     ) -> chain_block::Result<QueryResult> {
+        super::super::poll_clock::testing::pause_gate();
         let query = object
             .downcast::<tos::rpc::engine::validator::ControlQuery>()
             .map_err(|_| anyhow::anyhow!("not a control query"))?;
@@ -226,6 +227,7 @@ fn check_upgrade(result: anyhow::Result<()>, unsupported: bool) -> anyhow::Resul
 }
 #[tokio::test]
 async fn offer_ls_never_reads_public_proposals() -> anyhow::Result<()> {
+    let _network_time = super::super::poll_clock::testing::freeze_network_time().await;
     for unsupported in [false, true] {
         let fixture = Fixture::new(unsupported).await?;
         let result = VoteOfferLsCmd { format: super::super::output_format::OutputFormat::Json }
@@ -240,6 +242,7 @@ async fn offer_ls_never_reads_public_proposals() -> anyhow::Result<()> {
 }
 #[tokio::test]
 async fn offer_cast_selection_never_reads_public_proposals() -> anyhow::Result<()> {
+    let _network_time = super::super::poll_clock::testing::freeze_network_time().await;
     for unsupported in [false, true] {
         let fixture = Fixture::new(unsupported).await?;
         let result = VoteOfferCastCmd { hash: None }.run(&fixture.path()?).await;
@@ -252,6 +255,7 @@ async fn offer_cast_selection_never_reads_public_proposals() -> anyhow::Result<(
 }
 #[tokio::test]
 async fn offer_diff_never_reads_public_proposals() -> anyhow::Result<()> {
+    let _network_time = super::super::poll_clock::testing::freeze_network_time().await;
     for unsupported in [false, true] {
         let fixture = Fixture::new(unsupported).await?;
         let hash = hex::encode(super::offer_list_tests::live_proposals()?[0].hash);
@@ -265,6 +269,7 @@ async fn offer_diff_never_reads_public_proposals() -> anyhow::Result<()> {
 }
 #[tokio::test]
 async fn offer_create_expiry_never_reads_public_proposals() -> anyhow::Result<()> {
+    let _network_time = super::super::poll_clock::testing::freeze_network_time().await;
     for unsupported in [false, true] {
         let fixture = Fixture::new(unsupported).await?;
         let config = common::app_config::AppConfig::load(std::path::Path::new(&fixture.path()?))?;
@@ -285,6 +290,7 @@ async fn offer_create_expiry_never_reads_public_proposals() -> anyhow::Result<()
 
 #[tokio::test]
 async fn offer_upgrade_errors_never_fall_back_to_public_proposals() -> anyhow::Result<()> {
+    let _network_time = super::super::poll_clock::testing::freeze_network_time().await;
     for workflow in ["ls", "cast", "diff", "create"] {
         let fixture = Fixture::new(true).await?;
         let path = fixture.path()?;

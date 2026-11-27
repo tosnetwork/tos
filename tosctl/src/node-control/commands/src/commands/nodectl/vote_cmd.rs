@@ -918,7 +918,7 @@ where
 /// taken as "not registered yet".
 pub(crate) async fn poll_registration<R, F>(
     prior: Option<u32>,
-    mut read: R,
+    read: R,
     polls: usize,
     interval: std::time::Duration,
 ) -> Result<Option<u32>, String>
@@ -926,10 +926,25 @@ where
     R: FnMut() -> F,
     F: std::future::Future<Output = anyhow::Result<Option<u32>>>,
 {
+    poll_registration_with_clock(prior, read, polls, interval, &super::poll_clock::TokioClock).await
+}
+
+pub(crate) async fn poll_registration_with_clock<R, F, C>(
+    prior: Option<u32>,
+    mut read: R,
+    polls: usize,
+    interval: std::time::Duration,
+    clock: &C,
+) -> Result<Option<u32>, String>
+where
+    C: super::poll_clock::PollClock,
+    R: FnMut() -> F,
+    F: std::future::Future<Output = anyhow::Result<Option<u32>>>,
+{
     let mut observed: Result<Option<u32>, String> = Ok(None);
     for poll in 0..polls {
         if poll > 0 {
-            tokio::time::sleep(interval).await;
+            clock.sleep(interval).await;
         }
         observed = read().await.map_err(|e| format!("reading the proposal back failed: {e:#}"));
         match &observed {
@@ -2328,7 +2343,14 @@ mod proposal_read_back_tests {
             Ok(PRESENT_LIVE.to_string()),
             Ok(ABSENT_LIVE.to_string()),
         ]);
-        let observed = poll_registration(None, read, 15, NO_WAIT).await;
+        let observed = poll_registration_with_clock(
+            None,
+            read,
+            15,
+            NO_WAIT,
+            &super::super::poll_clock::testing::FakeClock::default(),
+        )
+        .await;
         assert_eq!(observed, Ok(Some(expires)));
         assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 3, "stops when seen");
         let (outcome, registered, error) = outcome_after_broadcast(None, Ok(()), observed);
@@ -2341,7 +2363,14 @@ mod proposal_read_back_tests {
     #[tokio::test]
     async fn polling_sees_an_extension_with_voters() {
         let (_, read) = script(vec![Ok(present_with_voters(100)), Ok(present_with_voters(200))]);
-        let observed = poll_registration(Some(100), read, 15, NO_WAIT).await;
+        let observed = poll_registration_with_clock(
+            Some(100),
+            read,
+            15,
+            NO_WAIT,
+            &super::super::poll_clock::testing::FakeClock::default(),
+        )
+        .await;
         assert_eq!(observed, Ok(Some(200)));
         assert_eq!(
             outcome_after_broadcast(Some(100), Ok(()), observed).0,
@@ -2355,7 +2384,14 @@ mod proposal_read_back_tests {
     async fn an_unchanged_or_lower_expiry_is_not_a_registration() {
         for current in [100, 99] {
             let (reads, read) = script((0..4).map(|_| Ok(present_with_voters(current))).collect());
-            let observed = poll_registration(Some(100), read, 4, NO_WAIT).await;
+            let observed = poll_registration_with_clock(
+                Some(100),
+                read,
+                4,
+                NO_WAIT,
+                &super::super::poll_clock::testing::FakeClock::default(),
+            )
+            .await;
             assert_eq!(observed, Ok(Some(current)));
             assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 4);
             let (outcome, registered, error) = outcome_after_broadcast(Some(100), Ok(()), observed);
@@ -2372,7 +2408,14 @@ mod proposal_read_back_tests {
             Err(anyhow::anyhow!("connection refused")),
             Ok(PRESENT_LIVE.to_string()),
         ]);
-        let observed = poll_registration(None, read, 15, NO_WAIT).await;
+        let observed = poll_registration_with_clock(
+            None,
+            read,
+            15,
+            NO_WAIT,
+            &super::super::poll_clock::testing::FakeClock::default(),
+        )
+        .await;
         assert!(observed.as_ref().is_err_and(|e| e.contains("connection refused")), "{observed:?}");
         assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 2);
         let (outcome, _, error) = outcome_after_broadcast(None, Ok(()), observed);
@@ -2390,7 +2433,14 @@ mod proposal_read_back_tests {
             assert_ne!(malformed, ABSENT_LIVE);
             // One poll: an exhausted script must not be what makes this an error.
             let (_, read) = script(vec![Ok(malformed)]);
-            let observed = poll_registration(None, read, 1, NO_WAIT).await;
+            let observed = poll_registration_with_clock(
+                None,
+                read,
+                1,
+                NO_WAIT,
+                &super::super::poll_clock::testing::FakeClock::default(),
+            )
+            .await;
             assert!(observed.is_err_and(|e| !e.contains("script exhausted")));
         }
     }
@@ -2398,13 +2448,41 @@ mod proposal_read_back_tests {
     #[tokio::test]
     async fn zero_polls_read_nothing() {
         let (reads, read) = script(vec![Ok(PRESENT_LIVE.to_string())]);
-        let observed = poll_registration(None, read, 0, NO_WAIT).await;
+        let observed = poll_registration_with_clock(
+            None,
+            read,
+            0,
+            NO_WAIT,
+            &super::super::poll_clock::testing::FakeClock::default(),
+        )
+        .await;
         assert_eq!(observed, Ok(None));
         assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(
             outcome_after_broadcast(None, Ok(()), observed).0,
             ProposalOutcome::WalletAcceptedUnconfirmed
         );
+    }
+    #[tokio::test]
+    async fn registration_poll_intervals_are_logical_and_counted() {
+        let clock = super::super::poll_clock::testing::FakeClock::default();
+        let interval = std::time::Duration::from_secs(2);
+        let calls = std::cell::Cell::new(0);
+        let result = poll_registration_with_clock(
+            None,
+            || {
+                calls.set(calls.get() + 1);
+                async { Ok(None) }
+            },
+            15,
+            interval,
+            &clock,
+        )
+        .await;
+        assert_eq!(result, Ok(None));
+        assert_eq!(calls.get(), 15);
+        assert_eq!(clock.sleeps(), vec![interval; 14]);
+        assert_eq!(clock.elapsed(), std::time::Duration::from_secs(28));
     }
 }
 
