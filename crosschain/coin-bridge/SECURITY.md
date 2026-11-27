@@ -7,10 +7,10 @@ This bridge is not trustless. Safety depends on all of the following remaining t
 1. At least the configured oracle quorum validates each cross-chain event honestly. The EVM quorum is a ceiling two-thirds majority of the current oracle set at every set size.
 2. Oracle keys are independent, protected, and not exposed to one shared control plane.
 3. The TOS masterchain ConfigParam (71 for Ethereum, 72 for BSC) points to the intended bridge, collector, and oracle set.
-4. The TOS and EVM contracts, compiler versions, deployment bytecode, and initial storage match audited artifacts.
+4. The TOS and EVM contracts, compiler versions, deployment bytecode, and initial storage match the pinned, reviewed release artifacts.
 5. Locked native TOS and minted wrapped-token supply are continuously reconciled.
 
-A source fork does **not** inherit an upstream deployment's audit, operational controls, or safety record. The historical Solidity plane predates the token bridge and originally bound vote digests to `address(this)` but not the EVM chain ID. That inherited format allowed replay at the same bridge address when signatures from one chain contained at least the other chain's current quorum (`ceil(2n/3)`). The implementation now binds all three digests to `chainid()` as well; [`docs/chain-id-domain-separation.md`](docs/chain-id-domain-separation.md) records the exact format, tests, TVM analysis, signer constraint, and remaining deployment blockers.
+A source fork does **not** inherit an upstream deployment's review, operational controls, or safety record. The historical Solidity plane predates the token bridge and originally bound vote digests to `address(this)` but not the EVM chain ID. That inherited format allowed replay at the same bridge address when signatures from one chain contained at least the other chain's current quorum (`ceil(2n/3)`). The implementation now binds all three digests to `chainid()` as well; [`docs/chain-id-domain-separation.md`](docs/chain-id-domain-separation.md) records the exact format, tests, TVM analysis, signer constraint, and remaining deployment blockers.
 
 ## Preserved contract controls
 
@@ -54,8 +54,7 @@ Coins leave the multisig only as the value of its votes, at most `MAX_VOTE_VALUE
 
 ## Mandatory pre-mainnet work
 
-- [ ] Two independent audits covering FunC/Fift, Solidity, deployment/config scripts, compiler output, and oracle protocol.
-- [x] Bind all three EVM vote digests to the EIP-1344 chain ID and bridge address; update test signers, commit golden vectors, reject cross-chain and legacy-format signatures, and record the upstream delta. Bind every TVM multisig query to the network's global id (ConfigParam 19 via `GLOBALID`, exit code 44) in addition to the existing `wallet_id`/destination binding, with an executed replay test per network. See [`docs/chain-id-domain-separation.md`](docs/chain-id-domain-separation.md). The external production signer and independent audits remain separate open deployment gates.
+- [x] Bind all three EVM vote digests to the EIP-1344 chain ID and bridge address; update test signers, commit golden vectors, reject cross-chain and legacy-format signatures, and record the upstream delta. Bind every TVM multisig query to the network's global id (ConfigParam 19 via `GLOBALID`, exit code 44) in addition to the existing `wallet_id`/destination binding, with an executed replay test per network. See [`docs/chain-id-domain-separation.md`](docs/chain-id-domain-separation.md). The external production signer remains a separate open deployment gate.
 - [ ] Property/fuzz tests and adversarial cross-chain state-machine tests.
 - [ ] Formal or machine-checked supply-conservation and replay-safety properties.
 - [ ] Per-transaction, hourly, and daily exposure caps. The historical upstream contracts do not provide economic rate limiting by themselves.

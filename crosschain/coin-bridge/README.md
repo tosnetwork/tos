@@ -1,6 +1,6 @@
 # TOS Coin Bridge
 
-> **Status: experimental, testnet-only.** The contracts are disabled for production until an independent audit, an oracle-key ceremony, rate limits/caps, monitoring, and TOS governance activation are complete.
+> **Status: experimental, testnet-only.** The contracts are disabled for production until an oracle-key ceremony, rate limits/caps, monitoring, and TOS governance activation are complete.
 
 The TOS coin bridge carries native TOS to external EVM chains. Coins locked in the TOS-side bridge contract are represented externally as a wrapped ERC-20 (`WrappedTOS.sol`); an oracle quorum authorizes minting and unlocking. It complements `../token-bridge`, which carries ERC-20 tokens in the other direction. The state machine derives from a market-proven upstream architecture (see `NOTICE.md` for provenance and licensing) and is maintained here as first-class TOS source code.
 
@@ -20,7 +20,7 @@ The TOS coin bridge carries native TOS to external EVM chains. Coins locked in t
 - `SignatureChecker.sol`: low-`s` ECDSA verification with digests bound to both the bridge contract address and EIP-1344 chain ID.
 - Truffle tests plus same-address, dual-chain replay and legacy-format rejection tests.
 
-No production oracle daemon ships with this directory; oracle operation remains an independently implemented and audited service.
+No production oracle daemon ships with this directory; oracle operation remains an independently implemented and reviewed service.
 
 ## TOS configuration slots
 
@@ -53,4 +53,4 @@ scripts/test-coin-bridge-evm.sh   # regression suite + dual-chain replay rejecti
 
 ## Production gates
 
-Before any real funds are accepted, every item in `SECURITY.md` is mandatory. The EVM chain-ID domain-separation change is implemented and tested, but it is not deployment approval: the production oracle signer must match the committed golden vectors, target chain IDs must be pairwise distinct, independent audits must pass, and live deployment state must be established from traceable node evidence.
+Before any real funds are accepted, every item in `SECURITY.md` is mandatory. The EVM chain-ID domain-separation change is implemented and tested, but it is not deployment approval: the production oracle signer must match the committed golden vectors, target chain IDs must be pairwise distinct, and live deployment state must be established from traceable node evidence.

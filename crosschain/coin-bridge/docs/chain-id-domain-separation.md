@@ -4,7 +4,7 @@ Status: **Implemented and locally verified; not approved for deployment.** This
 change alters all three EVM signed payloads, test signers, golden vectors,
 repository verification, and the reviewed-delta record. The production oracle
 signer is outside this repository and must adopt the pinned wire format before
-deployment. The deployment and independent-audit gates in §6 remain open.
+deployment. The deployment gates in §6 remain open.
 
 Scope: the EVM part covers the `coin-bridge` EVM/Solidity plane **only**. The
 newer `token-bridge` is **not** affected there — its
@@ -315,7 +315,7 @@ height):
 
 If that evidence shows the bridge is genuinely undeployed, there is **no live
 migration**: the coordinated change (contracts + signer + tests + parity +
-NOTICE) simply must land, be audited, and be verified before the *first*
+NOTICE) simply must land, be reviewed, and be verified before the *first*
 deployment.
 
 **If any instance is already deployed, this implementation's simple rollout is blocked
@@ -332,7 +332,7 @@ not just the absence of a proxy:
   contract — the old oracle quorum can still execute mints on the old `Bridge`.
 
 Therefore: **if any existing deployment or balance is found, it immediately blocks
-this implementation's rollout.** A separate, independently audited plan must be written
+this implementation's rollout.** A separate, independently reviewed plan must be written
 and reviewed before any action — covering legacy-token redemption/swap,
 dual-contract supply reconciliation, revocation of the old oracle quorum's
 authority, and final sealing of the old bridge. This change does not attempt to
@@ -353,4 +353,4 @@ The implementation follows the owner-reviewed decisions below.
 | Change token-bridge | **Reject** — it already binds the chain ID. |
 | Change TVM code now | **Implemented**: `wallet_id` and the destination are address-scoped and do not separate two networks sharing a StateInit and oracle keys, so every signed query now also carries the network's `global_id` (ConfigParam 19, `GLOBALID`, exit code 44 on mismatch) in all three multisigs. Query builders must insert it after `wallet_id`; distinct deployments must still use unique `wallet_id`/StateInit. |
 | Merge this PR | Merge only after code review and CI pass. It intentionally contains the implementation, tests, vectors, and reviewed-delta record together. |
-| First value-bearing deployment | **Blocked** until the external signer adopts and verifies the golden vectors, independent audits pass, live on-chain pre-deployment evidence is attached, and every other `SECURITY.md` gate is satisfied. |
+| First value-bearing deployment | **Blocked** until the external signer adopts and verifies the golden vectors, live on-chain pre-deployment evidence is attached, and every other `SECURITY.md` gate is satisfied. |

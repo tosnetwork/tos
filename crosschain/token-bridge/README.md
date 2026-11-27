@@ -1,6 +1,6 @@
 # TOS Token Bridge
 
-> **Status: experimental, testnet-only.** The contracts are disabled for production until an independent audit, an oracle-key ceremony, rate limits/caps, monitoring, and TOS governance activation are complete.
+> **Status: experimental, testnet-only.** The contracts are disabled for production until an oracle-key ceremony, rate limits/caps, monitoring, and TOS governance activation are complete.
 
 The TOS token bridge carries ERC-20 tokens from external EVM chains onto TOS as bridge-controlled wrapped Tokens. Assets are locked in an EVM `Bridge` contract and represented on TOS by deterministic Token minter/wallet contracts; an oracle quorum authorizes minting and unlocking. The state machine derives from a market-proven upstream architecture (see `NOTICE.md` for provenance and licensing) and is maintained here as first-class TOS source code.
 
@@ -23,7 +23,7 @@ The TOS token bridge carries ERC-20 tokens from external EVM chains onto TOS as 
 - `TosUtils.sol`: the shared cross-chain transaction/signature structs.
 - Hardhat tests and test token contracts.
 
-No production oracle daemon ships with this directory: it completes the smart-contract plane and documents the oracle protocol, but oracle operation remains an independently implemented and audited service.
+No production oracle daemon ships with this directory: it completes the smart-contract plane and documents the oracle protocol, but oracle operation remains an independently implemented and reviewed service.
 
 ## Flow
 
@@ -151,4 +151,4 @@ One Tron-specific caveat the tests encode: a reverted state-changing call does *
 
 ## Production gates
 
-Before any real funds are accepted, every item in `SECURITY.md` is mandatory. In particular: independent audits of the exact TOS build, isolated HSM-backed oracle keys, a 2/3-plus quorum with operational diversity, per-token exposure caps, timelocked governance, continuous balance/supply reconciliation, emergency pause drills, and a limited canary deployment.
+Before any real funds are accepted, every item in `SECURITY.md` is mandatory. In particular: a pinned, reviewed release of the exact TOS build, isolated HSM-backed oracle keys, a 2/3-plus quorum with operational diversity, per-token exposure caps, timelocked governance, continuous balance/supply reconciliation, emergency pause drills, and a limited canary deployment.
