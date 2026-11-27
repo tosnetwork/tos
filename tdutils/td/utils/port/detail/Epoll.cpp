@@ -26,6 +26,7 @@ char disable_linker_warning_about_empty_file_epoll_cpp TD_UNUSED;
 #include <cerrno>
 #include <unistd.h>
 
+#include "td/utils/ScopeGuard.h"
 #include "td/utils/Status.h"
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
@@ -108,6 +109,10 @@ void Epoll::run(int timeout_ms) {
       << Status::PosixError(epoll_wait_errno, "epoll_wait failed");
 
   events_n_ = ready_n;
+  SCOPE_EXIT {
+    events_n_ = 0;
+    event_pos_ = 0;
+  };
   for (event_pos_ = 0; event_pos_ < events_n_; event_pos_++) {
     PollFlags flags;
     epoll_event *event = &events_[event_pos_];
@@ -147,8 +152,6 @@ void Epoll::run(int timeout_ms) {
     pollable_fd.add_flags(flags);
     pollable_fd.release_as_list_node();
   }
-  events_n_ = 0;
-  event_pos_ = 0;
 }
 }  // namespace detail
 }  // namespace td

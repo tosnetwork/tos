@@ -28,6 +28,7 @@ char disable_linker_warning_about_empty_file_kqueue_cpp TD_UNUSED;
 #include <unistd.h>
 #include <utility>
 
+#include "td/utils/ScopeGuard.h"
 #include "td/utils/Status.h"
 #include "td/utils/logging.h"
 
@@ -177,6 +178,10 @@ void KQueue::run(int timeout_ms) {
   }
 
   events_n_ = update(static_cast<int>(events_.size()), timeout_ptr);
+  SCOPE_EXIT {
+    events_n_ = 0;
+    event_pos_ = 0;
+  };
   for (event_pos_ = 0; event_pos_ < events_n_; event_pos_++) {
     struct kevent *event = &events_[event_pos_];
     PollFlags flags;
@@ -207,8 +212,6 @@ void KQueue::run(int timeout_ms) {
     pollable_fd.add_flags(flags);
     pollable_fd.release_as_list_node();
   }
-  events_n_ = 0;
-  event_pos_ = 0;
 }
 }  // namespace detail
 }  // namespace td

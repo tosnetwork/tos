@@ -151,7 +151,9 @@ TEST(Poll, UnsubscribeOtherFdFromCallbackDropsItsPendingEvents) {
 
 // The production shape: the callback closes the other socket, freeing its
 // PollableFdInfo while the batch still holds an event for it. Without the
-// guard this is a heap use-after-free (reported by AddressSanitizer).
+// guard this is a heap use-after-free, which only AddressSanitizer reliably
+// reports: a plain build usually passes regardless. The tripwire test above is
+// the check that fails without the guard in a plain build.
 TEST(Poll, CloseOtherFdFromCallbackDoesNotTouchIt) {
   td::Poll poll;
   poll.init();

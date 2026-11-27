@@ -1204,9 +1204,12 @@ class RefusedConnection final : public td::actor::Actor, private td::ObserverBas
   td::actor::ActorId<RefusedConnection> self_;
 
   void notify() override {
-    state_->in_poll_callback++;
+    // The call below may run this actor's pending wakeup and destroy it, so
+    // nothing of `this` may be touched afterwards.
+    auto state = state_;
+    state->in_poll_callback++;
     td::actor::send_closure_later(self_, &RefusedConnection::loop);
-    state_->in_poll_callback--;
+    state->in_poll_callback--;
   }
   void start_up() override {
     self_ = actor_id(this);
@@ -1253,7 +1256,7 @@ TEST(Actor2, RefusedConnectionClosesInsidePollCallback) {
   auto r_fd = td::SocketFd::open(target);
   if (r_fd.is_error()) {
     close(probe);
-    LOG(ERROR) << "the connection was refused synchronously, nothing to poll: " << r_fd.error();
+    LOG(WARNING) << "SKIPPED: the connection was refused synchronously, nothing to poll: " << r_fd.error();
     return;
   }
   auto fd = r_fd.move_as_ok();
