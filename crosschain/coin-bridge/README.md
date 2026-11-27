@@ -20,7 +20,7 @@ The TOS coin bridge carries native TOS to external EVM chains. Coins locked in t
 - `SignatureChecker.sol`: low-`s` ECDSA verification with digests bound to both the bridge contract address and EIP-1344 chain ID.
 - Truffle tests plus same-address, dual-chain replay and legacy-format rejection tests.
 
-No production oracle daemon ships with this directory; oracle operation remains an independently implemented and reviewed service.
+No production oracle daemon ships with this directory; oracle operation must be an independently implemented and reviewed service.
 
 ## TOS configuration slots
 

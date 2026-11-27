@@ -23,7 +23,7 @@ The TOS token bridge carries ERC-20 tokens from external EVM chains onto TOS as 
 - `TosUtils.sol`: the shared cross-chain transaction/signature structs.
 - Hardhat tests and test token contracts.
 
-No production oracle daemon ships with this directory: it completes the smart-contract plane and documents the oracle protocol, but oracle operation remains an independently implemented and reviewed service.
+No production oracle daemon ships with this directory: it completes the smart-contract plane and documents the oracle protocol, but oracle operation must be an independently implemented and reviewed service.
 
 ## Flow
 

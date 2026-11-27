@@ -174,7 +174,7 @@ change atomically or the bridge stops verifying its own oracles:
 2. **The off-chain oracle/relayer signer** — the watcher that observes a TOS
    event and signs the EVM digest must include the chain ID in byte-identical
    order. Critically, the signer must not read the chain ID from an arbitrary RPC
-   per call: it MUST pin an `expected_chain_id` in its audited deployment config,
+   per call: it MUST pin an `expected_chain_id` in its pinned deployment config,
    verify at startup that its target RPC actually returns that value, refuse to
    run on a mismatch, and treat any chain-ID change as a governance/deployment
    event — never a silent runtime input. The set of `expected_chain_id`s across
@@ -332,8 +332,8 @@ not just the absence of a proxy:
   contract — the old oracle quorum can still execute mints on the old `Bridge`.
 
 Therefore: **if any existing deployment or balance is found, it immediately blocks
-this implementation's rollout.** A separate, independently reviewed plan must be written
-and reviewed before any action — covering legacy-token redemption/swap,
+this implementation's rollout.** A separate plan must be written
+and independently reviewed before any action — covering legacy-token redemption/swap,
 dual-contract supply reconciliation, revocation of the old oracle quorum's
 authority, and final sealing of the old bridge. This change does not attempt to
 specify that plan, and no four-step summary should be read as one. This is exactly
