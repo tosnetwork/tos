@@ -443,6 +443,18 @@ async fn control_runner(fixture: &elector_fixture::Fixture) -> anyhow::Result<El
     Ok(runner)
 }
 
+/// Bound on a fake-clock wait. The fake deadline moves only while a tick is
+/// polled, so an await in the loop body that never wakes would otherwise hang
+/// the test. Callers run on frozen network time, so a suspended process cannot
+/// fire it.
+const BACKSTOP: Duration = Duration::from_secs(60);
+
+async fn within_backstop<F: std::future::Future>(future: F) -> anyhow::Result<F::Output> {
+    tokio::time::timeout(BACKSTOP, future)
+        .await
+        .map_err(|_| anyhow::anyhow!("no progress within the {BACKSTOP:?} backstop"))
+}
+
 async fn wire_provider(
     fixture: &elector_fixture::Fixture,
 ) -> anyhow::Result<Box<dyn ElectionsProvider>> {
@@ -652,20 +664,19 @@ async fn the_runner_loop_propagates_the_named_upgrade_error_before_publishing() 
     let mut runner = control_runner(&fixture).await?;
     let store = Arc::new(SnapshotStore::new());
     let clock = crate::tick_clock::testing::FakeClock::default();
-    let error = clock
-        .timeout(
-            Duration::from_secs(10),
-            runner.run_loop_with_clock(
-                Duration::from_secs(60),
-                CancellationCtx::new(),
-                store.clone(),
-                None,
-                &clock,
-            ),
-        )
-        .await?
-        .err()
-        .context("unsupported node did not stop the runner")?;
+    let error = within_backstop(clock.timeout(
+        Duration::from_secs(10),
+        runner.run_loop_with_clock(
+            Duration::from_secs(60),
+            CancellationCtx::new(),
+            store.clone(),
+            None,
+            &clock,
+        ),
+    ))
+    .await??
+    .err()
+    .context("unsupported node did not stop the runner")?;
     assert!(
         error.downcast_ref::<control_client::UnsupportedControlQuery>().is_some(),
         "upgrade error lost: {error:#}"
@@ -713,18 +724,17 @@ async fn one_runner_tick_requests_exactly_one_elector_snapshot() -> anyhow::Resu
     let mut runner = harness.build("node-1");
     let _network_time = crate::tick_clock::testing::freeze_network_time().await;
     let clock = crate::tick_clock::testing::FakeClock::default();
-    clock
-        .timeout(
-            Duration::from_secs(10),
-            runner.run_loop_with_clock(
-                Duration::from_secs(600),
-                cancellation,
-                Arc::new(SnapshotStore::new()),
-                None,
-                &clock,
-            ),
-        )
-        .await??;
+    within_backstop(clock.timeout(
+        Duration::from_secs(10),
+        runner.run_loop_with_clock(
+            Duration::from_secs(600),
+            cancellation,
+            Arc::new(SnapshotStore::new()),
+            None,
+            &clock,
+        ),
+    ))
+    .await???;
     assert_eq!(reads.load(Ordering::SeqCst), 1, "one elector query per runner tick");
     assert_eq!(clock.ticks_completed(), 1);
     Ok(())
@@ -757,20 +767,20 @@ async fn runner_ticks_count_logical_intervals() -> anyhow::Result<()> {
         })
     });
     let mut runner = harness.build("node-1");
+    let _network_time = crate::tick_clock::testing::freeze_network_time().await;
     let clock = crate::tick_clock::testing::FakeClock::default();
     let interval = Duration::from_secs(600);
-    let result = clock
-        .timeout(
-            Duration::from_secs(1500),
-            runner.run_loop_with_clock(
-                interval,
-                CancellationCtx::new(),
-                Arc::new(SnapshotStore::new()),
-                None,
-                &clock,
-            ),
-        )
-        .await;
+    let result = within_backstop(clock.timeout(
+        Duration::from_secs(1500),
+        runner.run_loop_with_clock(
+            interval,
+            CancellationCtx::new(),
+            Arc::new(SnapshotStore::new()),
+            None,
+            &clock,
+        ),
+    ))
+    .await?;
     assert!(result.is_err(), "the loop runs until the deadline");
     // Ticks at 0, 600 and 1200 s, each reading one snapshot; then the deadline.
     assert_eq!(reads.load(Ordering::SeqCst), 3);
