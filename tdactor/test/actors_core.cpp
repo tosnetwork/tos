@@ -38,6 +38,18 @@
 #include "td/utils/port/thread.h"
 #include "td/utils/tests.h"
 
+#if TD_PORT_POSIX
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include "td/utils/Observer.h"
+#include "td/utils/port/IPAddress.h"
+#include "td/utils/port/SocketFd.h"
+#endif
+
 TEST(Actor2, signals) {
   using td::actor::core::ActorSignals;
   ActorSignals signals;
@@ -1167,4 +1179,105 @@ TEST(Actor2, test_stats) {
 
   scheduler.run();
 }
+
+#if TD_PORT_POSIX
+namespace {
+struct RefusedConnectionState {
+  int in_poll_callback = 0;
+  bool closed = false;
+  bool closed_inside_poll_callback = false;
+  bool timed_out = false;
+};
+
+// Closes its socket the way an external client connection does when the
+// server refuses it: start_up subscribes the socket and yields (as queuing the
+// handshake does), and the next loop sees the refusal and stops.
+class RefusedConnection final : public td::actor::Actor, private td::ObserverBase {
+ public:
+  RefusedConnection(td::SocketFd fd, std::shared_ptr<RefusedConnectionState> state)
+      : fd_(std::move(fd)), state_(std::move(state)) {
+  }
+
+ private:
+  td::SocketFd fd_;
+  std::shared_ptr<RefusedConnectionState> state_;
+  td::actor::ActorId<RefusedConnection> self_;
+
+  void notify() override {
+    state_->in_poll_callback++;
+    td::actor::send_closure_later(self_, &RefusedConnection::loop);
+    state_->in_poll_callback--;
+  }
+  void start_up() override {
+    self_ = actor_id(this);
+    SchedulerContext::get().get_poll().subscribe(fd_.get_poll_info().extract_pollable_fd(this),
+                                                 td::PollFlags::ReadWrite());
+    alarm_timestamp() = td::Timestamp::in(10);
+    yield();
+  }
+  void loop() override {
+    td::sync_with_poll(fd_);
+    if (fd_.get_pending_error().is_error() || td::can_close(fd_)) {
+      stop();
+    }
+  }
+  void alarm() override {
+    state_->timed_out = true;
+    stop();
+  }
+  void tear_down() override {
+    state_->closed = true;
+    state_->closed_inside_poll_callback = state_->in_poll_callback > 0;
+    SchedulerContext::get().get_poll().unsubscribe(fd_.get_poll_info().get_pollable_fd_ref());
+    SchedulerContext::get().stop();
+  }
+};
+}  // namespace
+
+// The pending wakeup of a poll actor runs from inside the poll callback, so
+// the refused connection unsubscribes and frees its socket while the poller
+// is still dispatching the batch that reported the refusal. kqueue reports the
+// refusal as two events for that socket (read and write filters).
+TEST(Actor2, RefusedConnectionClosesInsidePollCallback) {
+  int probe = socket(AF_INET, SOCK_STREAM, 0);
+  CHECK(probe >= 0);
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  CHECK(bind(probe, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
+  socklen_t addr_len = sizeof(addr);
+  CHECK(getsockname(probe, reinterpret_cast<sockaddr *>(&addr), &addr_len) == 0);
+  // Bound but not listening: a connection to it is refused.
+  td::IPAddress target;
+  target.init_ipv4_port("127.0.0.1", ntohs(addr.sin_port)).ensure();
+  auto r_fd = td::SocketFd::open(target);
+  if (r_fd.is_error()) {
+    close(probe);
+    LOG(ERROR) << "the connection was refused synchronously, nothing to poll: " << r_fd.error();
+    return;
+  }
+  auto fd = r_fd.move_as_ok();
+  // Wait until the refusal is known, so the first poll batch reports it.
+  pollfd pfd{fd.get_native_fd().socket(), POLLOUT, 0};
+  CHECK(::poll(&pfd, 1, 5000) == 1);
+  close(probe);
+
+  auto state = std::make_shared<RefusedConnectionState>();
+  auto group_info = std::make_shared<core::SchedulerGroupInfo>(1);
+  core::Scheduler scheduler{group_info, SchedulerId{0}, 1};
+  scheduler.start();
+  scheduler.run_in_context([&] {
+    create_actor<RefusedConnection>(ActorOptions().with_name("RefusedConnection").with_poll(), std::move(fd), state)
+        .release();
+  });
+  while (scheduler.run(1000)) {
+  }
+  scheduler.stop();
+  core::Scheduler::close_scheduler_group(*group_info);
+
+  ASSERT_TRUE(state->closed);
+  ASSERT_TRUE(!state->timed_out);
+  ASSERT_TRUE(state->closed_inside_poll_callback);
+}
+#endif
 #endif  //!TD_THREAD_UNSUPPORTED

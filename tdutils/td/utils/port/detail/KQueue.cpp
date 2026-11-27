@@ -43,6 +43,7 @@ void KQueue::init() {
   LOG_IF(FATAL, !kq_) << Status::PosixError(kqueue_errno, "kqueue creation failed");
 
   // TODO: const
+  changes_.resize(1000);
   events_.resize(1000);
   changes_n_ = 0;
 }
@@ -51,6 +52,7 @@ void KQueue::clear() {
   if (!kq_) {
     return;
   }
+  changes_.clear();
   events_.clear();
   kq_.close();
   for (auto *list_node = list_root_.next; list_node != &list_root_;) {
@@ -60,7 +62,7 @@ void KQueue::clear() {
 }
 
 int KQueue::update(int nevents, const timespec *timeout, bool may_fail) {
-  int err = kevent(kq_.fd(), &events_[0], changes_n_, &events_[0], nevents, timeout);
+  int err = kevent(kq_.fd(), changes_.data(), changes_n_, events_.data(), nevents, timeout);
   auto kevent_errno = errno;
 
   bool is_fatal_error = [&] {
@@ -91,7 +93,7 @@ void KQueue::flush_changes(bool may_fail) {
 
 void KQueue::add_change(std::uintptr_t ident, int16 filter, uint16 flags, uint32 fflags, std::intptr_t data,
                         void *udata) {
-  if (changes_n_ == static_cast<int>(events_.size())) {
+  if (changes_n_ == static_cast<int>(changes_.size())) {
     flush_changes();
   }
 #if TD_NETBSD
@@ -99,7 +101,7 @@ void KQueue::add_change(std::uintptr_t ident, int16 filter, uint16 flags, uint32
 #else
   auto set_udata = udata;
 #endif
-  EV_SET(&events_[changes_n_], ident, filter, flags, fflags, data, set_udata);
+  EV_SET(&changes_[changes_n_], ident, filter, flags, fflags, data, set_udata);
   VLOG(fd) << "Subscribe [fd:" << ident << "] [filter:" << filter << "] [udata: " << udata << "]";
   changes_n_++;
 }
@@ -118,15 +120,29 @@ void KQueue::subscribe(PollableFd fd, PollFlags flags) {
 
 void KQueue::invalidate(int native_fd) {
   for (int i = 0; i < changes_n_; i++) {
-    if (events_[i].ident == static_cast<std::uintptr_t>(native_fd)) {
+    if (changes_[i].ident == static_cast<std::uintptr_t>(native_fd)) {
       changes_n_--;
-      std::swap(events_[i], events_[changes_n_]);
+      std::swap(changes_[i], changes_[changes_n_]);
       i--;
     }
   }
 }
 
+void KQueue::drop_pending_events(const ListNode *list_node) {
+  for (int i = event_pos_ + 1; i < events_n_; i++) {
+#if TD_NETBSD
+    auto udata = reinterpret_cast<void *>(events_[i].udata);
+#else
+    auto udata = events_[i].udata;
+#endif
+    if (udata == list_node) {
+      events_[i].udata = {};
+    }
+  }
+}
+
 void KQueue::unsubscribe(PollableFdRef fd_ref) {
+  drop_pending_events(fd_ref.list_node());
   auto pollable_fd = fd_ref.lock();
   auto native_fd = pollable_fd.native_fd().fd();
 
@@ -139,6 +155,7 @@ void KQueue::unsubscribe(PollableFdRef fd_ref) {
 }
 
 void KQueue::unsubscribe_before_close(PollableFdRef fd_ref) {
+  drop_pending_events(fd_ref.list_node());
   auto pollable_fd = fd_ref.lock();
   invalidate(pollable_fd.native_fd().fd());
 
@@ -159,9 +176,9 @@ void KQueue::run(int timeout_ms) {
     timeout_ptr = &timeout_data;
   }
 
-  int n = update(static_cast<int>(events_.size()), timeout_ptr);
-  for (int i = 0; i < n; i++) {
-    struct kevent *event = &events_[i];
+  events_n_ = update(static_cast<int>(events_.size()), timeout_ptr);
+  for (event_pos_ = 0; event_pos_ < events_n_; event_pos_++) {
+    struct kevent *event = &events_[event_pos_];
     PollFlags flags;
     if (event->filter == EVFILT_WRITE) {
       flags.add_flags(PollFlags::Write());
@@ -182,10 +199,16 @@ void KQueue::run(int timeout_ms) {
 #endif
     VLOG(fd) << "Event [fd:" << event->ident << "] [filter:" << event->filter << "] [udata: " << udata << "]";
     // LOG(WARNING) << "Have event->ident = " << event->ident << "event->filter = " << event->filter;
+    if (udata == nullptr) {
+      // Unsubscribed by a callback earlier in this batch; its fd may already be freed.
+      continue;
+    }
     auto pollable_fd = PollableFd::from_list_node(static_cast<ListNode *>(udata));
     pollable_fd.add_flags(flags);
     pollable_fd.release_as_list_node();
   }
+  events_n_ = 0;
+  event_pos_ = 0;
 }
 }  // namespace detail
 }  // namespace td

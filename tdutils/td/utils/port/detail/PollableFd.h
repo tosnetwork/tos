@@ -45,6 +45,10 @@ class PollableFdRef {
   explicit PollableFdRef(ListNode *list_node) : list_node_(list_node) {
   }
   PollableFd lock();
+  // Identifies the fd in a poller's event batch.
+  const ListNode *list_node() const {
+    return list_node_;
+  }
 
  private:
   ListNode *list_node_;

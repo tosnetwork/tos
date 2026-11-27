@@ -63,14 +63,26 @@ class KQueue final : public PollBase {
   }
 
  private:
-  vector<struct kevent> events_;
+  // Pending changes and returned events use separate buffers: a callback run
+  // while a batch is dispatched may (un)subscribe, and must not overwrite events
+  // of that batch that are still to be dispatched.
+  vector<struct kevent> changes_;
   int changes_n_;
+  vector<struct kevent> events_;
+  // The batch run() is dispatching: events_[event_pos_ + 1, events_n_) are still to come.
+  int events_n_ = 0;
+  int event_pos_ = 0;
   NativeFd kq_;
   ListNode list_root_;
 
   int update(int nevents, const timespec *timeout, bool may_fail = false);
 
   void invalidate(int native_fd);
+
+  // Drops the events still to be dispatched in the current batch for an fd being
+  // unsubscribed: kqueue reports read and write readiness as separate events, and
+  // the callback of an earlier event may already have unsubscribed and freed it.
+  void drop_pending_events(const ListNode *list_node);
 
   void flush_changes(bool may_fail = false);
 

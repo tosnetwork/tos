@@ -78,7 +78,16 @@ void Epoll::subscribe(PollableFd fd, PollFlags flags) {
                            << ", epoll_fd = " << epoll_fd_.fd() << ", fd = " << native_fd;
 }
 
+void Epoll::drop_pending_events(const ListNode *list_node) {
+  for (int i = event_pos_ + 1; i < events_n_; i++) {
+    if (events_[i].data.ptr == list_node) {
+      events_[i].data.ptr = nullptr;
+    }
+  }
+}
+
 void Epoll::unsubscribe(PollableFdRef fd_ref) {
+  drop_pending_events(fd_ref.list_node());
   auto fd = fd_ref.lock();
   auto native_fd = fd.native_fd().fd();
   int err = epoll_ctl(epoll_fd_.fd(), EPOLL_CTL_DEL, native_fd, nullptr);
@@ -98,9 +107,10 @@ void Epoll::run(int timeout_ms) {
   LOG_IF(FATAL, ready_n == -1 && epoll_wait_errno != EINTR)
       << Status::PosixError(epoll_wait_errno, "epoll_wait failed");
 
-  for (int i = 0; i < ready_n; i++) {
+  events_n_ = ready_n;
+  for (event_pos_ = 0; event_pos_ < events_n_; event_pos_++) {
     PollFlags flags;
-    epoll_event *event = &events_[i];
+    epoll_event *event = &events_[event_pos_];
     if (event->events & EPOLLIN) {
       event->events &= ~EPOLLIN;
       flags = flags | PollFlags::Read();
@@ -129,10 +139,16 @@ void Epoll::run(int timeout_ms) {
       LOG(FATAL) << "Unsupported epoll events: " << event->events;
     }
     //LOG(DEBUG) << "Epoll event " << tag("fd", event->data.fd) << tag("flags", format::as_binary(flags));
+    if (event->data.ptr == nullptr) {
+      // Unsubscribed by a callback earlier in this batch; its fd may already be freed.
+      continue;
+    }
     auto pollable_fd = PollableFd::from_list_node(static_cast<ListNode *>(event->data.ptr));
     pollable_fd.add_flags(flags);
     pollable_fd.release_as_list_node();
   }
+  events_n_ = 0;
+  event_pos_ = 0;
 }
 }  // namespace detail
 }  // namespace td
