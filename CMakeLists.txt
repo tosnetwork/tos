@@ -2087,6 +2087,9 @@ set_tests_properties(security-remediation-mutation-anchors PROPERTIES LABELS "so
 add_test(NAME security-remediation-tooling-self-test
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-security-remediation-tooling.py)
 set_tests_properties(security-remediation-tooling-self-test PROPERTIES LABELS "source-guard")
+add_test(NAME local-token-refusal-fixture
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/token-refusal/test_local_only.py)
+set_tests_properties(local-token-refusal-fixture PROPERTIES LABELS "source-guard")
 add_test(NAME release-artifacts-binding
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_release_artifacts.py)
 set_tests_properties(release-artifacts-binding PROPERTIES LABELS "source-guard")
