@@ -174,7 +174,19 @@ class LocalRefusalTests(unittest.TestCase):
                     )
                 path.unlink()
 
-    def test_trailing_wallet_after_a_benign_boc_is_refused(self):
+    def test_benign_compiled_boc_with_base64_whitespace_is_accepted(self):
+        benign = base64.b64decode("te6ccgEBAQEAAgAAAA==")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "crypto/smartcont/wallet.boc.base64"
+            path.parent.mkdir(parents=True)
+            encoded = base64.b64encode(benign)
+            path.write_bytes(b"\n" + encoded[:8] + b"\r\n" + encoded[8:] + b"\n")
+            self.assertEqual(
+                guard.release_leaks(root, build.REJECT_OWNER, build.TEST_WALLET_CODE_HASH), []
+            )
+
+    def test_trailing_content_after_a_benign_boc_is_refused(self):
         benign = base64.b64decode("te6ccgEBAQEAAgAAAA==")
         wallet = (HERE / "fixtures/refusing-wallet.boc").read_bytes()
         self.assertNotIn(
@@ -185,11 +197,13 @@ class LocalRefusalTests(unittest.TestCase):
             for suffix, raw in (
                 (".boc", benign + wallet),
                 (".boc.base64", base64.b64encode(benign + wallet)),
+                (".boc.base64", base64.b64encode(benign) + base64.b64encode(wallet)),
+                (".boc.base64", base64.b64encode(benign) + b"!"),
             ):
                 path = root / ("crypto/smartcont/wallet" + suffix)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(raw)
-                # Refusal must come from strict BOC parsing, not raw markers.
+                # Refusal must come from strict input framing, not raw markers.
                 with (
                     self.subTest(suffix=suffix),
                     mock.patch.object(guard, "forbidden", return_value=False),

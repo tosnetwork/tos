@@ -77,7 +77,11 @@ def release_leaks(root, reject_owner, code_hash):
             path.suffix == ".boc" or path.name.endswith(".boc.base64")
         ):
             try:
-                raw = base64.b64decode(data, validate=False) if path.suffix == ".base64" else data
+                raw = (
+                    base64.b64decode(re.sub(rb"\s+", b"", data), validate=True)
+                    if path.suffix == ".base64"
+                    else data
+                )
                 hashes, _ = BOC.parse_boc(raw)
                 compiled_leak = bytes.fromhex(code_hash) in hashes
             except (BOC.BocError, ValueError, OverflowError):
