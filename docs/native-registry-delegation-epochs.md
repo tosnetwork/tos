@@ -6,7 +6,7 @@ This does not authorize deployment, a network reset or changing existing Agents.
 Source pins: tos `fabd9ffe4238a61e16184cecf6020770953e19a4`; ai
 `77447f22fb225c3f164403bc9e411ff13067d109`. Requirements are ai
 `spec/docs/MESSENGER_TRANSPORT_V2.md` sections 5.1, 17 and 18 Q1, and the
-coordinator's delegated decisions 24 and 31. The requirements belong to that
+coordinator's delegated decisions 24, 31 and 33. The requirements belong to that
 specification; this document defines the separate registry/client delivery.
 
 Upstream comparison: fetched upstream default
@@ -43,16 +43,17 @@ Required state-machine invariants:
   at epoch maximum; an older replay fails predecessor/sequence checks. Neither
   case increments an epoch or changes a delegation twice.
 
-The phrase “full until the next bump” is interpreted literally: after an add
-reaches either bound, admission is latched closed for that epoch. Withdrawing
-from 128 live to 127 does not reopen it. The explicit bit below encodes this;
-review must confirm this interpretation before implementation rather than
-silently relaxing it to current-count-only checks.
+Decision 33 clarifies **refused while full**, not a sticky admission lock.
+An add checks the current live and total counts. At 128 live, withdrawing a bad
+key permits a replacement as soon as live is 127, provided total is below 384.
+Total never decreases within the epoch, so the 384 bound remains closed until
+a bump. There is no admission_closed bit, protobuf field or latch mutant.
 
 ## 2. Storage: versioned Agent root and one tagged dictionary
 
-Keep the registry's outer data/config encoding and Capability state encoding
-unchanged. Version **only the typed Agent state** explicitly:
+Keep the registry's outer data/config encoding unchanged. Both typed state
+kinds use schema **2**. Agent gains the epoch; Capability retains its current
+bit layout apart from the schema value:
 
 ```text
 AgentState schema 2 (ordinary root):
@@ -69,7 +70,6 @@ AgentState schema 2 (ordinary root):
 Delegations (ordinary wrapper):
   live_count:uint16                // 0 .. 128
   total_count:uint16               // live .. 384
-  admission_closed:Bool
   entries:HashmapE 256 Entry
 
 Entry (inline ordinary leaf value, no references):
@@ -85,22 +85,25 @@ storage rent: “no space failure” is a logical capacity guarantee, not free g
 free storage or recovery of a frozen account.
 
 The root grows from **441 to 505 bits**, still three references. The empty
-wrapper grows from 17 to **34 bits**. A dictionary value grows from 1 to 65 bits.
+wrapper grows from 17 to **33 bits**. A dictionary value grows from 1 to 65 bits.
 Counters are maintained from trusted admitted state; the on-chain mutation does
 not enumerate 384 entries on every call. Strict external readers validate full
 bounded shape, count equality, nonzero unique digest keys, exact leaf length,
 no exotic/trailing cells, epoch equality and the live/withdrawn partition.
-`admission_closed = false` is invalid when either current bound is reached;
-`true` may persist below 128 live after withdrawals.
+The on-chain writer preserves these entry invariants; strict readers own their
+validation against synthetic or malformed state. Count checks remain reachable
+independently: live=128,total=128 refuses for live; live=127,total=384 for total.
 
-A bump writes an empty wrapper with counts zero, closed=false and no dictionary
+A bump writes an empty wrapper with counts zero and no dictionary
 root. Dropping the old reference does not walk/rewrite individual digests in the
 contract. Full transaction storage-statistics and pruning costs are still tested;
 constant VM work is not a claim of zero node-side storage work.
 
-Capability roots remain schema 1/kind 2. Every decoder dispatches on both kind
-and schema; it must not accept schema 1 as an epoch-aware Agent or interpret
-Capability owner bits as an epoch. Unknown schemas refuse.
+Capability roots use schema 2/kind 2 with the unchanged 697-bit header/owner
+layout and version reference. Every v2 decoder requires schema 2 for either
+kind. It must not interpret Capability owner bits as an Agent epoch or accept
+schema 1 under a v2 code hash. Schema-1 decoding belongs only to the separately
+pinned legacy release/profile, never a v2 verification fallback.
 
 ## 3. Measurements: exact scope, bounds and remaining gas gate
 
@@ -117,13 +120,13 @@ explicitly supplied to `runvmx` and a 2,000,000 gas limit.
 
 | Key shape | Live / total | Unique cells | Stored bits | References | Depth | Serialized BOC bytes | Isolated leaf overwrite gas |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Empty | 0 / 0 | 1 | 34 | 0 | 0 | 18 | not applicable |
-| Hash-shaped | 128 / 128 | 256 | 41,694 | 255 | 11 | 6,402 | 5,465 |
-| Hash-shaped | 128 / 384 | 768 | 124,454 | 767 | 12 | 19,096 | 6,665 |
-| Hash-shaped | 0 / 384 | 768 | 124,454 | 767 | 12 | 19,096 | 6,665 |
-| Deep spine | 128 / 128 | 256 | 9,772 | 255 | 128 | 2,435 | 76,865 |
-| Deep spine | 128 / 384 | 521 | 19,833 | 527 | 256 | 4,933 | 153,665 |
-| Deep spine | 0 / 384 | 520 | 19,762 | 527 | 256 | 4,922 | 153,665 |
+| Empty | 0 / 0 | 1 | 33 | 0 | 0 | 18 | not applicable |
+| Hash-shaped | 128 / 128 | 256 | 41,693 | 255 | 11 | 6,402 | 5,465 |
+| Hash-shaped | 128 / 384 | 768 | 124,453 | 767 | 12 | 19,096 | 6,665 |
+| Hash-shaped | 0 / 384 | 768 | 124,453 | 767 | 12 | 19,096 | 6,665 |
+| Deep spine | 128 / 128 | 256 | 9,771 | 255 | 128 | 2,435 | 76,865 |
+| Deep spine | 128 / 384 | 521 | 19,832 | 527 | 256 | 4,933 | 153,665 |
+| Deep spine | 0 / 384 | 520 | 19,761 | 527 | 256 | 4,922 | 153,665 |
 
 These are the wrapper plus its reachable dictionary cells, **excluding** policy,
 pending recovery, Agent root, outer account data and code. Unique cell sharing
@@ -154,8 +157,8 @@ Selected fixture SHA-256 values:
 
 | Fixture | BOC SHA-256 |
 | --- | --- |
-| Hash-shaped 128 / 384 | `46e53c3410dab504084f4adeb67ed74bf62593dc139422e02b97a04fb3670241` |
-| Spine 128 / 384 | `6500bedd13693665cb3e2e7c38935e16f82788b17b2dfb49166357d2d03d6e67` |
+| Hash-shaped 128 / 384 | `fa256b457843534d8271ed872adfbd8ee6c063aabba91cc10b779ef2b233fe8c` |
+| Spine 128 / 384 | `7cbc927fc3e3a6296aebb72538e5c470fdf9db1b1b505c6dd20fbe6ebd53905b` |
 
 The **existing**, unchanged registry's supported-width measurement test passed
 at the design pin (eight controllers, 2,000,000 transaction gas limit):
@@ -181,8 +184,10 @@ require the reviewed implementation. Do not add the baseline and kernel numbers
 to invent a total. Implementation acceptance must measure them through both
 engines with one and eight signers, 128/384 populations, deep/clustered/hashed
 keys, cold and repeated paths, actual storage statistics and CP18/20/21/43.
-Every authority-changing path and withdrawal must stay inside the existing
-80%-of-transaction-gas release ceiling. A bound that cannot withdraw or bump
+Every changed successful path and refused add must stay at or below the existing
+**800,000 gas** release ceiling (`NATIVE_REGISTRY_GAS_CEILING`), with the fixture
+transaction limit fixed at **2,000,000 gas**; do not reinterpret that fixed
+ceiling as 80% of the current limit. A bound that cannot withdraw or bump
 is a failed implementation, not permission to lower the requirement silently.
 
 Measured artifacts are retained outside Git through design review and for at
@@ -193,8 +198,8 @@ scaffolding only, not a registry action implementation.
 
 | Retained artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
-| `measure.py` | 2586 | `bb8f7050cefe146194b5d83887000f8b2b7b293736ae2cdea25684202fe469bf` |
-| `cells-and-kernel.json` | 2716 | `f32d6230ba2e7c4b0e354697374b78f62a497f10543cd13dc7d50aee6b0df4d9` |
+| `measure.py` | 2553 | `7e88b6dc3bb3a4ac03f69826f34e12b90468441ede54e342782e6b5b5462d0bf` |
+| `cells-and-kernel.json` | 2716 | `d45dfd2ae80774e0cb8e7db521305f5c9c5c25292bfa18023aea094975217c84` |
 | `registry-design-baseline-gas.log` | 9453 | `fb15825c0566306686698eee6b37bc546c8e118a867107bcd833c0b65c4f7001` |
 
 ## 4. Action encoding, checks and update order
@@ -237,13 +242,13 @@ Common path, preserving the current replay boundary:
 | Action | Checks after common replay/order checks | State transition |
 | --- | --- | --- |
 | Register Agent | Absent target, existing identity derivation/initial-policy possession and consent | Epoch 1; empty entries; open admission; existing generation/sequence 1 |
-| Add delegation | expected_epoch=current; nonzero digest absent from both logical sets; admission not latched; live<128 and total<384; delegation-purpose authorization | Insert `(current_epoch,false)`; checked live+1,total+1; latch admission if either resulting bound is reached; epoch/policy/recovery unchanged |
-| Withdraw delegation | expected_epoch=current; digest exists, admission_epoch=current, withdrawn=false; same purpose authorization | Flip withdrawn=true; checked live-1; total/epoch/closed flag unchanged; no capacity check and no separate-map insert |
-| Update policy | Current-policy authorization, new-policy possession and shape/threshold rules, epoch<MAX | Epoch+1; new policy, both sets cleared, admission reopened; clear pending recovery even for identical policy bytes |
-| Initiate recovery | Existing recovery authorization/new-policy possession and timelock checks | Pending recovery changes only; epoch, entries and admission flag unchanged |
-| Complete recovery | Exact pending initiation, initiating-policy hash, timelock and recovery authorization; generation and epoch below MAX | Existing generation reset, epoch+1; promote policy; clear recovery and both sets; reopen admission |
+| Add delegation | expected_epoch=current; nonzero digest absent from both logical sets; live<128 and total<384; delegation-purpose authorization | Insert `(current_epoch,false)`; checked live+1,total+1; epoch/policy/recovery unchanged |
+| Withdraw delegation | expected_epoch=current; digest exists and withdrawn=false; same purpose authorization | Flip withdrawn=true; checked live-1; total/epoch unchanged; no capacity check and no separate-map insert |
+| Update policy | Current-policy authorization, new-policy possession and shape/threshold rules, epoch<MAX | Epoch+1; new policy, both sets cleared; clear pending recovery even for identical policy bytes |
+| Initiate recovery | Existing recovery authorization/new-policy possession and timelock checks | Pending recovery changes only; epoch and entries unchanged |
+| Complete recovery | Exact pending initiation, initiating-policy hash, timelock and recovery authorization; generation and epoch below MAX | Existing generation reset, epoch+1; promote policy; clear recovery and both sets |
 | Tombstone | Existing Agent-control authorization, epoch<MAX | Epoch+1; tombstone=true; clear recovery/both sets; no future action except exact replay |
-| Capability operations | Existing owner/threshold, generation/sequence/version checks | No owner-Agent epoch change; Capability root schema remains 1 |
+| Capability operations | Existing owner/threshold, generation/sequence/version checks | No owner-Agent epoch change; Capability schema 2 with otherwise unchanged layout |
 
 A duplicate digest in a **new** add action refuses; identical last-action replay
 succeeds as a no-op. Withdrawing a non-live or already withdrawn digest refuses;
@@ -253,7 +258,7 @@ pretend to bump, or exempt tombstone from checked overflow.
 
 Allocate these currently unused registry errors consistently in FunC, Rust,
 Go and vectors: **2216** epoch mismatch, **2217** epoch exhausted, **2218**
-withdrawn digest, **2219** admission closed/capacity, **2220** digest not live.
+withdrawn digest, **2219** capacity full, **2220** digest not live.
 Existing envelope, duplicate-live-digest and authorization errors keep their
 meanings. Re-check collisions at the implementation base; a collision requires
 reviewed renumbering before vectors, not diverging tables across clients.
@@ -267,8 +272,8 @@ one authenticated account state at one finalized checkpoint, then derive epoch,
 live/withdrawn entries, counts, policy hash and admission epochs from that cell.
 Never join membership at one block to epoch at another.
 
-Rust `NativeRegistryState`/Agent detail gain epoch, counts/closed and typed
-entries. Replace delegation use of generic `native_dict_contains` with a typed
+Rust `NativeRegistryState`/Agent detail gain epoch, counts and typed
+entries. Capability readers require schema 2 without shifting its fields. Replace delegation use of generic `native_dict_contains` with a typed
 lookup returning admission_epoch and withdrawn. Do **not** change that generic
 helper's meaning for Capability version dictionaries. Update the Agent-policy,
 parts/replay and owner-authorization parsers; keep Capability offsets distinct.
@@ -276,18 +281,21 @@ parts/replay and owner-authorization parsers; keep Capability offsets distinct.
 Proposed ai representation (still the one `tos_service_v1` protocol):
 
 - Add AgentStateV1 fields **12** authorization_epoch (u64), **13** repeated
-  DelegationAdmissionV1, **14** admission_closed (bool), **15** encoding_version
+  DelegationAdmissionV1, **15** encoding_version
   (u32, value 2). The digest-sorted entry has fields 1 digest, 2 admission_epoch
-  (u64), 3 withdrawn (bool). Bound the collection at 384 and live entries at 128.
+  (u64), 3 withdrawn (bool). CapabilityStateV1 adds encoding_version at unused
+  field **9**, value 2, for its typed/projection header; its stored layout stays
+  unchanged apart from the schema value. Bound the collection at 384 and live entries at 128.
 - Replace the old digest-only field; reserve its protobuf number 6 rather than
   retain a second mutable membership authority. Use the unused tags listed here in
   both spec and API proto; regenerate Go/schema outputs from spec first.
 - DelegateAgentV1 gains required positive authorization_epoch at field **2**.
   Add WithdrawAgentDelegationV1 fields 1 digest/2 epoch, selected by NativeActionV1
-  oneof field **30** (the current oneof ends at 29). Update purpose dispatch and the
+  oneof field **31**; **30 is reserved** in both proto files. Update dispatch and the
   native wallet/relayer's action-specific preflight from the same finalized read.
 - Portable projections include state encoding version, current epoch, typed
-  entries and the closed flag, with strict canonical ordering. They remain
+  entries and counts, with strict canonical ordering. Field 14 stays unallocated;
+  the never-shipped latch proposal does not reserve it. They remain
   interchange views, never accepted as on-chain authority or next state.
 - `toschain/simplified_native.go` and the shared nativecore decoder return the
   same validated state. Build the real agenttransport epoch-aware adapter from
@@ -304,15 +312,33 @@ code-pinned finalized state and the existing time/purpose checks. Do not retain
 a legacy endpoint decoder as a fallback in the production verifier.
 
 Transport delegation already includes the epoch in its 167-byte encoding;
-its wire bytes do not change. The current production gate remains closed until
-an actual finalized schema-2 registry and real epoch-aware adapter are deployed.
-Remove no gate merely because synthetic Snapshot tests pass. During the existing
-pre-rollout phase, any reviewed legacy test-network exception stays isolated from
-production. On coordinated schema-2 rollout, migrate test fixtures to real epochs
-and retire the obsolete legacy-only adapter/mode; there is no compatibility duty
-to keep old funded identities usable under the new code. Epoch zero is never
-inferred for a failed new decode. Historical schema-1 inspection, if retained,
-cannot feed a production authorization resolver.
+its wire bytes do not change. A network profile selects **one** registry release:
+
+- The December 1–4 release and public testnet use the existing v1 registry and
+  epoch-0 legacy mode. This design is not a gate for that release and does not
+  change its default code/artifact pins.
+- The existing local v1 deployment continues with its reviewed legacy profile
+  until a separately approved v2 local deployment. At that adoption point the
+  v1 fixture population is abandoned, not migrated or used as fallback.
+- An adopted-v2 network accepts **only v2 code hashes**. Remove its v1 hashes
+  from allowlists/daemon Registries and remove epoch-0 legacy mode for it.
+  Separate pinned release tooling may still serve the legacy network; no v2
+  verifier can switch to it after withdrawal, a missing epoch or a failed read.
+- Schema-2 production verification opens only with real finalized state and the
+  real epoch-aware adapter, not synthetic Snapshot tests. Never infer epoch zero
+  for malformed/uninitialized new state. Historical inspection is not authority.
+
+The **Agent** identity preimage byte changes from 1 to **2** at
+`native-registry-code.fc:711` and the mirrored Rust/Go Agent derivation. All
+remaining fields keep their order. The existing Capability identity already
+uses byte 2 (`:737`) and two references; do not add another byte or mistakenly
+shift that layout. Its owner is a new v2 Agent id, so new Capability ids follow
+from that new owner binding. Agent and Capability preimages remain structurally
+distinct (one versus two references), with typed ids and account kinds. Thus v2
+Agent ids differ, not merely their account addresses. Combined with v2-only code-hash
+selection this prevents v1 identity re-registration/lookup from reviving a v2
+withdrawn digest. Recompute all id/StateInit/address/signature vectors; an alias
+from an old id would undo this boundary and is forbidden.
 
 Caching keeps the existing 300-second refresh / 600-second failure bounds. A
 newly observed withdrawal, epoch mismatch or tombstone is a refusal, not an
@@ -327,6 +353,69 @@ Decision 31 stays unchanged: relay per-issuer limits/default channels use verifi
 issuer_chain, uniqueness uses `(credential_id,nonce)`, and explicit lane/default
 issuer keys have distinct namespaces. An epoch bump/withdrawal does not clear
 replay history or accept unverified issuer identity as a shortcut.
+
+### Check ownership and reachable negative controls
+
+| Layer | Owned check / vector construction |
+| --- | --- |
+| On-chain add/withdraw | expected_epoch=current, digest membership/status, independent live/total bounds, existing purpose/sequence/predecessor and atomic save |
+| On-chain writer | A leaf is created with current epoch and every bump clears all leaves; this makes a later withdrawal admission_epoch mismatch unreachable by valid transitions |
+| Strict Rust/Go state readers | Every stored admission_epoch=current, valid statuses/counts/schema/kind. No redundant withdrawal throw/mutant for the writer invariant |
+| Transport and Endpoint verifiers | encoded=admitted=current, live/not withdrawn, network/code/profile/time. Use synthetic authenticated-shaped snapshots to isolate each equality from the strict-reader check |
+| Issuance/preflight | Current encoded epoch; nativewallet journal validation also matches decoded document epoch to the action payload's expected_epoch |
+
+To reach contract error **2216**, use the **current predecessor and valid next
+sequence** with only expected_epoch wrong, for both add and withdrawal. A stale
+predecessor tests 2204, not the epoch guard. For admission-epoch-reader mutants,
+craft the leaf directly; for verifier mutants, inject a snapshot that bypasses
+the real strict reader and makes all other checks pass. Each test names its
+layer and reaches only the intended refusal. Epoch overflow **2217** needs a
+sandbox-seeded MAX state; it is not reachable in a practical live action count,
+but its MAX-1/MAX and exact-replay tests remain mandatory.
+
+### Withdrawal concurrency and operational result
+
+Confirm a withdrawal from a **finalized** post-state: digest withdrawn, or a
+proven intervening epoch bump has cleared the formerly live digest. Merely
+submitting it or seeing a transaction is not revocation confirmation.
+
+Withdraw and update built from the same predecessor in one block serialize:
+whichever executes second gets bad_predecessor. Reconcile the exact submitted
+action first; after confirmed rejection, read the new finalized state, rebuild
+with its current epoch/predecessor/sequence and obtain the normal signature
+approval before resubmission. Never resend blindly or rebuild an unknown send.
+A 2220 after a proven bump, with the former digest absent in that post-state,
+means already revoked and requires no further withdrawal. Error 2220 alone,
+an account-not-found result or a missing read is not that proof. Test both
+orderings and the goal-level confirmation; no silently dropped revocation.
+
+A policy update/controller rotation kills every Endpoint delegation. Nativewallet
+and tosctl must show that result and issue/commit fresh delegation bytes at E+1
+before reconnecting the Endpoint/transport. Do not reuse the old document just
+because the policy bytes/key happen to match after rotation.
+
+Frozen and uninitialized Agent accounts are **refusals**, not ErrUnavailable:
+no stale-pass fallback. A frozen account cannot withdraw until it is legitimately
+unfrozen; an uninitialized account needs registration. Diagnose/fund/recover only
+through the normal approved operator procedure, not an override or epoch reset.
+
+### Required complete-action measurements before implementation merge
+
+Both engines must measure <=800,000 gas, not a sum of kernels, for add 127→128
+live; add 383→384 total with live below 128; every withdrawal position at full
+128/384 with eight signatures and hashed/deep keys; each refused add; and policy
+update, recovery completion and tombstone with all 384 entries populated. Include
+registration/initiation and all existing eight-controller regressions.
+
+Measure signed message bytes against the actual CP43 limit (fixture maximum
+**65,535 bytes**), and require both the fixture and deployment limit. Record
+actual full-account unique cells/bits, CP18 price schedule, last-paid time and
+charged rent. Read freeze_due_limit/delete_due_limit from **CP21 gas parameters**
+for this basechain registry (not from CP18). Measure rent/debt at ordinary ages
+and at either side of the freeze threshold, plus the resulting frozen-state
+refusal. Retain a fee/reserve recommendation from those results; do not guess
+one from BOC size. This remains an implementation merge gate, not a claim that
+new action gas or full account rent has been measured in this document.
 
 ## 6. Caller and release inventory
 
@@ -348,16 +437,19 @@ Tos runtime/build consumers:
 - `tosctl/src/node-control/commands/src/commands/nodectl/native_registry_cmd.rs`:
   CLI action enum/options, builders, finalized preflight and inspect output.
 - Sibling commands `agent_cmd.rs`, `agent_cmd/mldsa44.rs`, `service_actor_cmd.rs`,
-  `service_actor_token_cmd.rs`, `mod.rs`: new registry identity/CLI dispatch.
+  `service_actor_token_cmd.rs`, `mod.rs`: new registry identity/CLI dispatch; wrappers must use the selected network profile.
 - Sibling contracts `lib.rs`, `agent_account_auth.rs`, `agent_account_custody.rs`,
   `agent_account_reconfigure.rs`, `service_actor.rs`, `service_actor_token.rs`:
-  owner-Agent state decoding and code/identity/release pins; do not add epoch
+  classified **proven unchanged for business logic**: they do not own the Agent
+  epoch decoder/transition. Keep runtime source unchanged; regenerate dependent
+  fixture/release pins and run their authorization regressions. Do not add epoch
   bumps to ordinary Capability or Agent-account wallet operations.
 - `scripts/build-tos-service-native-registry-v1.sh`,
   `embed-tos-service-native-registry-v1.sh`, `tos_service_native_registry_release.py`,
   `tos_service_native_registry_pq.py` and corresponding `test_*` scripts:
   regenerate the reviewed contract release, not a stale frozen BOC.
-- `CMakeLists.txt`, release artifact inventory and source-guard/hygiene/build
+- `CMakeLists.txt`, `crypto/CMakeLists.txt`,
+  `assembly/nix/tosctl/{inputs.json,package.nix}`, release artifact inventory and source-guard/hygiene/build
   workflows: update the registry artifact/version inputs and validation guards.
   Use a new contract release revision (v2) rather than silently replacing a
   frozen v1 artifact. The application protocol remains tos_service_v1.
@@ -380,6 +472,40 @@ Ai direct runtime readers/builders (paths relative to ai):
 - `spec/proto/tos/service/v1/native.proto`, `protocol/api/tos/service/v1/native.proto`,
   generated `protocol/gen/tos/service/v1/native.pb.go`, generated schemas and
   native/transport/endpoint vector generators and their consumers.
+
+Additional caller/pin inventory from re-review (all searched/read):
+
+- `protocol/pkg/agenttransport/delegation.go`: issuance encoding and current-epoch
+  check; `messenger/internal/canon/domains.go`: explicit Endpoint v3 domain.
+- `messenger/pkg/daemon/config.go`: validate **all** Registries, Chain() and the
+  selected NativeRegistryCodeHash. On v2 adoption it is not enough to change only
+  the selected hash while accepting v1 in the verifier's complete registry set.
+- `messenger/docs/daemon-config.example.json`,
+  `gateway/docs/provider-quote-profile.example.json`, and active
+  `spec/deployments/*.json`: reviewed network-specific code/identity/profile pins.
+  Historical records stay historical, not silently rewritten as new deployments.
+- `protocol/pkg/buyersdk/tosctl_init.go`,
+  `provider/pkg/servicebridge/{setup_tosctl,controller_probe}.go`,
+  `protocol/pkg/mldsa44/tosctl.go`: selected release/CLI compatibility, decoding,
+  signing preflight and re-delegation after policy rotation.
+- `execution/internal/actionauthoritytest`, `gateway/internal/actionauthoritytest`,
+  `messenger/internal/actionauthoritytest`: independent signature/state helpers.
+- `messenger/internal/vectors/testdata/{vectors,adversarial-corpus}.json`,
+  `vectors_test.go`, corpus builder/verify tests and other relay vector consumers.
+- `protocol/cmd/agenttransport-vectors`,
+  `protocol/cmd/agenttransport-reachability-vectors`,
+  `spec/test-vectors/agent-transport-reachability-v1.json`, and
+  `spec/scripts/reproduce-agent-transport-reachability-v1.py`.
+- Nativewallet transport work at separate branch
+  `feat/service-wallet-transport-delegation`, inspected commit
+  `0ef1d5a3b6475d5b3d076f03d23c6cf934767703` (not yet on the ai pin):
+  `protocol/pkg/nativewallet/transport.go:219,355` must both build expected_epoch
+  and compare the journaled action's epoch with the decoded delegation and fresh
+  finalized state. Also update its transport/storage tests and
+  `protocol/cmd/tos-service-wallet/{main,transport,transport_test}.go`.
+  Never rewrite an old signed journal draft to add an epoch: reconcile its exact
+  bytes, refuse incompatible drafts and obtain a fresh approved action if needed.
+  Re-check this inventory after that branch merges.
 
 Supporting tos scripts found by search: `agent-account-mldsa44-strict-rehearsal.py`,
 `agent-economy-composed-e2e.py`, `prediction-market-v1-lifecycle-e2e.py`,
@@ -438,7 +564,7 @@ Required vector sequences:
    a claimed defense against the Agent's own authority.
 6. Epoch 0/MAX-1/MAX, stale/future expected epoch, overflow on each bump and
    generation/sequence overflow; exact-last-action and older replays.
-7. 128 live, then withdrawal: admission remains latched until bump; separately
+7. 128 live, then withdrawal: replacement add succeeds at 127 if total<384; separately
    churn below 128 to total 384. Construct 128 live/256 withdrawn, withdraw at
    full total, then 0 live/384 withdrawn. Add refuses; update/complete recovery
    clears and admits again. No early bump/withdraw failure due to count.
@@ -448,8 +574,10 @@ Required vector sequences:
 9. Endpoint epoch/digest vectors and real finalized adapter; healthy cache
    revocation, unavailable-read cutoff, wrong registry/network and production
    epoch-zero refusals. Decision-31 replay/namespace/isolation tests stay green.
-10. Capability owner authorization/version/transfer/tombstone regression vectors
-    preserve their current sequence/generation semantics without Agent epoch bumps.
+10. Capability schema-2 owner authorization/version/transfer/tombstone vectors
+    preserve their current layout, sequence/generation and no-Agent-bump semantics.
+    Cover withdraw/update both orders in one block and finalized revoked/already-
+    revoked confirmation; frozen/uninitialized refuses cannot use stale fallback.
 
 Bound/resource gate: eight-controller and one-controller actions at all four
 populations and adversarial key shapes, every withdrawal position, registration,
@@ -461,12 +589,18 @@ Clearing all references is tested for actual post-transaction storage reduction.
 
 Sensitivity controls must each fail a named assertion, not collection/compile
 errors: omit each epoch bump; bump on add/withdraw/initiate; wrap/saturate MAX;
-check overflow before exact replay; preserve either set on bump; ignore expected
-or admission epoch; permit withdrawn re-add; clear the admission latch on
-withdraw; add a capacity check to withdrawal; weaken each 128/384 bound; drop
+check overflow before exact replay; preserve either set on bump; ignore
+expected_epoch on chain with a fresh predecessor; ignore stored admission epoch
+in a strict-reader synthetic BOC; ignore encoded/admitted/current equality in a
+verifier-only synthetic Snapshot; permit withdrawn re-add; add a capacity check to withdrawal; weaken each 128/384 bound; drop
 stored counts or leaf-shape checks; accept legacy schema/epoch zero in production;
 join two checkpoints; skip endpoint canonical epoch binding; treat observed
-revocation as ErrUnavailable; leave a CLI/relay caller on digest-only preflight.
+revocation as ErrUnavailable; leave a CLI/relay caller on digest-only preflight. Add separate controls where
+withdrawal changes total_count or its registry transaction emits any out-action;
+neither is allowed (wallet change elsewhere in the transport graph is separate).
+Add identity-byte-1, schema-1 Capability, mixed Registries (selected v2 but accepted
+v1), and legacy fallback under an adopted-v2 profile controls. Isolate these from
+other identity checks with matching ids/policy/network for the intended branch.
 Keep independent red controls for live cap, total cap and their reset.
 
 Fuzz small valid action sequences against a simple Go reference set model and
@@ -474,38 +608,53 @@ the real contract: after every result compare the complete state and permitted
 future actions, not just the final count. Shrink failures; persist the seed and
 minimal failing sequence. Counter/epoch mutations include every boundary.
 
-## 8. Rollout and migration boundary
+## 8. Local adoption, release boundary and no migration
 
-1. Non-author design approval; settle the sticky admission interpretation and
-   freeze action/error/field numbers. No implementation in this PR.
-2. Coordinated normative ai schema/vector plan, FunC/Rust release implementation,
-   Go mirror/projection/readers and both delegation verifiers/builders. Keep the
-   production transport gate closed while any layer is incomplete.
-3. Generate and pin the new frozen contract release; source/artifact checks,
-   spec/schema/boundary checks, focused Rust/Go suites, Go race tests, mutants
-   and source guards. Use `GOWORK=off` for worktree Go/make commands.
-4. On a separately approved pre-launch **local** namespace, deploy new registry
-   identities with fresh registration nonces. Do not reset the existing local
-   bridge/USDT network or operate on existing funded Agents for this rehearsal.
-   Run the vector sequences as real finalized transactions; retain per-step
-   BOCs/verifier results and reconstruct on independent reference endpoints.
-5. Only after measured full-action gas/space limits, real epoch-aware transport
-   admission, endpoint revocation and multi-client vectors pass may the production
-   registry gate open. Public deployment still needs its own authorization.
+1. Non-author design approval first. No contract/client implementation here.
+2. Coordinated normative ai schema/vector changes and FunC/Rust/Go implementation:
+   oneof 31, Agent identity preimage byte 2, both state kinds schema 2, count-only bounds,
+   and explicit layer ownership. Correct the transport spec's “until next bump”
+   wording to “while full” and its approximate storage figure to **15.2 KiB of
+   bits** (plus cell overhead/policy/etc). Record Endpoint v3 as a deliberate
+   canonical-domain change in `AGENT_NATIVE_MESSENGER_V1.md` section 9.2.
+3. Complete numeric gas/rent/message gates above, independent vectors, mutants,
+   spec/schema/boundary checks, focused Go/Rust/race suites and source guards.
+   Use `GOWORK=off` for worktree Go/make. No December v1 release pin changes.
+4. Until the separate local v2 GO, existing local v1 Agents/Capabilities and
+   dependent fixtures continue on their original legacy release. Do not reset
+   the existing bridge/USDT network to make this rehearsal convenient.
+5. On local adoption deploy new v2 identities and fixtures, switch that network's
+   code-hash selection to v2 only and remove legacy epoch-0/v1 acceptance for it.
+   Reconstruct real action sequences and Endpoint/transport refusal on independent
+   references; archive per step. Check daemon Registries cannot select a v1
+   alternative for the same logical lookup. No public activation is authorized.
 
-There is **no automatic in-place migration from schema 1**: it has no known
-monotonic authorization epoch, so setting an existing identity to 1 would invent
-history. Code changes alone alter the account address but **do not** alter the
-Agent id (which depends on registration nonce, policy and network). Therefore a
-fresh code address with the same Agent id is not an acceptable “new” epoch-1
-identity; use a fresh nonce/id, or a future separately reviewed migration that
-carries a proven monotonic epoch. No alias silently maps old delegations onto it.
+Explicit v1 fixture populations to leave unchanged until local adoption, then
+abandon rather than migrate:
 
-Any future schema-2 migration must preserve or explicitly advance the existing
-u64 epoch and exact state linkage, never reset/wrap it. There is no epoch-lowering
-rollback. If rollout fails, keep production disabled and use the original
-namespace for its existing work; do not reinterpret new-format state with an
-old reader. No backward-compatibility product path is introduced.
+| Population | Existing artifacts/consumers; v2 handling |
+| --- | --- |
+| Local T10/T18 Agents and Capabilities | Original USDC, refusal-namespace and USDT provider Agent/Capability/offer deployments; service-actor/native/token contract fixture worlds. Preserve their run records and v1 pins; create new identities/addresses for v2, do not repoint old offers |
+| Agent-account owner/control fixtures | `agent_account_mldsa44_sandbox.rs`, strict variant, `agent-economy-composed-e2e.py`, strict rehearsal, paid-demand fixture and ai agentgift/native-relay testdata. Preserve prior on-chain state; rebuild owner Agent bindings/permissions in fresh v2 fixtures |
+| Guarantor fixtures | `agent-guarantor-signature-vector.json`, ai agentguarantor authority tests, toschain guarantor resolver and servicebridge action-authority fixtures. Regenerate ids, signatures, registry-code pins and authority proofs; never alias the old identity |
+| Messenger/transport fixtures | Existing Endpoint v2/epoch-0 local documents, contact/directory/daemon/vectors and nativewallet transport journals. Abandon/reissue v3 Endpoint and current-epoch transport delegations on fresh v2 identities; no journal edit to turn an old draft into new authority |
+
+The local adoption receipt must enumerate actual object/account ids from the
+retained deployment records for these populations and list the services/configs
+using them before switching; this design is not permission to delete their keys,
+funds or evidence. Abandonment means no v2 authorization/alias, not erasure.
+
+The December 1–4 release/public testnet explicitly remain v1 legacy under decision
+33. Their pinned old bundle stays separate from this v2 local rollout. A network
+adopts one profile at a time; a code list containing both v1 and v2 is invalid for
+an adopted-v2 network. No v1 fallback after withdrawal or read failure.
+
+No in-place migration is required pre-launch. V2 registration derives ids with
+identity version byte 2; keep fresh registration nonces as well. An old v1 id is
+never registered as a v2 id, and there is no alias mapping its old delegation to
+v2. Future schema migrations of existing v2 state must preserve or advance its
+proven u64 epoch and linkage, never reset/saturate/wrap it. Do not downgrade an
+adopted-v2 network to legacy acceptance to recover a rejected delegation.
 
 ## Appendix: frozen search-hit inventory
 
@@ -636,3 +785,35 @@ spec/docs/AGENT_NATIVE_MESSENGER_V1.md
 spec/docs/MESSENGER_TRANSPORT_V2.md
 spec/proto/tos/service/v1/native.proto
 ```
+
+### Re-review additions at the ai main pin
+
+```text
+protocol/pkg/agenttransport/delegation.go
+messenger/internal/canon/domains.go
+messenger/pkg/daemon/config.go
+messenger/docs/daemon-config.example.json
+gateway/docs/provider-quote-profile.example.json
+protocol/pkg/buyersdk/tosctl_init.go
+provider/pkg/servicebridge/setup_tosctl.go
+provider/pkg/servicebridge/controller_probe.go
+protocol/pkg/mldsa44/tosctl.go
+execution/internal/actionauthoritytest/actionauthoritytest.go
+gateway/internal/actionauthoritytest/actionauthoritytest.go
+messenger/internal/actionauthoritytest/actionauthoritytest.go
+messenger/internal/vectors/testdata/vectors.json
+messenger/internal/vectors/testdata/adversarial-corpus.json
+messenger/internal/vectors/vectors_test.go
+messenger/internal/vectors/corpus_builders_test.go
+messenger/internal/vectors/corpus_verify_test.go
+protocol/cmd/agenttransport-vectors
+protocol/cmd/agenttransport-reachability-vectors
+spec/test-vectors/agent-transport-reachability-v1.json
+spec/scripts/reproduce-agent-transport-reachability-v1.py
+```
+
+Tos additions: `assembly/nix/tosctl/inputs.json`,
+`assembly/nix/tosctl/package.nix`, `crypto/CMakeLists.txt`.
+Deployment-record selection is the active `spec/deployments/*.json` glob;
+archived records retain their original provenance. Separate-branch nativewallet
+transport files and the inspected pin are listed above, not claimed to be main.
