@@ -1331,6 +1331,31 @@ TEST(WalletIndex, AnEntryDroppedAsMalformedDoesNotHideItsCandidateDeferredInTheS
 
 namespace {
 
+// A timeout is only a broken-handshake watchdog, never how ordering advances.
+// Keep it well beyond thermal pauses; each event must actually be signalled.
+constexpr auto kQueueTestWatchdog = std::chrono::hours(1);
+
+class QueueEvent {
+ public:
+  void signal() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      signalled_ = true;
+    }
+    changed_.notify_all();
+  }
+
+  void wait() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    ASSERT_TRUE(changed_.wait_for(lock, kQueueTestWatchdog, [this] { return signalled_; }));
+  }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable changed_;
+  bool signalled_ = false;
+};
+
 struct QueueLog {
   std::mutex mutex;
   std::vector<int> recorded;
@@ -1342,39 +1367,32 @@ struct QueueLog {
 }  // namespace
 
 TEST(WalletIndexQueue, PushingNeverWaitsForTheWork) {
-  QueueLog log;
-  std::atomic<bool> release{false};
-  {
-    tos_wallet_index::BoundedWorkQueue<int, int> queue(
-        8,
-        [&](const std::vector<int> &ids) -> bool {
-          std::lock_guard<std::mutex> lock(log.mutex);
-          log.recorded.insert(log.recorded.end(), ids.begin(), ids.end());
-          return true;
-        },
-        [&](int &) {
-          while (!release.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-          }
-        });
-    auto started = std::chrono::steady_clock::now();
-    for (int i = 0; i < 4; ++i) {
-      ASSERT_TRUE(queue.push(i, i));
-    }
-    auto took = std::chrono::steady_clock::now() - started;
-    // The worker is stuck on the first item; pushing did not wait for it.
-    ASSERT_TRUE(took < std::chrono::milliseconds(50));
-    release = true;
+  QueueEvent started, release;
+  tos_wallet_index::BoundedWorkQueue<int, int> queue(
+      8, [](const std::vector<int> &) { return true; },
+      [&](int &) {
+        started.signal();
+        release.wait();
+      });
+  ASSERT_TRUE(queue.push(0, 0));
+  started.wait();
+  // All pushes return while the worker is known to be held, even if the
+  // scheduler pauses this thread between any of them.
+  for (int i = 1; i < 4; ++i) {
+    ASSERT_TRUE(queue.push(i, i));
   }
+  release.signal();
 }
 
 TEST(WalletIndexQueue, WorkIsRecordedFirstAndDoneInOrder) {
   QueueLog log;
+  QueueEvent recording, allow_record, done;
   {
     tos_wallet_index::BoundedWorkQueue<int, int> queue(
         64,
         [&](const std::vector<int> &ids) -> bool {
-          std::this_thread::sleep_for(std::chrono::milliseconds(2));
+          recording.signal();
+          allow_record.wait();
           std::lock_guard<std::mutex> lock(log.mutex);
           log.recorded.insert(log.recorded.end(), ids.begin(), ids.end());
           return true;
@@ -1385,19 +1403,20 @@ TEST(WalletIndexQueue, WorkIsRecordedFirstAndDoneInOrder) {
             log.processed_before_recorded = true;
           }
           log.processed.push_back(item);
+          if (log.processed.size() == 40) {
+            done.signal();
+          }
         });
     for (int i = 0; i < 40; ++i) {
       ASSERT_TRUE(queue.push(i, i));
     }
-    for (int spin = 0; spin < 400; ++spin) {
-      {
-        std::lock_guard<std::mutex> lock(log.mutex);
-        if (log.processed.size() == 40) {
-          break;
-        }
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    recording.wait();
+    {
+      std::lock_guard<std::mutex> lock(log.mutex);
+      ASSERT_TRUE(log.processed.empty());
     }
+    allow_record.signal();
+    done.wait();
   }
   ASSERT_TRUE(!log.processed_before_recorded);
   ASSERT_EQ(log.processed.size(), static_cast<size_t>(40));
@@ -1408,8 +1427,7 @@ TEST(WalletIndexQueue, WorkIsRecordedFirstAndDoneInOrder) {
 
 TEST(WalletIndexQueue, AFullQueueDropsTheWorkButStillRecordsIt) {
   QueueLog log;
-  std::atomic<bool> release{false};
-  std::atomic<bool> first_started{false};
+  QueueEvent first_started, release, done;
   {
     tos_wallet_index::BoundedWorkQueue<int, int> queue(
         2,
@@ -1419,31 +1437,26 @@ TEST(WalletIndexQueue, AFullQueueDropsTheWorkButStillRecordsIt) {
           return true;
         },
         [&](int &item) {
-          first_started = true;
-          while (!release.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-          }
+          first_started.signal();
+          release.wait();
           std::lock_guard<std::mutex> lock(log.mutex);
           log.processed.push_back(item);
+          if (log.processed.size() == 3) {
+            done.signal();
+          }
         });
     ASSERT_TRUE(queue.push(0, 0));
-    while (!first_started.load()) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
+    first_started.wait();
     // One item is being worked on; two may wait; the next is dropped.
     ASSERT_TRUE(queue.push(1, 1));
     ASSERT_TRUE(queue.push(2, 2));
     ASSERT_TRUE(!queue.push(3, 3));
     ASSERT_EQ(queue.dropped(), static_cast<size_t>(1));
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    release = true;
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    release.signal();
+    done.wait();
   }
-  // The dropped item was never done, but its id was recorded, so it is not lost.
-  ASSERT_TRUE(std::find(log.processed.begin(), log.processed.end(), 3) == log.processed.end());
-  for (int id = 0; id < 4; ++id) {
-    ASSERT_TRUE(std::find(log.recorded.begin(), log.recorded.end(), id) != log.recorded.end());
-  }
+  ASSERT_EQ(log.processed, (std::vector<int>{0, 1, 2}));
+  ASSERT_EQ(log.recorded, (std::vector<int>{0, 1, 2, 3}));
 }
 
 TEST(WalletIndexQueue, DropWarningIsDueAtMostOncePerInterval) {
@@ -1478,7 +1491,7 @@ TEST(WalletIndexQueue, DropWarningIsDueAtMostOncePerInterval) {
 
 TEST(WalletIndexQueue, WorkLeftAtShutdownStaysRecordedAndUndone) {
   QueueLog log;
-  std::atomic<bool> release{false};
+  QueueEvent first_started, release;
   {
     tos_wallet_index::BoundedWorkQueue<int, int> queue(
         8,
@@ -1488,21 +1501,23 @@ TEST(WalletIndexQueue, WorkLeftAtShutdownStaysRecordedAndUndone) {
           return true;
         },
         [&](int &item) {
-          while (!release.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-          }
+          first_started.signal();
+          release.wait();
           std::lock_guard<std::mutex> lock(log.mutex);
           log.processed.push_back(item);
         });
-    for (int i = 0; i < 5; ++i) {
-      queue.push(i, i);
+    ASSERT_TRUE(queue.push(0, 0));
+    first_started.wait();
+    for (int i = 1; i < 5; ++i) {
+      ASSERT_TRUE(queue.push(i, i));
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    release = true;
+    // The same stop request as destruction, completed before item 0 may
+    // finish. No scheduler can let the worker drain items 1 through 4 first.
+    queue.request_stop();
+    release.signal();
   }
-  // Shutdown finished the item in hand and left the rest to recovery.
-  ASSERT_TRUE(log.processed.size() < 5);
-  ASSERT_EQ(log.recorded.size(), static_cast<size_t>(5));
+  ASSERT_EQ(log.processed, (std::vector<int>{0}));
+  ASSERT_EQ(log.recorded, (std::vector<int>{0, 1, 2, 3, 4}));
 }
 
 TEST(WalletIndex, MarkingQueuedBlocksDoesNotJoinAnOpenBatch) {
@@ -1523,29 +1538,37 @@ TEST(WalletIndex, MarkingQueuedBlocksDoesNotJoinAnOpenBatch) {
 TEST(WalletIndexQueue, NothingIsDoneUntilItsRecordSucceeds) {
   std::atomic<int> attempts{0};
   std::atomic<int> processed{0};
-  std::atomic<bool> allow{false};
+  QueueEvent retrying, allow_record, done;
   {
     tos_wallet_index::BoundedWorkQueue<int, int> queue(
         8,
         [&](const std::vector<int> &) -> bool {
-          attempts++;
-          if (attempts.load() == 2) {
+          auto attempt = ++attempts;
+          if (attempt == 1) {
+            return false;
+          }
+          if (attempt == 2) {
             throw std::runtime_error("recorder failed");
           }
-          return allow.load();
+          retrying.signal();
+          allow_record.wait();
+          return true;
         },
-        [&](int &) { processed++; });
+        [&](int &) {
+          if (++processed == 2) {
+            done.signal();
+          }
+        });
     queue.push(1, 1);
     queue.push(2, 2);
-    // Recording keeps failing (once by throwing): the work waits, and is retried.
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
-    ASSERT_TRUE(attempts.load() >= 2);
+    // Observe a retry after both a false return and a thrown failure, holding
+    // the successful record until the not-yet-processed assertion is checked.
+    retrying.wait();
+    ASSERT_TRUE(attempts.load() >= 3);
     ASSERT_EQ(processed.load(), 0);
     ASSERT_TRUE(!queue.degraded());
-    allow = true;
-    for (int spin = 0; spin < 600 && processed.load() < 2; ++spin) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    allow_record.signal();
+    done.wait();
     ASSERT_EQ(processed.load(), 2);
   }
 }
@@ -1553,12 +1576,14 @@ TEST(WalletIndexQueue, NothingIsDoneUntilItsRecordSucceeds) {
 TEST(WalletIndexQueue, AnIdThatCannotBeRecordedMarksTheQueueDegraded) {
   std::atomic<int> degraded_calls{0};
   std::atomic<bool> allow{false};
+  QueueEvent persisted;
   {
     // Room for one id awaiting record; recording blocked until released.
     tos_wallet_index::BoundedWorkQueue<int, int> queue(
         8, [&](const std::vector<int> &) -> bool { return allow.load(); }, [](int &) {},
         [&] {
           degraded_calls++;
+          persisted.signal();
           return true;
         },
         1);
@@ -1567,14 +1592,11 @@ TEST(WalletIndexQueue, AnIdThatCannotBeRecordedMarksTheQueueDegraded) {
     queue.push(2, 2);
     queue.push(3, 3);
     ASSERT_TRUE(queue.degraded());
-    // Persisted in the background, once.
-    for (int spin = 0; spin < 300 && degraded_calls.load() == 0; ++spin) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    ASSERT_EQ(degraded_calls.load(), 1);
+    persisted.wait();
     allow = true;
+    ASSERT_TRUE(queue.wait_recorded(kQueueTestWatchdog));
   }
+  ASSERT_EQ(degraded_calls.load(), 1);
 }
 
 TEST(WalletIndexQueue, IdsStillUnrecordedAtShutdownMarkTheQueueDegraded) {
@@ -1587,7 +1609,6 @@ TEST(WalletIndexQueue, IdsStillUnrecordedAtShutdownMarkTheQueueDegraded) {
           return true;
         });
     queue.push(1, 1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
   ASSERT_EQ(degraded_calls.load(), 1);
 }
@@ -1685,44 +1706,50 @@ TEST(WalletIndex, ALostBlockKeepsTheIndexIncompleteUntilRebuilt) {
 TEST(WalletIndexQueue, OverflowNeverMakesPushWaitForPersistence) {
   std::atomic<bool> release{false};
   std::atomic<int> persisted{0};
+  QueueEvent persisting, allow_persist;
   {
     tos_wallet_index::BoundedWorkQueue<int, int> queue(
         8, [&](const std::vector<int> &) -> bool { return release.load(); }, [](int &) {},
         [&] {
-          // A slow disk.
-          std::this_thread::sleep_for(std::chrono::milliseconds(300));
+          persisting.signal();
+          allow_persist.wait();
           persisted++;
           return true;
         },
         1);
     queue.push(1, 1);
-    auto started = std::chrono::steady_clock::now();
-    for (int i = 2; i < 6; ++i) {
+    queue.push(2, 2);
+    persisting.wait();
+    // Persistence is held until these pushes have returned; a latency
+    // threshold cannot establish that ordering under process suspension.
+    for (int i = 3; i < 6; ++i) {
       queue.push(i, i);
     }
-    ASSERT_TRUE(std::chrono::steady_clock::now() - started < std::chrono::milliseconds(50));
     ASSERT_TRUE(queue.degraded());
     release = true;
-    ASSERT_TRUE(queue.wait_recorded(std::chrono::milliseconds(3000)));
+    allow_persist.signal();
+    ASSERT_TRUE(queue.wait_recorded(kQueueTestWatchdog));
   }
   ASSERT_EQ(persisted.load(), 1);
 }
 
 TEST(WalletIndexQueue, ADegradedStateThatFailsToPersistIsRetried) {
   std::atomic<int> tries{0};
+  QueueEvent persisted;
   {
     tos_wallet_index::BoundedWorkQueue<int, int> queue(
         8, [](const std::vector<int> &) -> bool { return false; }, [](int &) {},
         [&] {
-          tries++;
-          return tries.load() >= 3;
+          if (++tries >= 3) {
+            persisted.signal();
+            return true;
+          }
+          return false;
         },
         1);
     queue.push(1, 1);
     queue.push(2, 2);  // no room to record: degraded
-    for (int spin = 0; spin < 400 && tries.load() < 3; ++spin) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    persisted.wait();
   }
   ASSERT_TRUE(tries.load() >= 3);
 }
@@ -1730,29 +1757,31 @@ TEST(WalletIndexQueue, ADegradedStateThatFailsToPersistIsRetried) {
 TEST(WalletIndexQueue, APausedQueueRecordsButDoesNotProcess) {
   std::atomic<int> recorded{0};
   std::atomic<int> processed{0};
+  QueueEvent done;
   tos_wallet_index::BoundedWorkQueue<int, int> queue(
       8,
       [&](const std::vector<int> &ids) -> bool {
         recorded += static_cast<int>(ids.size());
         return true;
       },
-      [&](int &) { processed++; }, nullptr, 0, true);
+      [&](int &) {
+        if (++processed == 2) {
+          done.signal();
+        }
+      },
+      nullptr, 0, true);
   queue.push(1, 1);
   queue.push(2, 2);
-  ASSERT_TRUE(queue.wait_recorded(std::chrono::milliseconds(2000)));
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  ASSERT_TRUE(queue.wait_recorded(kQueueTestWatchdog));
   ASSERT_EQ(recorded.load(), 2);
   ASSERT_EQ(processed.load(), 0);
   queue.resume();
-  for (int spin = 0; spin < 200 && processed.load() < 2; ++spin) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+  done.wait();
   ASSERT_EQ(processed.load(), 2);
   // Paused again, as before an abrupt exit: new blocks are still recorded.
   queue.pause();
   queue.push(3, 3);
-  ASSERT_TRUE(queue.wait_recorded(std::chrono::milliseconds(2000)));
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  ASSERT_TRUE(queue.wait_recorded(kQueueTestWatchdog));
   ASSERT_EQ(recorded.load(), 3);
   ASSERT_EQ(processed.load(), 2);
 }
