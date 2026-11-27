@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Run the vote controls with a measured SIGSTOP while their futures are pending.
+"""Run the tosctl pause controls with a measured SIGSTOP while their futures are pending.
 
-Build the commands test binary separately under the build/thermal guard, then pass
-its path. This script never builds or signals any process it did not start.
+Two suites: the vote controls (the commands crate's test binary, the default) and the
+elections runner controls (`--suite elections-runner`, the elections crate's test
+binary). Build the test binary separately, then pass its path. This script never
+builds or signals any process it did not start.
 """
 
 import argparse
@@ -16,11 +18,27 @@ import subprocess
 import time
 from pathlib import Path
 
-CASES = (
-    "elector_control_tests::stake_confirmation_uses_one_snapshot_per_poll_and_propagates_upgrade",
-    "elector_control_tests::confirmation_refuses_another_election_or_a_partial_invalid_response",
-    "proposal_control_tests::offer_upgrade_errors_never_fall_back_to_public_proposals",
-)
+# suite -> (named tests, the gate's environment variable, its rendezvous line)
+SUITES = {
+    "vote-cmd": (
+        (
+            "elector_control_tests::stake_confirmation_uses_one_snapshot_per_poll_and_propagates_upgrade",
+            "elector_control_tests::confirmation_refuses_another_election_or_a_partial_invalid_response",
+            "proposal_control_tests::offer_upgrade_errors_never_fall_back_to_public_proposals",
+        ),
+        "VOTE_CMD_PAUSE_GATE",
+        b"VOTE_CMD_PAUSE_READY",
+    ),
+    "elections-runner": (
+        (
+            "runner_tests::the_runner_loop_propagates_the_named_upgrade_error_before_publishing",
+            "runner_tests::one_runner_tick_requests_exactly_one_elector_snapshot",
+            "runner_tests::test_run_loop_cancellation",
+        ),
+        "ELECTIONS_RUNNER_PAUSE_GATE",
+        b"ELECTIONS_RUNNER_PAUSE_READY",
+    ),
+}
 LIMIT = 4 * 1024 * 1024
 
 
@@ -46,8 +64,8 @@ def receive(process, output, marker, deadline):
                 raise RuntimeError("test output limit exceeded")
 
 
-def run(binary, name, seconds, out):
-    env = dict(os.environ, VOTE_CMD_PAUSE_GATE="1")
+def run(binary, name, seconds, out, gate, ready):
+    env = dict(os.environ, **{gate: "1"})
     output = bytearray()
     process = subprocess.Popen(
         [str(binary), "--exact", name, "--nocapture", "--test-threads=1"],
@@ -59,7 +77,7 @@ def run(binary, name, seconds, out):
     )
     deadline = time.monotonic() + 120
     try:
-        receive(process, output, b"VOTE_CMD_PAUSE_READY", deadline)
+        receive(process, output, ready, deadline)
         os.kill(process.pid, signal.SIGSTOP)
         stop_deadline = time.monotonic() + 2
         while process_state(process.pid) != "T":
@@ -118,10 +136,16 @@ def main():
     parser.add_argument("--test-binary", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--stop-seconds", type=float, default=10)
-    parser.add_argument("--case", choices=CASES)
+    parser.add_argument("--suite", choices=sorted(SUITES), default="vote-cmd")
+    parser.add_argument(
+        "--case", choices=[case for cases, _, _ in SUITES.values() for case in cases]
+    )
     args = parser.parse_args()
     if not 10 <= args.stop_seconds <= 60:
         parser.error("--stop-seconds must be in [10, 60]")
+    cases, gate, ready = SUITES[args.suite]
+    if args.case and args.case not in cases:
+        parser.error(f"--case {args.case} is not in the {args.suite} suite")
     binary = args.test_binary.resolve(strict=True)
     listing = subprocess.run(
         [str(binary), "--list"], check=True, capture_output=True, text=True, timeout=30
@@ -130,15 +154,16 @@ def main():
         line.removesuffix(": test") for line in listing.splitlines() if line.endswith(": test")
     ]
     selected = []
-    for case in [args.case] if args.case else CASES:
+    for case in [args.case] if args.case else cases:
         matches = [name for name in names if name.endswith(case)]
         if len(matches) != 1:
             raise RuntimeError(f"expected exactly one test matching {case}")
         selected.append(matches[0])
     args.out.mkdir(parents=True, exist_ok=False)
-    results = [run(binary, name, args.stop_seconds, args.out) for name in selected]
+    results = [run(binary, name, args.stop_seconds, args.out, gate, ready) for name in selected]
     receipt = dict(
         status="PASS",
+        suite=args.suite,
         binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
         results=results,
     )
