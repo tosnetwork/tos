@@ -1463,6 +1463,37 @@ def gsl_source_problems(
     return problems
 
 
+def appimage_gsl_problems(workflow_name: str, workflow: str, bundler: str) -> list[str]:
+    """Why an AppImage build could bundle a GSL other than the published source.
+
+    The AppImages carry GSL's shared libraries, while the release publishes the
+    source of one libgsl-dev version only, so the build must refuse any other
+    before it bundles them.
+    """
+    problems: list[str] = []
+    version = NodeBinaryReleaseTest.GSL_PACKAGE_VERSION
+    # The pinned version is the one that provides these sonames; bundling
+    # another GSL is a change to the pin as well.
+    for library in ("libgsl.so.27", "libgslcblas.so.0"):
+        if f"/lib/$ARCH-linux-gnu/{library} \\\n" not in bundler:
+            problems.append(f"the AppImage script no longer bundles {library}; revisit the GSL pin")
+    check = workflow.find("    - name: Check the GSL package against the published source\n")
+    install = workflow.find("    - name: Install system libraries\n")
+    bundle = workflow.find("        ./create-appimages.sh ")
+    if not 0 <= install < check < bundle:
+        problems.append(f"{workflow_name} does not check the GSL package before it bundles GSL")
+    step = workflow[check : workflow.find("\n\n", check)] if check >= 0 else ""
+    for line in (
+        f"        version={version}\n",
+        "        installed=$(dpkg-query -W -f '${source:Version}' libgsl-dev)\n",
+        '        if [ "$installed" != "$version" ]; then\n',
+        "          exit 1\n",
+    ):
+        if line not in step:
+            problems.append(f"{workflow_name} lost {line.strip()!r}")
+    return problems
+
+
 def node_release_problems(config: dict[str, Any], workflow: str, script: str) -> list[str]:
     """Why the published node binaries would not be the node-recipe build.
 
@@ -1859,6 +1890,45 @@ class NodeBinaryReleaseTest(unittest.TestCase):
             ),
             [],
         )
+
+    def test_the_appimages_bundle_only_the_published_gsl(self) -> None:
+        config = json.loads((HERE / "release-artifacts.json").read_text())
+        workflows = HERE.parent / ".github" / "workflows"
+        bundler = (HERE.parent / "assembly" / "appimage" / "create-appimages.sh").read_text()
+        names = [
+            entry["workflow"]
+            for entry in config["build_workflows"]
+            if entry["artifact"] in PqToolPackagingTest.LINUX_ARTIFACTS
+        ]
+        self.assertEqual(len(names), len(PqToolPackagingTest.LINUX_ARTIFACTS))
+        check = "    - name: Check the GSL package against the published source\n"
+        for name in names:
+            workflow = (workflows / name).read_text()
+            self.assertEqual(appimage_gsl_problems(name, workflow, bundler), [])
+            step_start = workflow.index(check)
+            step = workflow[step_start : workflow.index("\n\n", step_start) + 2]
+            after_bundling = "    - name: Save/Restore cache TOS libs\n"
+            self.assertIn(after_bundling, workflow)
+            mutants = {
+                "check dropped": workflow.replace(step, ""),
+                "mismatch tolerated": workflow.replace("          exit 1\n", "          true\n", 1),
+                "another version": workflow.replace(
+                    f"version={self.GSL_PACKAGE_VERSION}", "version=2.7.1+dfsg-6"
+                ),
+                "another package": workflow.replace(
+                    "'${source:Version}' libgsl-dev)", "'${source:Version}' libblas-dev)"
+                ),
+                "checked after bundling": workflow.replace(step, "").replace(
+                    after_bundling, step + after_bundling
+                ),
+            }
+            for label, mutant in mutants.items():
+                with self.subTest(workflow=name, mutant=label):
+                    self.assertNotEqual(mutant, workflow)
+                    self.assertNotEqual(appimage_gsl_problems(name, mutant, bundler), [])
+        bundler_mutant = bundler.replace("libgsl.so.27 ", "libgsl.so.28 ")
+        self.assertNotEqual(bundler_mutant, bundler)
+        self.assertNotEqual(appimage_gsl_problems(names[0], workflow, bundler_mutant), [])
 
     def test_a_dropped_static_gsl_check_is_refused(self) -> None:
         config, workflow, script = self.inputs()
