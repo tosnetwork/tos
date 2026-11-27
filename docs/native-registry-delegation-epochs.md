@@ -348,7 +348,22 @@ that new owner binding. Tag 3 separates Agent v2 from Capability in the data
 bits themselves, without relying on their different reference counts and
 without adding a byte.
 
-For fixed identical network, nonce and policy inputs, the old Agent preimage
+The same tag is hard-coded at four more derivation sites, which change in the
+same commit and get their own tag-reversion controls:
+
+- ai `protocol/internal/referencecodec/reference.go:179` (Agent) and `:209`
+  (Capability). This is the independent reference builder; if it were left at
+  tag 1 while the production builders moved, two builders could only agree by
+  sharing the same mistake, so it is changed and controlled on its own.
+- tos `scripts/tos-service-native-registry-local-gate-c.py:373-374` (Agent) and
+  `:411-412` (Capability).
+- tos `tosctl/src/node-control/contracts/tests/native_registry_sandbox.rs`,
+  whose own builders are at `:495`, `:642`, `:817`, `:1758` and `:3087`.
+
+The cross-language vectors of section 5 must match every one of these builders,
+not only the contract, Rust and Go production sites.
+
+For any network, nonce and policy inputs, the old Agent preimage
 (tag 1) and v2 Agent preimage (tag 3) differ in that byte. Under the cell hash's
 collision-resistance assumption their ids are distinct; vector tests must
 construct both and assert that distinction, and assert the respective tag bits
