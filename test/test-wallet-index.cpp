@@ -1332,8 +1332,13 @@ TEST(WalletIndex, AnEntryDroppedAsMalformedDoesNotHideItsCandidateDeferredInTheS
 namespace {
 
 // A timeout is only a broken-handshake watchdog, never how ordering advances.
-// Keep it well beyond thermal pauses; each event must actually be signalled.
-constexpr auto kQueueTestWatchdog = std::chrono::hours(1);
+// The longest legitimate wait below is a few recorder retry pauses (50 ms,
+// then doubling) or one idle recheck (1 s); everything else is a thread
+// handoff of microseconds. 120 s is two orders of magnitude above that for a
+// runner stalled by load, yet turns a regression where push() blocks into a
+// two-minute failure instead of an hour-long hang. Only a whole-process stop
+// (SIGSTOP) longer than that, landing inside one handoff, could trip it.
+constexpr auto kQueueTestWatchdog = std::chrono::seconds(120);
 
 class QueueEvent {
  public:
@@ -1514,6 +1519,8 @@ TEST(WalletIndexQueue, WorkLeftAtShutdownStaysRecordedAndUndone) {
     // The same stop request as destruction, completed before item 0 may
     // finish. No scheduler can let the worker drain items 1 through 4 first.
     queue.request_stop();
+    // The checkpoint never waits on a stopping worker.
+    ASSERT_TRUE(!queue.wait_worker_checkpoint_for_test(kQueueTestWatchdog));
     release.signal();
   }
   ASSERT_EQ(log.processed, (std::vector<int>{0}));
@@ -1773,6 +1780,11 @@ TEST(WalletIndexQueue, APausedQueueRecordsButDoesNotProcess) {
   queue.push(1, 1);
   queue.push(2, 2);
   ASSERT_TRUE(queue.wait_recorded(kQueueTestWatchdog));
+  // `processed == 0` is a negative check: after wait_recorded() alone it would
+  // pass whenever the worker had simply not run yet, even if pausing were
+  // broken. The checkpoint makes it deterministic: the worker acknowledges only
+  // after it has seen the recorded items and found none runnable.
+  ASSERT_TRUE(queue.wait_worker_checkpoint_for_test(kQueueTestWatchdog));
   ASSERT_EQ(recorded.load(), 2);
   ASSERT_EQ(processed.load(), 0);
   queue.resume();
@@ -1782,6 +1794,7 @@ TEST(WalletIndexQueue, APausedQueueRecordsButDoesNotProcess) {
   queue.pause();
   queue.push(3, 3);
   ASSERT_TRUE(queue.wait_recorded(kQueueTestWatchdog));
+  ASSERT_TRUE(queue.wait_worker_checkpoint_for_test(kQueueTestWatchdog));
   ASSERT_EQ(recorded.load(), 3);
   ASSERT_EQ(processed.load(), 2);
 }

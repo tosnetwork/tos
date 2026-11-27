@@ -146,6 +146,21 @@ class BoundedWorkQueue {
     return wake_.wait_for(lock, limit, [this] { return to_record_.empty() && !degraded_unpersisted_; });
   }
 
+  // Test-only barrier, for use with producers stopped and after
+  // wait_recorded(). The worker acknowledges only once it holds the lock and
+  // has no runnable item left, so a test can assert that paused work was not
+  // processed without depending on which thread ran first. False at once
+  // after request_stop(), since the worker may already have exited.
+  bool wait_worker_checkpoint_for_test(std::chrono::milliseconds limit) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (stopping_) {
+      return false;
+    }
+    worker_checkpoint_requested_ = true;
+    wake_.notify_all();
+    return wake_.wait_for(lock, limit, [this] { return !worker_checkpoint_requested_; });
+  }
+
   size_t dropped() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return dropped_;
@@ -254,6 +269,10 @@ class BoundedWorkQueue {
         lock.lock();
         continue;
       }
+      if (worker_checkpoint_requested_) {
+        worker_checkpoint_requested_ = false;
+        wake_.notify_all();
+      }
       if (idle_ && !paused_) {
         lock.unlock();
         bool more = call_safely(idle_);
@@ -261,10 +280,12 @@ class BoundedWorkQueue {
         if (more) {
           continue;
         }
-        wake_.wait_for(lock, kIdleRecheck, [this] { return stopping_ || item_ready(); });
+        wake_.wait_for(lock, kIdleRecheck,
+                       [this] { return stopping_ || item_ready() || worker_checkpoint_requested_; });
         continue;
       }
-      wake_.wait(lock, [this] { return stopping_ || item_ready() || (idle_ && !paused_); });
+      wake_.wait(lock,
+                 [this] { return stopping_ || item_ready() || worker_checkpoint_requested_ || (idle_ && !paused_); });
     }
   }
 
@@ -285,6 +306,7 @@ class BoundedWorkQueue {
   bool degraded_unpersisted_ = false;
   bool paused_ = false;
   bool stopping_ = false;
+  bool worker_checkpoint_requested_ = false;
   std::thread recorder_;
   std::thread worker_;
 };

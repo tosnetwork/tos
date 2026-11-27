@@ -81,6 +81,27 @@ def wrapped_in_state_init(boc: bytes) -> bytes:
     return write_boc([state_init, *shifted, (0, 0, b"", [])], [0], size=2, offset_size=2)
 
 
+class BocBounds(unittest.TestCase):
+    def test_declared_end_is_exact_with_and_without_crc(self):
+        plain = write_boc([(0, 0, b"", [])], [0], size=1, offset_size=1)
+        crc = base64.b64decode("te6cckEBAQEAAgAAAEysuc0=")
+        for boc in (plain, crc):
+            with self.subTest(crc=bool(boc[4] & 0x40)):
+                self.assertEqual(check.read_boc(boc), ([(0, 0, b"", [])], [0]))
+                with self.assertRaisesRegex(check.BocError, "truncated"):
+                    check.read_boc(boc[:-1])
+                for tail in (b"\x00", plain):
+                    with self.assertRaisesRegex(check.BocError, "trailing"):
+                        check.read_boc(boc + tail)
+
+    def test_cell_count_must_consume_the_declared_data(self):
+        boc = bytearray(write_boc([(0, 0, b"", [])], [0], size=1, offset_size=1))
+        boc[9] += 1  # Enlarge the declared cell span to include unparsed padding.
+        boc.append(0)
+        with self.assertRaisesRegex(check.BocError, "declared size"):
+            check.read_boc(bytes(boc))
+
+
 class SyntheticTree(unittest.TestCase):
     """A tree without .git, so the guard walks the filesystem."""
 
@@ -204,6 +225,12 @@ class SyntheticTree(unittest.TestCase):
                     self.assertTrue(
                         any("cell with removed escrow code hash" in f for f in failures), failures
                     )
+
+    def test_trailing_bytes_do_not_make_a_removed_boc_invisible(self):
+        boc = wrapped_in_state_init(decoded(check.V1_ARTIFACTS[0])) + b"\x00"
+        for suffix, content in ((".boc", boc), (".txt", base64.b64encode(boc))):
+            with self.subTest(suffix=suffix):
+                self.assert_refused("vectors/payload" + suffix, content, "removed escrow code hash")
 
     def test_other_bocs_pass(self):
         control = (ROOT / check.CONTROL_BOC).read_bytes()
