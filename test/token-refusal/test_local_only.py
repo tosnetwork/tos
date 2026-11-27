@@ -99,6 +99,38 @@ class LocalRefusalTests(unittest.TestCase):
                     ["nested/CMakeLists.txt"],
                 )
 
+    def test_packager_and_composite_action_leaks_are_caught(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in (
+                "assembly/native/build-ubuntu-shared.sh",
+                ".github/actions/package/action.yml",
+            ):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    "cp -R crypto/smartcont artifacts\ncp local-only-test-build/*.fif artifacts/\n"
+                )
+                self.assertIn(
+                    name, guard.release_leaks(root, build.REJECT_OWNER, build.TEST_WALLET_CODE_HASH)
+                )
+                path.write_text("cp ordinary.fif artifacts/\n")
+
+    def test_real_compiled_wallet_is_detected_without_text_markers(self):
+        raw = (HERE / "fixtures/refusing-wallet.boc").read_bytes()
+        self.assertEqual(guard.BOC.boc_root_hash(raw).hex(), build.TEST_WALLET_CODE_HASH)
+        self.assertNotIn(build.TEST_WALLET_CODE_HASH.encode(), raw)
+        self.assertNotIn(b"local-only-test", raw)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "crypto/smartcont/wallet.boc"
+            path.parent.mkdir(parents=True)
+            path.write_bytes(raw)
+            self.assertEqual(
+                guard.release_leaks(root, build.REJECT_OWNER, build.TEST_WALLET_CODE_HASH),
+                ["crypto/smartcont/wallet.boc"],
+            )
+
     def test_compiler_hash_is_checked_before_the_marker_claims_it(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "local-only-test"

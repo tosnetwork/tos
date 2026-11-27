@@ -44,8 +44,14 @@ Upstream comparison: this token settlement test has no corresponding code in
 upstream; inherited VM and message delivery code are unchanged.
 
 The source guard scans all workflows (including release and custom artifact
-publishers), the entire shipped smart-contract tree, every CMake file containing
+publishers), composite actions, the assembly packagers, the entire shipped smart-contract tree, every CMake file containing
 install rules, and the release-artifact manifest. The only CMake exclusions are
 the two exact source-guard test registrations, which install nothing. Markers,
 the fixed rejecting owner, and a refusal-1980/global-id instruction pairing are
 forbidden in these release inputs.
+
+Compiled BOCs in the shipped contract tree are decoded with the existing source
+guard BOC reader; their root code-cell hashes must not equal the pinned test
+wallet. The frozen test-path fixture was emitted from the real compiled wallet,
+and its root hash is checked before exercising the leak guard. Deliberate
+obfuscation is outside this guard's scope.

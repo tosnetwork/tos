@@ -1,7 +1,19 @@
-"""Keep the local receiver fixture outside every shipped/released input."""
+"""Keep the local receiver fixture outside every shipped/released input.
 
+Scan normal packaging paths and decoded code-cell identities. Deliberate
+obfuscation is outside this source guard's scope.
+"""
+
+import base64
+import importlib.util
 import re
 from pathlib import Path
+
+BOC_SPEC = importlib.util.spec_from_file_location(
+    "release_boc_reader", Path(__file__).resolve().parents[2] / "scripts/check-no-legacy-escrow.py"
+)
+BOC = importlib.util.module_from_spec(BOC_SPEC)
+BOC_SPEC.loader.exec_module(BOC)
 
 
 def forbidden(data, reject_owner, code_hash):
@@ -43,6 +55,9 @@ def release_leaks(root, reject_owner, code_hash):
     shipped = root / "crypto/smartcont"
     if shipped.exists():
         paths.update(p for p in shipped.rglob("*") if p.is_file())
+    for directory in (root / "assembly", root / ".github/actions"):
+        if directory.exists():
+            paths.update(p for p in directory.rglob("*") if p.is_file())
     manifest = root / "scripts/release-artifacts.json"
     if manifest.exists():
         paths.add(manifest)
@@ -57,6 +72,17 @@ def release_leaks(root, reject_owner, code_hash):
         if path.name == "CMakeLists.txt":
             data = cmake_release_text(data.decode("utf-8", errors="replace")).encode()
         relative = str(path.relative_to(root))
-        if forbidden(relative.encode() + b"\n" + data, reject_owner, code_hash):
+        compiled_leak = False
+        if path.is_relative_to(shipped) and (
+            path.suffix == ".boc" or path.name.endswith(".boc.base64")
+        ):
+            try:
+                raw = base64.b64decode(data, validate=False) if path.suffix == ".base64" else data
+                hashes, roots = BOC.parse_boc(raw)
+                compiled_leak = any(hashes[index] == bytes.fromhex(code_hash) for index in roots)
+            except (BOC.BocError, ValueError, OverflowError):
+                # An unreadable compiled release input is not proof of isolation.
+                compiled_leak = True
+        if compiled_leak or forbidden(relative.encode() + b"\n" + data, reject_owner, code_hash):
             leaks.append(relative)
     return leaks
