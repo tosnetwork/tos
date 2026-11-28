@@ -1336,9 +1336,22 @@ namespace {
 // then doubling) or one idle recheck (1 s); everything else is a thread
 // handoff of microseconds. 120 s is two orders of magnitude above that for a
 // runner stalled by load, yet turns a regression where push() blocks into a
-// two-minute failure instead of an hour-long hang. Only a whole-process stop
-// (SIGSTOP) longer than that, landing inside one handoff, could trip it.
+// two-minute failure instead of an hour-long hang.
 constexpr auto kQueueTestWatchdog = std::chrono::seconds(120);
+
+// A whole-process stop (SIGSTOP) longer than the watchdog, landing inside one
+// handoff, resumes every thread at once: the waiter can see its deadline past
+// before the thread that was about to signal has run again. An expired wait
+// therefore gets one short grace wait before it fails; a real hang still fails
+// one second later.
+constexpr auto kQueueTestGrace = std::chrono::milliseconds(1000);
+
+// True when `wait(limit)` succeeds within `watchdog`, or within the one grace
+// wait after it.
+template <class Wait>
+bool within_watchdog(Wait &&wait, std::chrono::milliseconds watchdog = kQueueTestWatchdog) {
+  return wait(watchdog) || wait(kQueueTestGrace);
+}
 
 class QueueEvent {
  public:
@@ -1350,9 +1363,11 @@ class QueueEvent {
     changed_.notify_all();
   }
 
-  void wait() {
+  void wait(std::chrono::milliseconds watchdog = kQueueTestWatchdog) {
     std::unique_lock<std::mutex> lock(mutex_);
-    ASSERT_TRUE(changed_.wait_for(lock, kQueueTestWatchdog, [this] { return signalled_; }));
+    ASSERT_TRUE(within_watchdog(
+        [&](std::chrono::milliseconds limit) { return changed_.wait_for(lock, limit, [this] { return signalled_; }); },
+        watchdog));
   }
 
  private:
@@ -1527,6 +1542,49 @@ TEST(WalletIndexQueue, WorkLeftAtShutdownStaysRecordedAndUndone) {
   ASSERT_EQ(log.recorded, (std::vector<int>{0, 1, 2, 3, 4}));
 }
 
+// A stop requested while a checkpoint is already waiting ends that wait: the
+// worker exits without acknowledging, so waiting on would only run out the
+// limit and report nothing more.
+TEST(WalletIndexQueue, AStopEndsACheckpointAlreadyWaiting) {
+  QueueEvent started, release;
+  tos_wallet_index::BoundedWorkQueue<int, int> queue(
+      8, [](const std::vector<int> &) { return true; },
+      [&](int &) {
+        started.signal();
+        release.wait();
+      });
+  ASSERT_TRUE(queue.push(0, 0));
+  started.wait();
+  std::atomic<bool> acknowledged{true};
+  QueueEvent checkpoint_returned;
+  std::thread checkpoint([&] {
+    acknowledged = queue.wait_worker_checkpoint_for_test(kQueueTestWatchdog);
+    checkpoint_returned.signal();
+  });
+  // Lets the checkpoint start waiting before the stop. A stop that lands first
+  // takes the immediate refusal instead; both must return false at once.
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  queue.request_stop();
+  // The worker is held inside the item, so only the stop can end the wait,
+  // long before the checkpoint's own limit.
+  checkpoint_returned.wait(std::chrono::seconds(10));
+  ASSERT_TRUE(!acknowledged.load());
+  release.signal();
+  checkpoint.join();
+}
+
+// The watchdog's grace wait: a signal that arrives after the watchdog ran out,
+// but within the grace, is still seen.
+TEST(WalletIndexQueue, AWatchdogExpiryGivesALateSignalOneGraceWait) {
+  QueueEvent late;
+  std::thread signaller([&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    late.signal();
+  });
+  late.wait(std::chrono::milliseconds(100));
+  signaller.join();
+}
+
 TEST(WalletIndex, MarkingQueuedBlocksDoesNotJoinAnOpenBatch) {
   auto path = std::string("test-wallet-index-db-mark-queued");
   auto db = open_fresh_db(path);
@@ -1601,7 +1659,7 @@ TEST(WalletIndexQueue, AnIdThatCannotBeRecordedMarksTheQueueDegraded) {
     ASSERT_TRUE(queue.degraded());
     persisted.wait();
     allow = true;
-    ASSERT_TRUE(queue.wait_recorded(kQueueTestWatchdog));
+    ASSERT_TRUE(within_watchdog([&](std::chrono::milliseconds limit) { return queue.wait_recorded(limit); }));
   }
   ASSERT_EQ(degraded_calls.load(), 1);
 }
@@ -1735,7 +1793,7 @@ TEST(WalletIndexQueue, OverflowNeverMakesPushWaitForPersistence) {
     ASSERT_TRUE(queue.degraded());
     release = true;
     allow_persist.signal();
-    ASSERT_TRUE(queue.wait_recorded(kQueueTestWatchdog));
+    ASSERT_TRUE(within_watchdog([&](std::chrono::milliseconds limit) { return queue.wait_recorded(limit); }));
   }
   ASSERT_EQ(persisted.load(), 1);
 }
@@ -1779,12 +1837,13 @@ TEST(WalletIndexQueue, APausedQueueRecordsButDoesNotProcess) {
       nullptr, 0, true);
   queue.push(1, 1);
   queue.push(2, 2);
-  ASSERT_TRUE(queue.wait_recorded(kQueueTestWatchdog));
+  ASSERT_TRUE(within_watchdog([&](std::chrono::milliseconds limit) { return queue.wait_recorded(limit); }));
   // `processed == 0` is a negative check: after wait_recorded() alone it would
   // pass whenever the worker had simply not run yet, even if pausing were
   // broken. The checkpoint makes it deterministic: the worker acknowledges only
   // after it has seen the recorded items and found none runnable.
-  ASSERT_TRUE(queue.wait_worker_checkpoint_for_test(kQueueTestWatchdog));
+  ASSERT_TRUE(
+      within_watchdog([&](std::chrono::milliseconds limit) { return queue.wait_worker_checkpoint_for_test(limit); }));
   ASSERT_EQ(recorded.load(), 2);
   ASSERT_EQ(processed.load(), 0);
   queue.resume();
@@ -1793,8 +1852,9 @@ TEST(WalletIndexQueue, APausedQueueRecordsButDoesNotProcess) {
   // Paused again, as before an abrupt exit: new blocks are still recorded.
   queue.pause();
   queue.push(3, 3);
-  ASSERT_TRUE(queue.wait_recorded(kQueueTestWatchdog));
-  ASSERT_TRUE(queue.wait_worker_checkpoint_for_test(kQueueTestWatchdog));
+  ASSERT_TRUE(within_watchdog([&](std::chrono::milliseconds limit) { return queue.wait_recorded(limit); }));
+  ASSERT_TRUE(
+      within_watchdog([&](std::chrono::milliseconds limit) { return queue.wait_worker_checkpoint_for_test(limit); }));
   ASSERT_EQ(recorded.load(), 3);
   ASSERT_EQ(processed.load(), 2);
 }
