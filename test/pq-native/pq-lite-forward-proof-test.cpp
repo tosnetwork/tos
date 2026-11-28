@@ -28,6 +28,7 @@
 #include "td/utils/crypto.h"
 #include "td/utils/port/path.h"
 #include "test/pq-native/pq-block-signature-test-common.h"
+#include "test/reserved-tcp-port.h"
 #include "tl-utils/lite-utils.hpp"
 #include "tos/lite-tl.hpp"
 #include "tos/quorum.h"
@@ -315,29 +316,6 @@ void assert_key_proof_carries_pq_context(const BlockFixture& key_block, td::int3
 
 using pq_block_signature_test::candidate;
 
-td::uint16 allocate_tcp_port() {
-  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  if (fd < 0) {
-    fail("cannot allocate TCP socket");
-  }
-  sockaddr_in address{};
-  address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  address.sin_port = 0;
-  if (::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
-    ::close(fd);
-    fail("cannot reserve TCP port");
-  }
-  socklen_t size = sizeof(address);
-  if (::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &size) != 0) {
-    ::close(fd);
-    fail("cannot read reserved TCP port");
-  }
-  const auto port = ntohs(address.sin_port);
-  ::close(fd);
-  return port;
-}
-
 class ProofQueryCallback final : public adnl::Adnl::Callback {
  public:
   explicit ProofQueryCallback(td::BufferSlice answer) : answer_(std::move(answer)) {
@@ -406,7 +384,9 @@ void adnl_ext_disconnected_query_refuses() {
 }
 
 td::BufferSlice adnl_ext_round_trip(const td::BufferSlice& proof) {
-  const auto port = allocate_tcp_port();
+  // Held while the server runs, so no other process can listen on the port.
+  ReservedTcpPort reserved_port;
+  const auto port = reserved_port.port();
   const auto db_root = "/tmp/tos-pq-lite-forward-" + std::to_string(::getpid());
   td::rmrf(db_root).ignore();
   require_ok(td::mkdir(db_root), "transport db directory");

@@ -42,6 +42,7 @@
 #include "td/utils/port/SocketFd.h"
 #include "td/utils/port/detail/NativeFd.h"
 #include "td/utils/port/path.h"
+#include "test/reserved-tcp-port.h"
 #include "tl-utils/tl-utils.hpp"
 
 namespace {
@@ -708,19 +709,6 @@ class RawExtPeer {
   bool closed_by_server_ = false;
 };
 
-td::uint16 free_tcp_port() {
-  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  require(fd >= 0, "cannot open TCP socket");
-  sockaddr_in address{};
-  address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  require(::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0, "cannot reserve a port");
-  socklen_t size = sizeof(address);
-  require(::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &size) == 0, "cannot read the port");
-  ::close(fd);
-  return ntohs(address.sin_port);
-}
-
 void server_source_share() {
   constexpr size_t kInitAck = 68;
   constexpr size_t kPong = 80;
@@ -740,7 +728,9 @@ void server_source_share() {
   auto public_key = private_key.compute_public_key();
   adnl::AdnlNodeIdFull server_id{public_key};
   adnl::AdnlNodeIdShort server_short{public_key.compute_short_id()};
-  auto port = free_tcp_port();
+  // Held while the server runs, so no other process can listen on the port.
+  ReservedTcpPort reserved_port;
+  auto port = reserved_port.port();
   bool listening = false;
   scheduler->run_in_context([&] {
     keyring_actor = keyring::Keyring::create(db_root);

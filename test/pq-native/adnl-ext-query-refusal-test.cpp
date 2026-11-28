@@ -33,6 +33,7 @@
 #include "td/utils/Time.h"
 #include "td/utils/logging.h"
 #include "td/utils/port/path.h"
+#include "test/reserved-tcp-port.h"
 #include "tl-utils/lite-utils.hpp"
 #include "tl-utils/tl-utils.hpp"
 
@@ -54,27 +55,6 @@ void require(bool condition, const std::string& message) {
   if (!condition) {
     fail(message);
   }
-}
-
-td::uint16 allocate_tcp_port() {
-  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  require(fd >= 0, "cannot allocate TCP socket");
-  sockaddr_in address{};
-  address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  address.sin_port = 0;
-  if (::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
-    ::close(fd);
-    fail("cannot reserve TCP port");
-  }
-  socklen_t size = sizeof(address);
-  if (::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &size) != 0) {
-    ::close(fd);
-    fail("cannot read reserved TCP port");
-  }
-  const auto port = ntohs(address.sin_port);
-  ::close(fd);
-  return port;
 }
 
 enum class ServerMode {
@@ -187,7 +167,6 @@ struct Slot {
 class Harness {
  public:
   Harness(std::string name, EncoderChoice encoder) : name_(std::move(name)) {
-    port_ = allocate_tcp_port();
     db_root_ = "/tmp/tos-adnl-ext-query-refusal-" + std::to_string(::getpid()) + "-" + name_;
     td::rmrf(db_root_).ignore();
     require(td::mkdir(db_root_).is_ok(), "cannot create db directory");
@@ -367,7 +346,9 @@ class Harness {
   }
 
   std::string name_;
-  td::uint16 port_ = 0;
+  // Held for the whole harness, so no other process can listen on the port.
+  ReservedTcpPort reserved_port_;
+  td::uint16 port_ = reserved_port_.port();
   std::string db_root_;
   std::unique_ptr<td::actor::Scheduler> scheduler_;
   std::shared_ptr<ServerState> state_;

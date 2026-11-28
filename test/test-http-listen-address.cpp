@@ -32,6 +32,7 @@
 #include <fcntl.h>
 #include <functional>
 #include <ifaddrs.h>
+#include <memory>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <signal.h>
@@ -50,6 +51,7 @@
 #include "td/utils/port/IPAddress.h"
 #include "td/utils/port/signals.h"
 #include "td/utils/tests.h"
+#include "test/reserved-tcp-port.h"
 
 namespace {
 
@@ -116,20 +118,6 @@ bool eventually_connects(const std::string &ip, int port) {
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
   return false;
-}
-
-// An ephemeral port nothing listens on right now.
-int free_port() {
-  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  CHECK(fd >= 0);
-  sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  CHECK(::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
-  socklen_t len = sizeof(addr);
-  CHECK(::getsockname(fd, reinterpret_cast<sockaddr *>(&addr), &len) == 0);
-  ::close(fd);
-  return ntohs(addr.sin_port);
 }
 
 class OkCallback : public tos::http::HttpServer::Callback {
@@ -209,7 +197,8 @@ TEST(HttpListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
     ASSERT_TRUE(g_skipped.load());
     return;
   }
-  int port = free_port();
+  auto reserved = std::make_unique<ReservedTcpPort>();
+  int port = reserved->port();
   auto bare = tos::http::HttpServer::parse_listen_address(std::to_string(port)).move_as_ok();
   with_server_at(bare, [&] {
     ASSERT_TRUE(eventually_connects("127.0.0.1", port));
@@ -217,7 +206,8 @@ TEST(HttpListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
   });
   // Control: asked for explicitly, the same listener is reachable there, so the
   // refusal above is the bind address and not a firewall or a dead listener.
-  port = free_port();
+  reserved = std::make_unique<ReservedTcpPort>();
+  port = reserved->port();
   auto any = tos::http::HttpServer::parse_listen_address("0.0.0.0:" + std::to_string(port)).move_as_ok();
   with_server_at(any, [&] {
     ASSERT_TRUE(eventually_connects("127.0.0.1", port));
@@ -232,7 +222,8 @@ TEST(HttpProxyListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
     return;
   }
   const std::string binary = HTTP_PROXY_BINARY;
-  int port = free_port();
+  auto reserved = std::make_unique<ReservedTcpPort>();
+  int port = reserved->port();
   {
     Child proxy(binary, {"-p", std::to_string(port)});
     ASSERT_TRUE(eventually_connects("127.0.0.1", port));
@@ -240,7 +231,8 @@ TEST(HttpProxyListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
   }
   // Control: asked for by address, the same binary is reachable there, so the
   // refusal above is the bind address and not a firewall.
-  port = free_port();
+  reserved = std::make_unique<ReservedTcpPort>();
+  port = reserved->port();
   {
     Child proxy(binary, {"-p", "0.0.0.0:" + std::to_string(port)});
     ASSERT_TRUE(eventually_connects(other, port));

@@ -34,6 +34,7 @@
 #include "td/utils/Time.h"
 #include "td/utils/logging.h"
 #include "td/utils/port/path.h"
+#include "test/reserved-tcp-port.h"
 #include "tl-utils/tl-utils.hpp"
 #include "validator/full-node-master.h"
 #include "validator/full-node-slave-key.h"
@@ -54,27 +55,6 @@ void require(bool condition, const std::string &message) {
   if (!condition) {
     fail(message);
   }
-}
-
-td::uint16 allocate_tcp_port() {
-  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  require(fd >= 0, "cannot allocate TCP socket");
-  sockaddr_in address{};
-  address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  address.sin_port = 0;
-  if (::bind(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) != 0) {
-    ::close(fd);
-    fail("cannot reserve TCP port");
-  }
-  socklen_t size = sizeof(address);
-  if (::getsockname(fd, reinterpret_cast<sockaddr *>(&address), &size) != 0) {
-    ::close(fd);
-    fail("cannot read reserved TCP port");
-  }
-  const auto port = ntohs(address.sin_port);
-  ::close(fd);
-  return port;
 }
 
 bool tcp_port_accepts(td::uint16 port) {
@@ -165,7 +145,9 @@ class Harness {
     std::vector<Listener> listeners;
     for (size_t i = 0; i < count; i++) {
       auto private_key = PrivateKey{privkeys::Ed25519::random()};
-      Listener listener{adnl::AdnlNodeIdFull{private_key.compute_public_key()}, allocate_tcp_port()};
+      // Held until the master listens, so no other process can listen on the port.
+      ReservedTcpPort reserved_port;
+      Listener listener{adnl::AdnlNodeIdFull{private_key.compute_public_key()}, reserved_port.port()};
       install_key(std::move(private_key));
       auto short_id = listener.id.compute_short_id();
       scheduler_->run_in_context([&] {

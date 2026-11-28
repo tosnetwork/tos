@@ -31,6 +31,7 @@
 #include "td/utils/filesystem.h"
 #include "td/utils/port/Stat.h"
 #include "td/utils/port/path.h"
+#include "test/reserved-tcp-port.h"
 #include "tos/tos-tl.hpp"
 #include "validator/db/celldb.hpp"
 #include "validator/db/rootdb.hpp"
@@ -204,19 +205,6 @@ void require_budgets_released() {
   require(budget::testing::test_get_persistent_state_spool_bytes() == 0, "spool reservation leaked");
 }
 
-td::uint16 port() {
-  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  require(fd >= 0, "reserve TCP socket");
-  sockaddr_in address{};
-  address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  require(::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0, "reserve TCP port");
-  socklen_t size = sizeof(address);
-  require(::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &size) == 0, "read TCP port");
-  auto result = ntohs(address.sin_port);
-  require(::close(fd) == 0, "close reserved socket");
-  return result;
-}
 struct Peer {
   Fixture fixture;
   bool interrupt{false};
@@ -602,7 +590,9 @@ void run_case(const std::string& root, const std::array<Fixture, 2>& fixture, Ca
     peers[i]->interrupt = interrupt && i == 0;
     auto private_key = PrivateKey{privkeys::Ed25519::random()};
     auto public_id = adnl::AdnlNodeIdFull{private_key.compute_public_key()};
-    auto listener_port = port();
+    // Held until the listener is bound, so no other process can listen on the port.
+    ReservedTcpPort reserved_port;
+    auto listener_port = reserved_port.port();
     std::atomic<bool> installed{false};
     scheduler.run_in_context([&] {
       td::actor::send_closure(keys, &keyring::Keyring::add_key, std::move(private_key), false,
