@@ -212,8 +212,12 @@ class CleanupHarness : public td::actor::Actor {
                                         std::move(R), oracles());
   }
   bool validator_cleanup_reserved(const ReservedValidatorDelete& reserved) {
-    ++attempt_count_[reserved.record.session_id];
     last_reserved_ = reserved;
+    // An attempt is a delete handed to the worker; a held reservation is not one.
+    if (!hold_dispatch_) {
+      ++attempt_count_[reserved.record.session_id];
+      ++dispatched_delete_count_;
+    }
     return !hold_dispatch_;
   }
   void validator_cleanup_pass_finished(ValidatorCleanupPassSummary, td::Status) {
@@ -289,6 +293,10 @@ class CleanupHarness : public td::actor::Actor {
   void completed_delete_count(td::Promise<td::uint64> promise) {
     promise.set_value(td::uint64{completed_delete_count_});
   }
+  // Worker deletes dispatched and not yet completed.
+  void outstanding_delete_count(td::Promise<td::uint64> promise) {
+    promise.set_value(td::uint64{dispatched_delete_count_ - completed_delete_count_});
+  }
 
  private:
   CleanupSessionIsLiveFn is_live() {
@@ -321,6 +329,7 @@ class CleanupHarness : public td::actor::Actor {
   td::uint64 page_read_count_ = 0;
   td::uint64 erase_ack_count_ = 0;
   td::uint64 completed_delete_count_ = 0;
+  td::uint64 dispatched_delete_count_ = 0;
   std::map<tos::ValidatorSessionId, td::uint64> attempt_count_;
 };
 
@@ -443,6 +452,11 @@ class HarnessSession {
   td::uint64 completed_delete_count() {
     return ask<td::uint64>([&](td::Promise<td::uint64> promise) {
       td::actor::send_closure(harness_.get(), &CleanupHarness::completed_delete_count, std::move(promise));
+    });
+  }
+  td::uint64 outstanding_delete_count() {
+    return ask<td::uint64>([&](td::Promise<td::uint64> promise) {
+      td::actor::send_closure(harness_.get(), &CleanupHarness::outstanding_delete_count, std::move(promise));
     });
   }
 
@@ -658,12 +672,17 @@ void scenario_persistent_failure_no_hot_loop() {
     LOG_CHECK(completed) << "the failing delete never completed";
     s.run_for(4.5);
     bool settled = s.wait_until([&] { return !s.is_delete_in_flight(r.session_id); }, 10.0);
+    // As in scenario 3b: no delete may be dispatched or running once the
+    // permissions are restored, and the counts must not move between reads.
+    s.set_hold_dispatch(true);
+    bool quiescent = s.wait_until([&] { return s.outstanding_delete_count() == 0; }, 10.0);
     auto attempts = s.attempt_count(r.session_id);
     auto completions = s.completed_delete_count();
     auto ticks = s.timer_count();
     auto acks = s.erase_ack_count();
     ::chmod(blocked.c_str(), 0755);  // restore for teardown AFTER all observations are taken
     LOG_CHECK(settled) << "the failing entry was still in flight after settling (re-dispatch loop)";
+    LOG_CHECK(quiescent) << "a dispatched worker delete did not finish";
     LOG_CHECK(consensus_dir_exists(root, r.dir_name)) << "the blocked dir was unexpectedly deleted";
     LOG_CHECK(attempts >= 2 && attempts <= ticks)
         << "a failing delete was not retried once per tick: " << attempts << " attempts over " << ticks << " ticks";
@@ -706,17 +725,25 @@ void scenario_mixed_failure_bounded_retries() {
 
     // Drain the healthy backlog (each success re-triggers a pass), then drive a short
     // extra window so an unconditional-retrigger regression on the failing dir has
-    // time to rack up unbounded attempts before we check the bound. Require the failing
-    // entry to SETTLE (not in flight) before touching perms, so a delayed worker can
-    // never succeed against a restored directory and corrupt the assertions.
+    // time to rack up unbounded attempts before we check the bound, and require the
+    // failing entry to SETTLE (not in flight) between ticks.
     bool drained = s.wait_until([&] { return s.erase_ack_count() >= kHealthy; }, 30.0);
     s.run_for(1.5);
     bool settled = s.wait_until([&] { return !s.is_delete_in_flight(fail.session_id); }, 10.0);
+    // The tick chain keeps running, and the worker runs on the scheduler's own
+    // thread, so a pass after `settled` can dispatch the failing dir again and
+    // delete it once its permissions are restored. Hold every later reservation
+    // (FIFO on the harness mailbox, so in effect before the next read) and wait
+    // until every dispatched delete has finished: after that no delete can run
+    // while the directory is writable.
+    s.set_hold_dispatch(true);
+    bool quiescent = s.wait_until([&] { return s.outstanding_delete_count() == 0; }, 10.0);
     auto attempts = s.attempt_count(fail.session_id);
     ::chmod(blocked.c_str(), 0755);
     LOG_CHECK(drained) << "healthy backlog did not fully drain (acked " << s.erase_ack_count() << " of " << kHealthy
                        << ")";
     LOG_CHECK(settled) << "the failing entry was still in flight after settling (re-dispatch loop)";
+    LOG_CHECK(quiescent) << "a dispatched worker delete did not finish";
 
     for (const auto& r : healthy) {
       if (consensus_dir_exists(root, r.dir_name)) {
