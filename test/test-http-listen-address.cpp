@@ -36,6 +36,7 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <signal.h>
+#include <stdexcept>
 #include <string>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -135,6 +136,16 @@ class OkCallback : public tos::http::HttpServer::Callback {
   }
 };
 
+// Releases the reservation once the server listens; fails the test with the
+// reservation's message ("server never listened on port P") if it never does.
+void release_when_listening(ReservedTcpPort &reserved) {
+  try {
+    reserved.release_once_listening();
+  } catch (const std::exception &error) {
+    LOG(FATAL) << error.what();
+  }
+}
+
 // Runs `scenario` against an HttpServer listening on `address`.
 void with_server_at(td::IPAddress address, std::function<void()> scenario) {
   td::actor::Scheduler scheduler({2});
@@ -201,7 +212,7 @@ TEST(HttpListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
   int port = reserved->port();
   auto bare = tos::http::HttpServer::parse_listen_address(std::to_string(port)).move_as_ok();
   with_server_at(bare, [&] {
-    reserved->release_once_listening();
+    release_when_listening(*reserved);
     ASSERT_TRUE(eventually_connects("127.0.0.1", port));
     ASSERT_TRUE(!tcp_connects(other, port));
   });
@@ -211,7 +222,7 @@ TEST(HttpListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
   port = reserved->port();
   auto any = tos::http::HttpServer::parse_listen_address("0.0.0.0:" + std::to_string(port)).move_as_ok();
   with_server_at(any, [&] {
-    reserved->release_once_listening();
+    release_when_listening(*reserved);
     ASSERT_TRUE(eventually_connects("127.0.0.1", port));
     ASSERT_TRUE(tcp_connects(other, port));
   });
@@ -228,7 +239,7 @@ TEST(HttpProxyListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
   int port = reserved->port();
   {
     Child proxy(binary, {"-p", std::to_string(port)});
-    reserved->release_once_listening();
+    release_when_listening(*reserved);
     ASSERT_TRUE(eventually_connects("127.0.0.1", port));
     ASSERT_TRUE(!tcp_connects(other, port));
   }
@@ -238,7 +249,7 @@ TEST(HttpProxyListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
   port = reserved->port();
   {
     Child proxy(binary, {"-p", "0.0.0.0:" + std::to_string(port)});
-    reserved->release_once_listening();
+    release_when_listening(*reserved);
     ASSERT_TRUE(eventually_connects(other, port));
   }
 }

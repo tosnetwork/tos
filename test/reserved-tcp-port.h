@@ -26,6 +26,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <fcntl.h>
 #include <fstream>
 #include <netinet/in.h>
 #include <stdexcept>
@@ -37,7 +38,17 @@
 class ReservedTcpPort {
  public:
   ReservedTcpPort() {
+    // Close-on-exec: a child the test starts (a server binary) must not inherit the
+    // reservation, or releasing it here would leave the port reserved in the child.
+#ifdef SOCK_CLOEXEC
+    fd_ = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#else
     fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd_ >= 0 && ::fcntl(fd_, F_SETFD, ::fcntl(fd_, F_GETFD) | FD_CLOEXEC) != 0) {
+      ::close(fd_);
+      throw std::runtime_error("cannot set FD_CLOEXEC on the socket reserving a TCP port");
+    }
+#endif
     if (fd_ < 0) {
       throw std::runtime_error("cannot open a TCP socket to reserve a port");
     }
@@ -73,6 +84,10 @@ class ReservedTcpPort {
   bool held() const {
     return fd_ >= 0;
   }
+  // The reserving socket, for a test of the reservation itself; -1 once released.
+  int fd() const {
+    return fd_;
+  }
   // True once the port has a listener; always true where the kernel's listeners cannot
   // be read without connecting. For a test that polls while it runs its scheduler.
   bool may_release() const {
@@ -83,13 +98,18 @@ class ReservedTcpPort {
 #endif
   }
   // Waits until may_release() (at most `timeout`), then releases. For a thread that does
-  // not run the server's scheduler itself.
+  // not run the server's scheduler itself. Throws "server never listened on port P" if
+  // no listener appeared in time (after releasing).
   void release_once_listening(std::chrono::milliseconds timeout = std::chrono::seconds(10)) {
     auto deadline = std::chrono::steady_clock::now() + timeout;
     while (!may_release() && std::chrono::steady_clock::now() < deadline) {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+    bool listening = may_release();
     release();
+    if (!listening) {
+      throw std::runtime_error("server never listened on port " + std::to_string(port_));
+    }
   }
   ReservedTcpPort(const ReservedTcpPort &) = delete;
   ReservedTcpPort &operator=(const ReservedTcpPort &) = delete;

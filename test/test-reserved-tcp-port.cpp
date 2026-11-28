@@ -6,7 +6,9 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <string>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -58,8 +60,13 @@ int main() {
   const auto port = reserved.port();
   require(port != 0, "no port reserved");
 
-  // While held, a bind of port 0 is never given the reserved port.
-  for (int i = 0; i < 2000; i++) {
+  // A child the test starts must not inherit the reservation.
+  const int flags = ::fcntl(reserved.fd(), F_GETFD);
+  require(flags >= 0 && (flags & FD_CLOEXEC) != 0, "the reserving socket is not close-on-exec");
+
+  // While held, a bind of port 0 is never given the reserved port. Without the
+  // exclusion, 40,000 binds hit one given port with a probability of several percent.
+  for (int i = 0; i < 40000; i++) {
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     require(fd >= 0, "probe socket");
     auto address = loopback(0, false);
@@ -74,6 +81,31 @@ int main() {
   require(!reserved.may_release(), "the reservation was taken for a listener");
 #endif
   int server = open_server(port);
+#if !defined(__linux__)
+  // Where a bound socket that never listens hides a wildcard listener for its own
+  // address (BSD, macOS), a client cannot reach the server while the port is held.
+  // This is what makes releasing before the first connection necessary.
+  {
+    int held_client = ::socket(AF_INET, SOCK_STREAM, 0);
+    require(held_client >= 0, "held client socket");
+    require(::fcntl(held_client, F_SETFL, ::fcntl(held_client, F_GETFL) | O_NONBLOCK) == 0, "held client O_NONBLOCK");
+    auto held_target = loopback(port, false);
+    int rc = ::connect(held_client, reinterpret_cast<sockaddr *>(&held_target), sizeof(held_target));
+    // Reported, not required: whether the stack answers with a reset or drops the SYN
+    // is not fixed, and the check must not make the test flaky.
+    bool connected = rc == 0;
+    if (rc != 0 && errno == EINPROGRESS) {
+      pollfd pfd{held_client, POLLOUT, 0};
+      if (::poll(&pfd, 1, 1000) == 1) {
+        int error = 0;
+        socklen_t length = sizeof(error);
+        connected = ::getsockopt(held_client, SOL_SOCKET, SO_ERROR, &error, &length) == 0 && error == 0;
+      }
+    }
+    ::close(held_client);
+    std::printf("RESERVED_TCP_PORT_HELD_CONNECT reached_server=%d\n", connected ? 1 : 0);
+  }
+#endif
   reserved.release_once_listening();
   require(!reserved.held(), "the reservation was not released");
 

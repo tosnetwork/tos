@@ -34,6 +34,7 @@
 #include <netinet/in.h>
 #include <optional>
 #include <poll.h>
+#include <stdexcept>
 #include <string>
 #include <sys/socket.h>
 #include <thread>
@@ -268,6 +269,16 @@ class Client {
 
 // Runs `scenario` on a client thread against a server started with `limits`,
 // pumping the actor scheduler on the current thread until the scenario ends.
+// Releases the reservation once the server listens; fails the test with the
+// reservation's message ("server never listened on port P") if it never does.
+void release_when_listening(ReservedTcpPort &reserved) {
+  try {
+    reserved.release_once_listening();
+  } catch (const std::exception &error) {
+    LOG(FATAL) << error.what();
+  }
+}
+
 void with_server(tos::http::HttpServer::Limits limits, std::function<void(int port)> scenario,
                  std::shared_ptr<tos::http::HttpServer::Callback> callback = nullptr) {
   if (!callback)
@@ -286,7 +297,7 @@ void with_server(tos::http::HttpServer::Limits limits, std::function<void(int po
   std::atomic<bool> done{false};
   std::thread client([&] {
     // Before the first connection; a held reservation would hide the server on macOS.
-    reserved_port.release_once_listening();
+    release_when_listening(reserved_port);
     scenario(port);
     done = true;
   });
