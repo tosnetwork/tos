@@ -164,6 +164,15 @@ class BoundedWorkQueue {
            !worker_checkpoint_requested_;
   }
 
+  // Test-only: wait, at most `limit`, until a checkpoint request is pending.
+  // The request is set under the lock that its waiter releases only inside its
+  // wait, so once this returns true the checkpoint is waiting (until the worker
+  // acknowledges it or a stop ends it).
+  bool wait_checkpoint_pending_for_test(std::chrono::milliseconds limit) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return wake_.wait_for(lock, limit, [this] { return worker_checkpoint_requested_; });
+  }
+
   size_t dropped() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return dropped_;
