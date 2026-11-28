@@ -70,8 +70,9 @@ struct AdnlExtClosingDiscardTotals {
   // Closing passes that read at least one byte.
   std::atomic<td::uint64> passes{0};
   std::atomic<td::uint64> bytes{0};
-  // Bytes read by passes that began with the peer's end of stream already
-  // reported by the poll layer.
+  // Bytes read by passes that began with a close already reported by the poll
+  // layer: the peer's end of stream, or on kqueue also the EV_EOF the write
+  // filter reports once this end has shut its own write side.
   std::atomic<td::uint64> bytes_after_peer_close{0};
 };
 AdnlExtClosingDiscardTotals &adnl_ext_closing_discard_totals();
@@ -293,9 +294,6 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   bool closing_ = false;
   bool read_eof_ = false;
   bool write_shut_ = false;
-  // The poll layer has reported a close during the ordered close; whether the
-  // peer's stream has really ended is left to a read (closing_loop()).
-  bool close_reported_ = false;
   td::Timestamp closing_deadline_;
   void closing_loop();
   std::size_t pending_output_limit_ = adnl_ext_max_pending_output_bytes;

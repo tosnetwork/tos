@@ -407,9 +407,10 @@ void AdnlExtConnection::closing_loop() {
       }
       allowance = input_accounted_;
     }
-    close_reported_ = close_reported_ || td::can_close(buffered_fd_);
-    bool peer_closed_before = close_reported_;
-    if (td::can_close(buffered_fd_)) {
+    // td never clears Close once the poll layer has reported it, so this holds
+    // for every later pass too.
+    bool peer_closed_before = td::can_close(buffered_fd_);
+    if (peer_closed_before) {
       // A reported close is a reason to read what the peer has left, even
       // without a read edge; whether its stream has ended is decided below.
       buffered_fd_.get_poll_info().add_flags(td::PollFlags::Read());

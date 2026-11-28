@@ -711,8 +711,11 @@ void own_write_shutdown_is_not_the_peers_end() {
 }
 
 // k. As j, but kqueue delivers the write-filter EV_EOF again while the closing
-// pass reads. Whatever the poll flags say when the pass ends, only a read that
-// finds the peer's end of stream may end the input side.
+// pass reads. Close is sticky (td never clears it), so the second report adds
+// no new flag state; what k covers beyond j is the closing pass's read through
+// the scripted-reader path with a close reported, after which only a read that
+// finds the peer's end of stream may end the input side. An earlier fix that
+// cleared Close before that read and trusted the flag after it failed here.
 void own_shutdown_reported_again_during_the_read() {
   Harness harness;
   Peer peer;
