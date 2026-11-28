@@ -10,6 +10,7 @@
 #include "adnl/adnl.h"
 #include "keyring/keyring.h"
 #include "td/utils/port/path.h"
+#include "test/reserved-tcp-port.h"
 #include "tl-utils/common-utils.hpp"
 #include "tl-utils/tl-utils.hpp"
 #include "validator-engine/control-getter-service.h"
@@ -87,16 +88,9 @@ int main(int argc, char** argv) {
       require(!deadline.is_in_past(), "transport watchdog");
     }
   };
-  int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-  require(socket_fd >= 0, "port socket");
-  sockaddr_in local{};
-  local.sin_family = AF_INET;
-  local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  require(bind(socket_fd, reinterpret_cast<sockaddr*>(&local), sizeof(local)) == 0, "port bind");
-  socklen_t local_size = sizeof(local);
-  require(getsockname(socket_fd, reinterpret_cast<sockaddr*>(&local), &local_size) == 0, "port number");
-  auto port = ntohs(local.sin_port);
-  close(socket_fd);
+  // Held until the listener is up, so no other process can listen on the port.
+  ReservedTcpPort reserved_port;
+  auto port = reserved_port.port();
   scheduler.run_in_context([&] {
     keyring = keyring::Keyring::create(std::string(directory) + "/keyring");
     adnl = adnl::Adnl::create(directory, keyring.get());
@@ -124,6 +118,9 @@ int main(int argc, char** argv) {
         });
   });
   wait([&] { return installed.load() && !server.empty(); });
+  // Release before the probe connects: a held reservation would hide the listener on macOS.
+  wait([&] { return reserved_port.may_release(); });
+  reserved_port.release();
   wait([&] {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     require(fd >= 0, "listener probe socket");

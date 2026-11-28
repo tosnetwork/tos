@@ -34,6 +34,7 @@
 #include <netinet/in.h>
 #include <optional>
 #include <poll.h>
+#include <stdexcept>
 #include <string>
 #include <sys/socket.h>
 #include <thread>
@@ -47,6 +48,7 @@
 #include "td/utils/Time.h"
 #include "td/utils/port/IPAddress.h"
 #include "td/utils/tests.h"
+#include "test/reserved-tcp-port.h"
 #include "validator-engine/json-rpc-http-policy.h"
 
 #include "send-without-waiting.h"
@@ -265,28 +267,25 @@ class Client {
   int fd_ = -1;
 };
 
-int find_free_port() {
-  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  CHECK(fd >= 0);
-  sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  addr.sin_port = 0;
-  CHECK(::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
-  socklen_t len = sizeof(addr);
-  CHECK(::getsockname(fd, reinterpret_cast<sockaddr *>(&addr), &len) == 0);
-  int port = ntohs(addr.sin_port);
-  ::close(fd);
-  return port;
-}
-
 // Runs `scenario` on a client thread against a server started with `limits`,
 // pumping the actor scheduler on the current thread until the scenario ends.
+// Releases the reservation once the server listens; fails the test with the
+// reservation's message ("server never listened on port P") if it never does.
+void release_when_listening(ReservedTcpPort &reserved) {
+  try {
+    reserved.release_once_listening();
+  } catch (const std::exception &error) {
+    LOG(FATAL) << error.what();
+  }
+}
+
 void with_server(tos::http::HttpServer::Limits limits, std::function<void(int port)> scenario,
                  std::shared_ptr<tos::http::HttpServer::Callback> callback = nullptr) {
   if (!callback)
     callback = std::make_shared<OkCallback>();
-  int port = find_free_port();
+  // Held until the server listens, so no other process can listen on the port.
+  ReservedTcpPort reserved_port;
+  int port = reserved_port.port();
   td::IPAddress addr;
   addr.init_ipv4_port("127.0.0.1", port).ensure();
 
@@ -297,6 +296,8 @@ void with_server(tos::http::HttpServer::Limits limits, std::function<void(int po
 
   std::atomic<bool> done{false};
   std::thread client([&] {
+    // Before the first connection; a held reservation would hide the server on macOS.
+    release_when_listening(reserved_port);
     scenario(port);
     done = true;
   });

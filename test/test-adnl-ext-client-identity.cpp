@@ -20,6 +20,7 @@
 #include "td/utils/Time.h"
 #include "td/utils/logging.h"
 #include "td/utils/port/path.h"
+#include "test/reserved-tcp-port.h"
 
 namespace {
 
@@ -35,27 +36,6 @@ void require(bool condition, const std::string &message) {
   if (!condition) {
     fail(message);
   }
-}
-
-td::uint16 allocate_tcp_port() {
-  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  require(fd >= 0, "cannot allocate TCP socket");
-  sockaddr_in address{};
-  address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  address.sin_port = 0;
-  if (::bind(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) != 0) {
-    ::close(fd);
-    fail("cannot reserve TCP port");
-  }
-  socklen_t size = sizeof(address);
-  if (::getsockname(fd, reinterpret_cast<sockaddr *>(&address), &size) != 0) {
-    ::close(fd);
-    fail("cannot read reserved TCP port");
-  }
-  const auto port = ntohs(address.sin_port);
-  ::close(fd);
-  return port;
 }
 
 struct Seen {
@@ -100,7 +80,6 @@ class ReadyFlag final : public adnl::AdnlExtClient::Callback {
 class Harness {
  public:
   Harness() {
-    port_ = allocate_tcp_port();
     db_root_ = "/tmp/tos-adnl-ext-client-identity-" + std::to_string(::getpid());
     td::rmrf(db_root_).ignore();
     require(td::mkdir(db_root_).is_ok(), "cannot create db directory");
@@ -213,9 +192,13 @@ class Harness {
     });
     wait_until([&] { return listening.load(std::memory_order_acquire); }, "ext server listen timed out");
     require(listening_ok, "ext server failed to listen");
+    // The listener holds the port now; a held reservation would hide it on macOS.
+    reserved_port_.release();
   }
 
-  td::uint16 port_ = 0;
+  // Held until the server listens, so no other process can listen on the port.
+  ReservedTcpPort reserved_port_;
+  td::uint16 port_ = reserved_port_.port();
   std::string db_root_;
   std::unique_ptr<td::actor::Scheduler> scheduler_;
   std::shared_ptr<Seen> seen_;
