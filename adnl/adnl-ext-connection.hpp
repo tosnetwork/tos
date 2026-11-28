@@ -58,7 +58,8 @@ class AdnlExtTransportWriter {
 class AdnlExtTransportReader {
  public:
   virtual ~AdnlExtTransportReader() = default;
-  // Bytes placed at the front of `slice`; 0 means the read would block.
+  // Bytes placed at the front of `slice`; 0 means the script has nothing more
+  // for now, and the read goes to the socket itself.
   virtual td::Result<std::size_t> read(td::MutableSlice slice) = 0;
 };
 
@@ -94,7 +95,10 @@ class AdnlExtSocket : public td::SocketFd {
     }
     TRY_RESULT(got, reader_->read(slice));
     if (got == 0) {
-      get_poll_info().clear_flags(td::PollFlags::Read());
+      // The scripted input is exhausted: from here on the socket itself is
+      // read, so its data and its end of stream reach the connection as they
+      // would without a scripted reader.
+      return td::SocketFd::read(slice);
     }
     return got;
   }
@@ -289,6 +293,9 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   bool closing_ = false;
   bool read_eof_ = false;
   bool write_shut_ = false;
+  // The poll layer has reported a close during the ordered close; whether the
+  // peer's stream has really ended is left to a read (closing_loop()).
+  bool close_reported_ = false;
   td::Timestamp closing_deadline_;
   void closing_loop();
   std::size_t pending_output_limit_ = adnl_ext_max_pending_output_bytes;
