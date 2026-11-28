@@ -58,7 +58,8 @@ class AdnlExtTransportWriter {
 class AdnlExtTransportReader {
  public:
   virtual ~AdnlExtTransportReader() = default;
-  // Bytes placed at the front of `slice`; 0 means the read would block.
+  // Bytes placed at the front of `slice`; 0 means the script has nothing more
+  // for now, and the read goes to the socket itself.
   virtual td::Result<std::size_t> read(td::MutableSlice slice) = 0;
 };
 
@@ -69,8 +70,9 @@ struct AdnlExtClosingDiscardTotals {
   // Closing passes that read at least one byte.
   std::atomic<td::uint64> passes{0};
   std::atomic<td::uint64> bytes{0};
-  // Bytes read by passes that began with the peer's end of stream already
-  // reported by the poll layer.
+  // Bytes read by passes that began with a close already reported by the poll
+  // layer: the peer's end of stream, or on kqueue also the EV_EOF the write
+  // filter reports once this end has shut its own write side.
   std::atomic<td::uint64> bytes_after_peer_close{0};
 };
 AdnlExtClosingDiscardTotals &adnl_ext_closing_discard_totals();
@@ -94,7 +96,10 @@ class AdnlExtSocket : public td::SocketFd {
     }
     TRY_RESULT(got, reader_->read(slice));
     if (got == 0) {
-      get_poll_info().clear_flags(td::PollFlags::Read());
+      // The scripted input is exhausted: from here on the socket itself is
+      // read, so its data and its end of stream reach the connection as they
+      // would without a scripted reader.
+      return td::SocketFd::read(slice);
     }
     return got;
   }

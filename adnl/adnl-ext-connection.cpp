@@ -18,6 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include <algorithm>
+#include <cerrno>
 
 #include "td/utils/port/config.h"
 
@@ -39,6 +40,34 @@ void shutdown_write(const td::SocketFd &fd) {
   ::shutdown(fd.get_native_fd().socket(), SHUT_WR);
 #elif TD_PORT_WINDOWS
   ::shutdown(fd.get_native_fd().socket(), SD_SEND);
+#endif
+}
+
+// Whether the peer's stream has ended, decided by the socket itself: a
+// one-byte peek that returns 0 is the end of stream, data or a peek that would
+// block is not. A close reported by the poll layer is only a reason to ask:
+// kqueue reports EV_EOF on the write filter once this end has shut its write
+// side, at any time after that, while the peer may still be sending.
+td::Result<bool> peer_stream_ended(td::SocketFd &fd) {
+#if TD_PORT_POSIX
+  char byte;
+  while (true) {
+    auto n = ::recv(fd.get_native_fd().socket(), &byte, 1, MSG_PEEK | MSG_DONTWAIT);
+    if (n >= 0) {
+      return n == 0;
+    }
+    if (errno == EINTR) {
+      continue;
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      return false;
+    }
+    return td::Status::PosixError(errno, "peeking at the peer's stream failed");
+  }
+#else
+  // Windows builds only the client tools, whose connections never run the
+  // ordered close; keep the poll layer's report there.
+  return td::can_close(fd);
 #endif
 }
 }  // namespace
@@ -378,7 +407,14 @@ void AdnlExtConnection::closing_loop() {
       }
       allowance = input_accounted_;
     }
+    // td never clears Close once the poll layer has reported it, so this holds
+    // for every later pass too.
     bool peer_closed_before = td::can_close(buffered_fd_);
+    if (peer_closed_before) {
+      // A reported close is a reason to read what the peer has left, even
+      // without a read edge; whether its stream has ended is decided below.
+      buffered_fd_.get_poll_info().add_flags(td::PollFlags::Read());
+    }
     std::size_t read = 0;
     if (allowance > 0) {
       auto r_read = buffered_fd_.flush_read(allowance);
@@ -400,13 +436,22 @@ void AdnlExtConnection::closing_loop() {
       }
     }
     // The poll layer reports Close as soon as the peer's FIN is known, while
-    // bytes may still be queued ahead of it. Once the FIN is known a drained
-    // socket reads 0, never "would block", so only a pass that read less than
-    // its allowance has reached the end of the peer's stream. Closing with
-    // input still unread would make the kernel reset the connection and drop
-    // the answers queued for the peer.
+    // bytes may still be queued ahead of it, and on kqueue also once this end
+    // has shut its write side. So a reported close only means: ask the
+    // socket. Only a pass that read less than its allowance can have reached
+    // the end of the peer's stream, and only the socket's own answer decides
+    // that it has. Closing with input still unread or still arriving would
+    // make the kernel reset the connection and drop the answers queued for
+    // the peer.
     if (read < allowance && td::can_close(buffered_fd_)) {
-      read_eof_ = true;
+      auto r_ended = peer_stream_ended(buffered_fd_);
+      if (r_ended.is_error()) {
+        // A reset: nothing more can be delivered to this peer.
+        LOG(DEBUG) << "ADNL external connection reset while closing: " << r_ended.error();
+        stop();
+        return;
+      }
+      read_eof_ = r_ended.ok();
     } else if (read == allowance) {
       // A full chunk, or no budget to read into: under edge-triggered polling
       // the bytes left behind bring no new read edge, so come back for them.

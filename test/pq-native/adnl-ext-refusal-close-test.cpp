@@ -40,6 +40,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -168,6 +169,44 @@ class ScriptedReader final : public adnl::AdnlExtTransportReader {
   std::atomic<size_t> end_reads_{0};
 };
 
+// Scripted input whose exhausted read, once armed, first runs `inject`: a
+// poll event merged while the connection is reading, as kqueue can deliver a
+// write-filter EV_EOF again at any time after this end shut its write side.
+class InjectingReader final : public adnl::AdnlExtTransportReader {
+ public:
+  explicit InjectingReader(std::string bytes) : bytes_(std::move(bytes)) {
+  }
+  td::Result<size_t> read(td::MutableSlice slice) override {
+    if (offset_ < bytes_.size()) {
+      auto n = std::min(slice.size(), bytes_.size() - offset_);
+      std::memcpy(slice.data(), bytes_.data() + offset_, n);
+      offset_ += n;
+      return n;
+    }
+    if (armed_.exchange(false) && inject_) {
+      inject_();
+      injected_.store(true, std::memory_order_release);
+    }
+    return 0;
+  }
+  void set_inject(std::function<void()> inject) {
+    inject_ = std::move(inject);
+  }
+  void arm() {
+    armed_.store(true, std::memory_order_release);
+  }
+  bool injected() const {
+    return injected_.load(std::memory_order_acquire);
+  }
+
+ private:
+  std::string bytes_;
+  size_t offset_ = 0;
+  std::function<void()> inject_;
+  std::atomic<bool> armed_{false};
+  std::atomic<bool> injected_{false};
+};
+
 struct Observation {
   std::mutex mutex;
   size_t dispatched = 0;
@@ -179,6 +218,8 @@ struct Observation {
   // When set, how much of it the connection had taken when it refused.
   std::shared_ptr<ScriptedReader> input;
   size_t consumed_at_refusal = 0;
+  // When set, the connection gives it a way to report a poll close.
+  std::shared_ptr<InjectingReader> injecting;
 };
 
 // The real connection actor with a minimal protocol: the init packet is the
@@ -190,6 +231,10 @@ class RefusingConnection final : public adnl::AdnlExtConnection {
                      std::shared_ptr<adnl::AdnlExtTransportReader> reader, std::shared_ptr<Observation> observation,
                      std::shared_ptr<adnl::AdnlExtByteBudget> input_budget)
       : AdnlExtConnection(std::move(fd), nullptr, false), observation_(std::move(observation)) {
+    if (observation_->injecting) {
+      observation_->injecting->set_inject(
+          [this] { buffered_fd_.get_poll_info().add_flags(td::PollFlags::Write() | td::PollFlags::Close()); });
+    }
     if (writer) {
       set_transport_writer(std::move(writer));
     }
@@ -223,6 +268,14 @@ class RefusingConnection final : public adnl::AdnlExtConnection {
       observation_->consumed_at_refusal = observation_->input->consumed();
     }
     return td::Status::Error(ErrorCode::notready, "refused: reply budget exhausted");
+  }
+
+  // What a kqueue poller reports once this end has shut its write side: the
+  // write filter fires with EV_EOF, which the poll layer turns into Write and
+  // Close, although the peer has not closed anything.
+  void poll_reports_own_shutdown() {
+    buffered_fd_.get_poll_info().add_flags(td::PollFlags::Write() | td::PollFlags::Close());
+    yield();
   }
 
   // An answer whose work completed after the refusal began.
@@ -390,6 +443,10 @@ class Harness {
   }
   void late_answer() {
     scheduler_.run_in_context([&] { td::actor::send_closure(connection_, &RefusingConnection::late_answer); });
+  }
+  void poll_reports_own_shutdown() {
+    scheduler_.run_in_context(
+        [&] { td::actor::send_closure(connection_, &RefusingConnection::poll_reports_own_shutdown); });
   }
   template <class F>
   void wait_until(F&& done, double seconds, const std::string& what) {
@@ -623,15 +680,83 @@ void drain_after_half_close_is_known() {
       input->reads(), held);
 }
 
+// j. After the ordered close has shut this end's write side, a kqueue poller
+// reports the socket closed (EV_EOF on the write filter) while the peer is
+// still sending. That is not the peer's end of stream: the connection must
+// keep reading until the peer closes, because closing the socket with the
+// peer's input still arriving resets the connection, and a reset makes a BSD
+// or macOS peer discard the answers it has received but not yet read.
+void own_write_shutdown_is_not_the_peers_end() {
+  Harness harness;
+  Peer peer;
+  auto observation = std::make_shared<Observation>();
+  harness.open(peer, nullptr, nullptr, observation);
+  peer.write(peer.script(kBatch));
+  harness.wait_until([&] { return refused(observation); }, 5.0, "j: the refusal never came");
+  // The peer reads every answer and the end of file: the write side is shut.
+  PeerReader reader(peer, 3000);
+  harness.wait_until([&] { return reader.done(); }, 4.0, "j: the peer's read did not finish");
+  require(reader.eof(), "j: the peer got no end of file after the answers");
+  require(peer.count_frames(reader.received()) == kAnswers, "j: the peer did not get every answer");
+  harness.poll_reports_own_shutdown();
+  harness.run_for(0.3);
+  require(!closed(observation), "j: the connection took its own write shutdown for the peer's end and closed");
+  // The peer keeps sending, then closes: now the connection may stop.
+  peer.write(peer.script(2).substr(256));
+  peer.shutdown_write();
+  harness.wait_until([&] { return closed(observation); }, 2.0, "j: the connection did not close after the peer");
+  auto held = locked(observation, [](Observation& s) { return s.closed_at - s.refused_at; });
+  require(held < kClosingSeconds, "j: the connection was stopped by its deadline, " + std::to_string(held) + " s");
+  std::printf("REFUSAL_CLOSE_CASE own-shutdown closed_after=%.2fs\n", held);
+}
+
+// k. As j, but kqueue delivers the write-filter EV_EOF again while the closing
+// pass reads. Close is sticky (td never clears it), so the second report adds
+// no new flag state; what k covers beyond j is the closing pass's read through
+// the scripted-reader path with a close reported, after which only a read that
+// finds the peer's end of stream may end the input side. An earlier fix that
+// cleared Close before that read and trusted the flag after it failed here.
+void own_shutdown_reported_again_during_the_read() {
+  Harness harness;
+  Peer peer;
+  auto observation = std::make_shared<Observation>();
+  auto input = std::make_shared<InjectingReader>(peer.script(kBatch));
+  observation->injecting = input;
+  harness.open(peer, nullptr, input, observation);
+  peer.write("x");  // makes the socket readable; the scripted reader supplies the queries
+  harness.wait_until([&] { return refused(observation); }, 5.0, "k: the refusal never came");
+  PeerReader reader(peer, 3000);
+  harness.wait_until([&] { return reader.done(); }, 4.0, "k: the peer's read did not finish");
+  require(reader.eof(), "k: the peer got no end of file after the answers");
+  require(peer.count_frames(reader.received()) == kAnswers, "k: the peer did not get every answer");
+  input->arm();
+  harness.poll_reports_own_shutdown();
+  harness.wait_until([&] { return input->injected() || closed(observation); }, 2.0,
+                     "k: the closing pass never read again");
+  harness.run_for(0.3);
+  require(input->injected(), "k: the second report was never delivered during a read");
+  require(!closed(observation), "k: a close reported during the read was taken for the peer's end");
+  peer.shutdown_write();
+  harness.wait_until([&] { return closed(observation); }, 2.0, "k: the connection did not close after the peer");
+  auto held = locked(observation, [](Observation& s) { return s.closed_at - s.refused_at; });
+  require(held < kClosingSeconds, "k: the connection was stopped by its deadline, " + std::to_string(held) + " s");
+  std::printf("REFUSAL_CLOSE_CASE own-shutdown-again closed_after=%.2fs\n", held);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   SET_VERBOSITY_LEVEL(VERBOSITY_NAME(WARNING));
   const std::string only = argc > 1 ? argv[1] : "all";
   const std::vector<std::pair<std::string, void (*)()>> cases = {
-      {"paused", paused_peer_gets_every_answer},      {"silent", silent_peer_is_released_by_the_deadline},
-      {"late", late_answer_is_not_written},           {"half-closed", half_closed_peer_gets_every_answer},
-      {"reset", frames_before_a_reset_are_delivered}, {"drain-after-half-close", drain_after_half_close_is_known},
+      {"paused", paused_peer_gets_every_answer},
+      {"silent", silent_peer_is_released_by_the_deadline},
+      {"late", late_answer_is_not_written},
+      {"half-closed", half_closed_peer_gets_every_answer},
+      {"reset", frames_before_a_reset_are_delivered},
+      {"drain-after-half-close", drain_after_half_close_is_known},
+      {"own-shutdown", own_write_shutdown_is_not_the_peers_end},
+      {"own-shutdown-again", own_shutdown_reported_again_during_the_read},
   };
   bool ran = false;
   for (auto& [name, run] : cases) {
