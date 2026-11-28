@@ -272,7 +272,7 @@ void with_server(tos::http::HttpServer::Limits limits, std::function<void(int po
                  std::shared_ptr<tos::http::HttpServer::Callback> callback = nullptr) {
   if (!callback)
     callback = std::make_shared<OkCallback>();
-  // Held while the server runs, so no other process can listen on the port.
+  // Held until the server listens, so no other process can listen on the port.
   ReservedTcpPort reserved_port;
   int port = reserved_port.port();
   td::IPAddress addr;
@@ -285,6 +285,8 @@ void with_server(tos::http::HttpServer::Limits limits, std::function<void(int po
 
   std::atomic<bool> done{false};
   std::thread client([&] {
+    // Before the first connection; a held reservation would hide the server on macOS.
+    reserved_port.release_once_listening();
     scenario(port);
     done = true;
   });

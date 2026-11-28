@@ -156,6 +156,10 @@ class Harness {
         masters_.push_back(FullNodeMaster::create(short_id, listener.port, FileHash{}, keyring_.get(), adnl_.get(),
                                                   td::actor::ActorId<validator::ValidatorManagerInterface>{}, limiter));
       });
+      // The master reports no listening signal: wait until the kernel lists its
+      // listener where it can (Linux), release, and only then connect.
+      wait_until([&] { return reserved_port.may_release(); }, "master did not start listening");
+      reserved_port.release();
       wait_until([&] { return tcp_port_accepts(listener.port); }, "master did not start listening");
       listeners.push_back(listener);
     }

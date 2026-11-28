@@ -384,7 +384,7 @@ void adnl_ext_disconnected_query_refuses() {
 }
 
 td::BufferSlice adnl_ext_round_trip(const td::BufferSlice& proof) {
-  // Held while the server runs, so no other process can listen on the port.
+  // Held until the server listens, so no other process can listen on the port.
   ReservedTcpPort reserved_port;
   const auto port = reserved_port.port();
   const auto db_root = "/tmp/tos-pq-lite-forward-" + std::to_string(::getpid());
@@ -466,6 +466,8 @@ td::BufferSlice adnl_ext_round_trip(const td::BufferSlice& proof) {
       }
     }
     require_ok(std::move(listening_status), "transport server listen readiness");
+    // The listener holds the port now; a held reservation would hide it on macOS.
+    reserved_port.release();
     scheduler.run_in_context([&] {
       td::IPAddress address;
       require_ok(address.init_host_port("127.0.0.1", port), "transport server address");

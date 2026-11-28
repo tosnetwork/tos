@@ -728,7 +728,7 @@ void server_source_share() {
   auto public_key = private_key.compute_public_key();
   adnl::AdnlNodeIdFull server_id{public_key};
   adnl::AdnlNodeIdShort server_short{public_key.compute_short_id()};
-  // Held while the server runs, so no other process can listen on the port.
+  // Held until the server listens, so no other process can listen on the port.
   ReservedTcpPort reserved_port;
   auto port = reserved_port.port();
   bool listening = false;
@@ -766,6 +766,8 @@ void server_source_share() {
     }
   };
   run_until([&] { return listening; }, 10.0, "ext server did not start", {});
+  // The listener holds the port now; a held reservation would hide it on macOS.
+  reserved_port.release();
 
   // Every connection's init block is acknowledged before it sends anything else.
   auto connect = [&](const std::string& ip) {

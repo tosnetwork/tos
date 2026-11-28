@@ -621,6 +621,8 @@ void run_case(const std::string& root, const std::array<Fixture, 2>& fixture, Ca
           }));
     });
     wait([&] { return listening.load(); }, "listener bind");
+    // The listener holds the port now; a held reservation would hide it on macOS.
+    reserved_port.release();
     td::IPAddress address;
     must(address.init_host_port("127.0.0.1", listener_port), "loopback address");
     ready[i] = std::make_shared<std::atomic<bool>>(false);

@@ -1219,6 +1219,9 @@ add_dependencies(test-rldp-http-tunnel rldp-http-proxy)
 # for HttpServer and for the http-proxy binary. It has its own main: without
 # such an address it fails, unless TOS_TEST_ALLOW_LOOPBACK_ONLY=1 asks for a
 # reported skip (exit 77).
+add_executable(test-reserved-tcp-port test/test-reserved-tcp-port.cpp)
+target_include_directories(test-reserved-tcp-port PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(test-http-listen-address test/test-http-listen-address.cpp)
 target_link_libraries(test-http-listen-address PRIVATE toshttp tdactor tdutils)
 target_compile_definitions(test-http-listen-address PRIVATE HTTP_PROXY_BINARY="$<TARGET_FILE:http-proxy>")
@@ -2301,6 +2304,7 @@ tos_test(test-json-rpc-transport)
 tos_test(test-json-rpc-account-capability)
 tos_test(test-rldp-http-tunnel)
 tos_test(test-http-listen-address)
+tos_test(test-reserved-tcp-port)
 set_tests_properties(test-http-listen-address PROPERTIES SKIP_RETURN_CODE 77)
 tos_test(test-wallet-message-processor)
 tos_test(test-vm-exception-hardening)

@@ -343,10 +343,12 @@ class Harness {
     });
     wait_until([&] { return listening.load(std::memory_order_acquire); }, 10.0, "ext server listen timed out");
     require(listening_ok, "ext server failed to listen");
+    // The listener holds the port now; a held reservation would hide it on macOS.
+    reserved_port_.release();
   }
 
   std::string name_;
-  // Held for the whole harness, so no other process can listen on the port.
+  // Held until the server listens, so no other process can listen on the port.
   ReservedTcpPort reserved_port_;
   td::uint16 port_ = reserved_port_.port();
   std::string db_root_;

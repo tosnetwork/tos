@@ -201,6 +201,7 @@ TEST(HttpListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
   int port = reserved->port();
   auto bare = tos::http::HttpServer::parse_listen_address(std::to_string(port)).move_as_ok();
   with_server_at(bare, [&] {
+    reserved->release_once_listening();
     ASSERT_TRUE(eventually_connects("127.0.0.1", port));
     ASSERT_TRUE(!tcp_connects(other, port));
   });
@@ -210,6 +211,7 @@ TEST(HttpListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
   port = reserved->port();
   auto any = tos::http::HttpServer::parse_listen_address("0.0.0.0:" + std::to_string(port)).move_as_ok();
   with_server_at(any, [&] {
+    reserved->release_once_listening();
     ASSERT_TRUE(eventually_connects("127.0.0.1", port));
     ASSERT_TRUE(tcp_connects(other, port));
   });
@@ -226,6 +228,7 @@ TEST(HttpProxyListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
   int port = reserved->port();
   {
     Child proxy(binary, {"-p", std::to_string(port)});
+    reserved->release_once_listening();
     ASSERT_TRUE(eventually_connects("127.0.0.1", port));
     ASSERT_TRUE(!tcp_connects(other, port));
   }
@@ -235,6 +238,7 @@ TEST(HttpProxyListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
   port = reserved->port();
   {
     Child proxy(binary, {"-p", "0.0.0.0:" + std::to_string(port)});
+    reserved->release_once_listening();
     ASSERT_TRUE(eventually_connects(other, port));
   }
 }
