@@ -759,6 +759,9 @@ fn measured(width: usize, entries: &[([u8; 32], bool)]) -> (Fixture, Vec<Registr
     (f, keys)
 }
 
+/// One measured refusal: label, population, action kind, digest, epoch, exit.
+type Refusal<'a> = (String, &'a Vec<([u8; 32], bool)>, u8, [u8; 32], u64, i32);
+
 fn refs(keys: &[RegistryKey]) -> Vec<&RegistryKey> {
     keys.iter().collect()
 }
@@ -774,44 +777,97 @@ fn epoch_paths_fit_the_gas_ceiling() {
             let row = |path: &str, gas: Gas| {
                 eprintln!("width {width} {shape:?}: {path}: gas {} exit {}", gas.used, gas.exit);
             };
-            let probe = [0xd1; 32];
+            // A shallow probe, and a deep one that shares a 254-bit prefix with
+            // the spine's keys 1 and 2: the dictionary walk of an add or refusal
+            // is as long as the longest common prefix it meets.
+            let mut deep = [0u8; 32];
+            deep[31] = 3;
+            let probes = [("shallow", [0xd1u8; 32]), ("deep", deep)];
 
             // Add 127 -> 128 live, and 383 -> 384 admitted with live below 128.
             for (path, live, admitted) in
                 [("add 127->128 live", 127, 127), ("add 383->384 admitted", 100, 383)]
             {
-                let (mut f, keys) = measured(width, &population(shape, live, admitted));
-                let (_, result) = f.delegation(DELEGATE_AGENT, &probe, 1, &refs(&keys));
-                let gas = gas_at(&result, &f.registry);
-                row(path, gas);
-                assert_within_ceiling(path, gas, true);
+                for (probe_name, probe) in probes {
+                    let (mut f, keys) = measured(width, &population(shape, live, admitted));
+                    let (_, result) = f.delegation(DELEGATE_AGENT, &probe, 1, &refs(&keys));
+                    let gas = gas_at(&result, &f.registry);
+                    row(&format!("{path} ({probe_name} probe)"), gas);
+                    assert_within_ceiling(path, gas, true);
+                }
             }
 
-            // Every refused add.
+            // Every refused add and refused withdrawal. A refusal changes no
+            // state, so one fixture per population serves all of them.
             let full_live = population(shape, 128, 128);
             let full_admitted = population(shape, 127, 384);
             let withdrawn = population(shape, 127, 383);
-            let withdrawn_digest = withdrawn[200].0;
-            let live_digest = withdrawn[0].0;
-            for (path, entries, digest, epoch, code) in [
-                ("refused add: live full", &full_live, probe, 1, ERR_CAPACITY_FULL),
-                ("refused add: admitted full", &full_admitted, probe, 1, ERR_CAPACITY_FULL),
+            let mut refusals: Vec<Refusal<'_>> = Vec::new();
+            for (probe_name, probe) in probes {
+                refusals.extend([
+                    (
+                        format!("refused add: live full ({probe_name})"),
+                        &full_live,
+                        DELEGATE_AGENT,
+                        probe,
+                        1,
+                        ERR_CAPACITY_FULL,
+                    ),
+                    (
+                        format!("refused add: admitted full ({probe_name})"),
+                        &full_admitted,
+                        DELEGATE_AGENT,
+                        probe,
+                        1,
+                        ERR_CAPACITY_FULL,
+                    ),
+                    (
+                        format!("refused add: stale epoch ({probe_name})"),
+                        &withdrawn,
+                        DELEGATE_AGENT,
+                        probe,
+                        2,
+                        ERR_EPOCH_MISMATCH,
+                    ),
+                    (
+                        format!("refused withdraw: absent digest ({probe_name})"),
+                        &withdrawn,
+                        WITHDRAW_DELEGATION,
+                        probe,
+                        1,
+                        ERR_DIGEST_NOT_LIVE,
+                    ),
+                ]);
+            }
+            for (path, entries, kind, digest, epoch, code) in refusals {
+                let (mut f, keys) = measured(width, entries);
+                let (_, result) = f.delegation(kind, &digest, epoch, &refs(&keys));
+                let gas = gas_at(&result, &f.registry);
+                row(&path, gas);
+                assert_eq!(gas.exit, code, "{path}");
+                assert_within_ceiling(&path, gas, false);
+            }
+            // Refusals naming a stored digest, at every stored position.
+            let (mut f, keys) = measured(width, &withdrawn);
+            for (path, kind, wanted_withdrawn, code) in [
+                ("refused add: withdrawn digest", DELEGATE_AGENT, true, ERR_WITHDRAWN_DIGEST),
+                ("refused add: duplicate live", DELEGATE_AGENT, false, ERR_BAD_TRANSITION),
                 (
-                    "refused add: withdrawn digest",
-                    &withdrawn,
-                    withdrawn_digest,
-                    1,
+                    "refused withdraw: withdrawn digest",
+                    WITHDRAW_DELEGATION,
+                    true,
                     ERR_WITHDRAWN_DIGEST,
                 ),
-                ("refused add: duplicate live", &withdrawn, live_digest, 1, ERR_BAD_TRANSITION),
-                ("refused add: stale epoch", &withdrawn, probe, 2, ERR_EPOCH_MISMATCH),
             ] {
-                let (mut f, keys) = measured(width, entries);
-                let (_, result) = f.delegation(DELEGATE_AGENT, &digest, epoch, &refs(&keys));
-                let gas = gas_at(&result, &f.registry);
-                row(path, gas);
-                assert_eq!(gas.exit, code, "{path}");
-                assert_within_ceiling(path, gas, false);
+                let mut worst = 0;
+                for (digest, _) in withdrawn.iter().filter(|(_, w)| *w == wanted_withdrawn) {
+                    let (_, result) = f.delegation(kind, digest, 1, &refs(&keys));
+                    let gas = gas_at(&result, &f.registry);
+                    assert_eq!(gas.exit, code, "{path}");
+                    assert_within_ceiling(path, gas, false);
+                    worst = worst.max(gas.used);
+                }
+                eprintln!("width {width} {shape:?}: {path} (worst position): gas {worst}");
             }
 
             // Withdrawal at every position of a full 128 / 384 set.

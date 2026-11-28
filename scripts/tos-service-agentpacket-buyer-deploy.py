@@ -52,9 +52,10 @@ def main() -> int:
     file_hash = base64.b64decode(zero["file_hash"])
     code_bytes = base64.b64decode(
         b"".join(
-            (REPO / "crypto/smartcont/tos-service-native-registry-v2.boc.base64")
-            .read_bytes()
-            .split()
+            (
+                REPO
+                / "crypto/smartcont/tos-service-native-registry-v2.boc.base64"
+            ).read_bytes().split()
         ),
         validate=True,
     )
@@ -67,7 +68,9 @@ def main() -> int:
     controller = load_test_identity(identities, args.role)
     initial_policy = gate.policy(controller)
     nonce = hashlib.sha256(b"tos-service-local-agentpacket-buyer-v1").digest()
-    agent_id = gate.agent_identity(root, file_hash, args.network_id, nonce, initial_policy)
+    agent_id = gate.agent_identity(
+        root, file_hash, args.network_id, nonce, initial_policy
+    )
     init = gate.state_init(code, registry, 1, agent_id)
     address = gate.address_of(0, init)
 
@@ -75,7 +78,9 @@ def main() -> int:
     try:
         view = gate.state_view(gate.account_data(config_path, address.to_str()))
     except Exception:
-        payer_key = nacl.signing.SigningKey(gate.read_private(state_dir / "main-wallet.pk"))
+        payer_key = nacl.signing.SigningKey(
+            gate.read_private(state_dir / "main-wallet.pk")
+        )
         address_file = gate.read_private(state_dir / "main-wallet.addr")
         payer = Address(
             (
@@ -124,7 +129,8 @@ def main() -> int:
         "agent_id": "agent_" + agent_id.hex(),
         "registry_address": address.to_str(),
         "registry_address_raw": (
-            f"{address.to_tl_account_id()['workchain']}:{address.to_tl_account_id()['id']}"
+            f"{address.to_tl_account_id()['workchain']}:"
+            f"{address.to_tl_account_id()['id']}"
         ),
         "state": view,
         "transaction": gate.account_transaction(config_path, address.to_str()),

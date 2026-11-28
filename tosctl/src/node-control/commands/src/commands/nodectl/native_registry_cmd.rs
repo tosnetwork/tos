@@ -826,6 +826,70 @@ struct PlannedAction {
     generation: u64,
     sequence: u64,
     predecessor: [u8; 32],
+    /// The authorization epoch a delegation add or withdrawal signs.
+    signed_epoch: Option<u64>,
+    /// What an epoch-advancing action does to the Agent's delegations.
+    epoch_bump: Option<EpochBump>,
+}
+
+/// A policy update, recovery completion or tombstone advances the Agent's
+/// authorization epoch and drops every delegation of the old one: each
+/// Endpoint or transport delegation must be issued afresh at the new epoch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EpochBump {
+    from: u64,
+    to: u64,
+    cleared_live: u16,
+    cleared_withdrawn: u16,
+}
+
+impl EpochBump {
+    fn view(&self) -> serde_json::Value {
+        serde_json::json!({
+            "from": self.from,
+            "to": self.to,
+            "cleared_live_delegations": self.cleared_live,
+            "cleared_withdrawn_delegations": self.cleared_withdrawn,
+            "notice": format!(
+                "this action moves the authorization epoch {} -> {} and clears {} live \
+                 delegation(s); every Endpoint and transport delegation must be issued again \
+                 at epoch {}",
+                self.from, self.to, self.cleared_live, self.to
+            ),
+        })
+    }
+}
+
+/// The epoch change of `kind` on an Agent in `detail`, refused before signing
+/// when the epoch cannot advance (the contract's 2217).
+fn epoch_bump(kind: u8, detail: &NativeRegistryStateDetail) -> anyhow::Result<Option<EpochBump>> {
+    if !matches!(
+        kind,
+        NATIVE_KIND_UPDATE_AGENT_POLICY | NATIVE_KIND_COMPLETE_RECOVERY | NATIVE_KIND_REVOKE_AGENT
+    ) {
+        return Ok(None);
+    }
+    let NativeRegistryStateDetail::Agent {
+        authorization_epoch,
+        live_delegations,
+        admitted_delegations,
+        ..
+    } = detail
+    else {
+        anyhow::bail!("not an Agent state")
+    };
+    let to = authorization_epoch.checked_add(1).with_context(|| {
+        format!(
+            "the authorization epoch is at its maximum; the registry refuses this action \
+             (exit {NATIVE_REGISTRY_ERR_EPOCH_EXHAUSTED})"
+        )
+    })?;
+    Ok(Some(EpochBump {
+        from: *authorization_epoch,
+        to,
+        cleared_live: *live_delegations,
+        cleared_withdrawn: admitted_delegations.saturating_sub(*live_delegations),
+    }))
 }
 
 fn sha256(bytes: &[u8]) -> [u8; 32] {
@@ -849,6 +913,14 @@ fn plan_action(
     let (agent_address, agent) = objects.agent;
     let current = agent_state(agent)?;
     let policy = agent_policy(current)?;
+    let bump = epoch_bump(code, &current.detail)?;
+    let signed_epoch = match (&current.detail, code) {
+        (
+            NativeRegistryStateDetail::Agent { authorization_epoch, .. },
+            NATIVE_KIND_DELEGATE_AGENT | NATIVE_KIND_WITHDRAW_AGENT_DELEGATION,
+        ) => Some(*authorization_epoch),
+        _ => None,
+    };
     check_native_threshold(&policy, signers, code)?;
     if native_kind_takes_counterparty(code) {
         ensure!(!counter.is_empty(), "this action kind needs --counter-signer");
@@ -1001,6 +1073,8 @@ fn plan_action(
                 generation: 1,
                 sequence: 1,
                 predecessor: [0; 32],
+                signed_epoch: None,
+                epoch_bump: None,
             });
         }
         (_, _) if capability_kind => {
@@ -1082,6 +1156,8 @@ fn plan_action(
         generation,
         sequence,
         predecessor,
+        signed_epoch,
+        epoch_bump: bump,
     })
 }
 
@@ -1265,7 +1341,17 @@ async fn prepare_action<C: RegistryChain, S: ControllerSigner>(
     let counterparty = sign_all(signer, counter_names, &counter_keys, &planned.action).await?;
     let body =
         build_native_submission(&loaded.domain, &planned.action, 1, &authority, &counterparty)?;
-    Ok(serde_json::json!({
+    planned_view(kind, &planned, now, &body)
+}
+
+/// What `action` prints for one planned and signed action.
+fn planned_view(
+    kind: ActionKind,
+    planned: &PlannedAction,
+    now: u64,
+    body: &Cell,
+) -> anyhow::Result<serde_json::Value> {
+    let mut view = serde_json::json!({
         "kind": kind.to_possible_value_name(),
         "kind_code": planned.kind,
         "target_id": hex::encode(planned.target_id),
@@ -1276,8 +1362,17 @@ async fn prepare_action<C: RegistryChain, S: ControllerSigner>(
         "sequence": planned.sequence,
         "predecessor": hex::encode(planned.predecessor),
         "chain_time": now,
-        "body_boc": b64(&body)?,
-    }))
+        "body_boc": b64(body)?,
+    });
+    if let Some(map) = view.as_object_mut() {
+        if let Some(epoch) = planned.signed_epoch {
+            map.insert("authorization_epoch".into(), epoch.into());
+        }
+        if let Some(bump) = &planned.epoch_bump {
+            map.insert("epoch_change".into(), bump.view());
+        }
+    }
+    Ok(view)
 }
 
 fn b64(cell: &Cell) -> anyhow::Result<String> {
@@ -2123,7 +2218,10 @@ mod tests {
         let add =
             plan(ActionKind::Delegate, ActionInput::Delegate([0x71; 32]), &objects, &[1], &[], 0)
                 .expect("add");
-        assert_eq!(signed_epoch(&add), 7);
+        assert_eq!((signed_epoch(&add), add.signed_epoch, add.epoch_bump), (7, Some(7), None));
+        let view = planned_view(ActionKind::Delegate, &add, 0, &Cell::default()).expect("view");
+        assert_eq!(view["authorization_epoch"], 7);
+        assert!(view.get("epoch_change").is_none());
         let live = delegation_digest(0);
         let withdrawn = delegation_digest(1);
         let withdraw = plan(
@@ -2182,6 +2280,79 @@ mod tests {
             .is_ok(),
             "a withdrawal needs no capacity"
         );
+    }
+
+    /// A policy update or tombstone shows the epoch change and the delegations
+    /// it clears, and an Agent at the largest epoch is refused before signing.
+    #[test]
+    fn epoch_advancing_actions_show_what_they_clear() {
+        let aa = address(1);
+        let set_epoch = |object: &mut NativeRegistryObject, epoch: u64| {
+            if let Some(NativeRegistryState {
+                detail:
+                    NativeRegistryStateDetail::Agent {
+                        authorization_epoch,
+                        live_delegations,
+                        delegation_entries,
+                        ..
+                    },
+                ..
+            }) = object.state.as_mut()
+            {
+                *authorization_epoch = epoch;
+                *live_delegations = 2;
+                for entry in delegation_entries.iter_mut() {
+                    entry.admission_epoch = epoch;
+                }
+                delegation_entries[2].withdrawn = true;
+            }
+        };
+        let mut a = agent(1, false, 3);
+        set_epoch(&mut a, 7);
+        let objects = ActionObjects { agent: (&aa, &a), capability: None, new_owner: None };
+        let expected = EpochBump { from: 7, to: 8, cleared_live: 2, cleared_withdrawn: 1 };
+        let update = plan(
+            ActionKind::UpdatePolicy,
+            ActionInput::UpdatePolicy(one_key_policy(3, 60)),
+            &objects,
+            &[1],
+            &[3],
+            0,
+        )
+        .expect("update");
+        assert_eq!((update.epoch_bump, update.signed_epoch), (Some(expected), None));
+        let view =
+            planned_view(ActionKind::UpdatePolicy, &update, 0, &Cell::default()).expect("view");
+        assert_eq!(view["epoch_change"]["from"], 7);
+        assert_eq!(view["epoch_change"]["to"], 8);
+        assert_eq!(view["epoch_change"]["cleared_live_delegations"], 2);
+        assert_eq!(view["epoch_change"]["cleared_withdrawn_delegations"], 1);
+        assert!(view["epoch_change"]["notice"].as_str().expect("notice").contains("7 -> 8"));
+        assert!(view.get("authorization_epoch").is_none());
+        let revoke =
+            plan(ActionKind::RevokeAgent, ActionInput::RevokeAgent, &objects, &[1], &[], 0)
+                .expect("revoke");
+        assert_eq!(revoke.epoch_bump, Some(expected));
+        let add =
+            plan(ActionKind::Delegate, ActionInput::Delegate([0x71; 32]), &objects, &[1], &[], 0)
+                .expect("add");
+        assert_eq!(add.epoch_bump, None);
+
+        set_epoch(&mut a, u64::MAX);
+        let objects = ActionObjects { agent: (&aa, &a), capability: None, new_owner: None };
+        for (kind, input, counter) in [
+            (
+                ActionKind::UpdatePolicy,
+                ActionInput::UpdatePolicy(one_key_policy(3, 60)),
+                &[3u8][..],
+            ),
+            (ActionKind::RevokeAgent, ActionInput::RevokeAgent, &[][..]),
+        ] {
+            let error = plan(kind, input, &objects, &[1], counter, 0).expect_err("at MAX");
+            assert!(error.to_string().contains("2217"), "{kind:?}: {error}");
+        }
+        plan(ActionKind::Delegate, ActionInput::Delegate([0x71; 32]), &objects, &[1], &[], 0)
+            .expect("an add at MAX is still planned");
     }
 
     #[test]

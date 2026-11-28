@@ -882,9 +882,14 @@ Release: `tos-service-native-registry-v2` is built from
 its code hash `d3bb66d0...b28a`, BOC and size; its source is preserved byte for byte
 (apart from a header note, which does not reach the code) as
 `crypto/smartcont/native-registry-v1-code.fc`, so the v1 build stays reproducible.
-The C++ embed (`with_tvm_code("native-registry")`) still embeds v1, so the
-December v1 default is unchanged. tosctl's builders, strict reader and
-`agent native-registry action` CLI, and the local Gate C scripts, target v2.
+tosctl's builders, strict reader and `agent native-registry action` CLI, the
+local Gate C scripts and the tosctl Nix inputs target v2, and there is
+deliberately no v1/v2 selector: a tosctl built from a main that contains this
+change ships the v2 code. The December 1-4 release is cut from main and must stay
+on v1 (decision 33), so this change, and the ai changes built on it, merge only
+after the v2026.12 release commit is pinned (decision 37). That the C++ embed
+(`with_tvm_code("native-registry")`) still carries v1 does not by itself keep the
+release on v1.
 
 Error mapping as implemented: an add of a digest stored as withdrawn and a
 withdrawal of a digest stored as withdrawn both refuse with **2218**; a withdrawal
@@ -895,18 +900,23 @@ refusal.
 
 Gas, Rust executor, 2,000,000-gas transaction limit, every value at or below the
 800,000 ceiling. Populations are seeded in the contract's exact layout; the bump
-rows hold 128 live / 384 admitted entries; "withdraw" is the worst of all 128
-positions of a 128 / 384 set, withdrawn in turn.
+rows hold 128 live / 384 admitted entries. Each add and each refusal naming a new
+digest is the worse of a shallow probe (`0xd1` repeated) and a deep one
+(`0...03`, which shares a 254-bit prefix with the spine keys 1 and 2); each
+refusal naming a stored digest, and "withdraw", is the worst over every stored
+position.
 
 | Path | 1 key, hashed | 1 key, spine | 8 keys, hashed | 8 keys, spine |
 | --- | ---: | ---: | ---: | ---: |
-| add 127 -> 128 live | 31,601 | 27,851 | 88,686 | 84,936 |
-| add 383 -> 384 admitted | 32,851 | 28,476 | 89,936 | 85,561 |
-| refused add: live full (128/128) | 13,828 | 13,228 | 13,828 | 13,228 |
-| refused add: admitted full (127/384) | 14,028 | 13,328 | 14,028 | 13,328 |
-| refused add: withdrawn digest | 13,728 | 18,628 | 13,728 | 18,628 |
-| refused add: duplicate live | 14,124 | 38,624 | 14,124 | 38,624 |
+| add 127 -> 128 live | 32,226 | 106,601 | 89,311 | 163,686 |
+| add 383 -> 384 admitted | 32,851 | 187,226 | 89,936 | 244,311 |
+| refused add: live full (128/128) | 13,928 | 25,928 | 13,928 | 25,928 |
+| refused add: admitted full (127/384) | 14,028 | 38,728 | 14,028 | 38,728 |
+| refused add: withdrawn digest | 14,128 | 25,928 | 14,128 | 25,928 |
+| refused add: duplicate live | 14,224 | 38,624 | 14,224 | 38,624 |
 | refused add: stale epoch | 12,019 | 12,019 | 12,019 | 12,019 |
+| refused withdraw: withdrawn digest (2218) | 14,088 | 25,888 | 14,088 | 25,888 |
+| refused withdraw: absent digest (2220) | 13,560 | 38,260 | 13,560 | 38,260 |
 | withdraw (worst position) | 33,468 | 185,968 | 90,553 | 243,053 |
 | update_agent_policy | 34,436 | 34,436 | 155,545 | 155,545 |
 | initiate_recovery | 34,926 | 34,926 | 156,455 | 156,455 |
