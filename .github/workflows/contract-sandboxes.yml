@@ -468,6 +468,15 @@ jobs:
           FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
         run: python3 scripts/service-actor-solvency-mutations.py
 
+      # Each broken epoch, delegation-bound or identity-tag rule in the registry
+      # contract or its strict reader must turn a named test red.
+      - name: Native Registry epoch and delegation guard controls
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC_BIN: ${{ github.workspace }}/build/crypto/func
+          FIFT_BIN: ${{ github.workspace }}/build/crypto/fift
+        run: python3 scripts/native-registry-epoch-mutations.py --layer contract --layer reader
+
       - name: Sandbox source-root discovery
         run: cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_sandbox --lib paths::tests
 

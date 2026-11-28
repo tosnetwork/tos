@@ -2,7 +2,7 @@
   "schema": "tos.contract.release.v1",
   "protocol": "tos_service_v1",
   "contract": "tos-service-native-registry-v1",
-  "source": "crypto/smartcont/native-registry-code.fc",
+  "source": "crypto/smartcont/native-registry-v1-code.fc",
   "stdlib": "crypto/smartcont/stdlib.fc",
   "build_script": "scripts/build-tos-service-native-registry-v1.sh",
   "compiler": {

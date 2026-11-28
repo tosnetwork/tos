@@ -602,7 +602,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
       ${NATIVE_REGISTRY_ENV}
       ${NATIVE_REGISTRY_SHELL} ${TOS_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
       ${NATIVE_REGISTRY_CPP} native-registry
-    MAIN_DEPENDENCY smartcont/native-registry-code.fc
+    MAIN_DEPENDENCY smartcont/native-registry-v1-code.fc
     DEPENDS func fift smartcont/stdlib.fc smartcont/pq.fc smartcont/pq-bytes.fc
       smartcont/tos-service-native-registry-v1.boc.base64
       smartcont/tos-service-native-registry-v1.release.json

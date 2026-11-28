@@ -18,8 +18,13 @@ import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-RELEASE_MANIFEST = REPO / "crypto/smartcont/tos-service-native-registry-v1.release.json"
-FROZEN_CODE_BASE64 = REPO / "crypto/smartcont/tos-service-native-registry-v1.boc.base64"
+# The release the deployment entry points ship: v2, with authorization epochs and
+# delegation withdrawal. The v1 release stays frozen beside it, unchanged, for the
+# networks that already run it; nothing here selects it as a fallback.
+RELEASE_MANIFEST = REPO / "crypto/smartcont/tos-service-native-registry-v2.release.json"
+FROZEN_CODE_BASE64 = REPO / "crypto/smartcont/tos-service-native-registry-v2.boc.base64"
+V1_RELEASE_MANIFEST = REPO / "crypto/smartcont/tos-service-native-registry-v1.release.json"
+V1_FROZEN_CODE_BASE64 = REPO / "crypto/smartcont/tos-service-native-registry-v1.boc.base64"
 
 CODE_HASH_PREFIX = "tvm-cell-sha256:"
 HEX_256 = re.compile(r"^[0-9a-f]{64}$")

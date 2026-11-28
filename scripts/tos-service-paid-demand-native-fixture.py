@@ -43,9 +43,9 @@ def read_network(config_path: Path, network_id: str):
     file_hash = base64.b64decode(zero["file_hash"])
     code_bytes = base64.b64decode(
         b"".join(
-            (
-                REPO / "crypto/smartcont/tos-service-native-registry-v1.boc.base64"
-            ).read_bytes().split()
+            (REPO / "crypto/smartcont/tos-service-native-registry-v2.boc.base64")
+            .read_bytes()
+            .split()
         ),
         validate=True,
     )
@@ -58,9 +58,7 @@ def read_network(config_path: Path, network_id: str):
 def payer(state_dir: Path):
     key = nacl.signing.SigningKey(gate.read_private(state_dir / "main-wallet.pk"))
     raw = gate.read_private(state_dir / "main-wallet.addr")
-    address = gate.Address(
-        (int.from_bytes(raw[32:36], "big", signed=True), raw[:32])
-    )
+    address = gate.Address((int.from_bytes(raw[32:36], "big", signed=True), raw[:32]))
     return key, address
 
 
@@ -95,12 +93,7 @@ def ensure_base(args):
     provider_view = existing_view(config_path, provider_address)
     if provider_view is None:
         query = int(time.time_ns()) & ((1 << 64) - 1)
-        payload = (
-            gate.Builder()
-            .store_bytes(PROVIDER_NONCE)
-            .store_ref(controller_policy)
-            .end_cell()
-        )
+        payload = gate.Builder().store_bytes(PROVIDER_NONCE).store_ref(controller_policy).end_cell()
         action = gate.action(
             gate.REGISTER_AGENT,
             1,
@@ -189,9 +182,7 @@ def ensure_base(args):
                 gate.signature_set(None, action),
             ),
         )
-        capability_view = gate.wait_state(
-            config_path, capability_address.to_str(), 1, 1
-        )
+        capability_view = gate.wait_state(config_path, capability_address.to_str(), 1, 1)
     if (
         capability_view["kind"] != "capability"
         or capability_view["tombstone"]
@@ -209,7 +200,17 @@ def ensure_base(args):
         "registry_code_hash": "tvm-cell-sha256:" + code.hash.hex(),
         "provider_state": provider_view,
         "capability_state": capability_view,
-    }, (config_path, signed_domain, payer_key, payer_address, controller, provider_raw, provider_address, capability_raw, capability_address)
+    }, (
+        config_path,
+        signed_domain,
+        payer_key,
+        payer_address,
+        controller,
+        provider_raw,
+        provider_address,
+        capability_raw,
+        capability_address,
+    )
 
 
 def add_version(args, result, runtime):

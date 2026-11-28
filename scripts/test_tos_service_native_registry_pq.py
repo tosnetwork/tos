@@ -17,6 +17,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -41,9 +42,11 @@ NETWORK = "tos-testnet"
 
 def load_gate():
     """Gate C itself, so that its own builders are what is checked."""
-    spec = importlib.util.spec_from_file_location(
-        "gate_c", ROOT / "scripts/tos-service-native-registry-local-gate-c.py"
+    # NATIVE_REGISTRY_GATE names an edited copy for the mutation controls only.
+    path = os.environ.get(
+        "NATIVE_REGISTRY_GATE", str(ROOT / "scripts/tos-service-native-registry-local-gate-c.py")
     )
+    spec = importlib.util.spec_from_file_location("gate_c", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
