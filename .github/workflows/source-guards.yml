@@ -116,3 +116,9 @@ jobs:
           PYTHONDONTWRITEBYTECODE: '1'
           PQ_TEST_SIGNER: ${{ github.workspace }}/build-pq-signer/test-pq-contracts-sign
         run: uv run --frozen python scripts/test_tos_service_native_registry_pq.py
+
+      - name: Local Native Registry scripts refuse a reverted identity tag
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          PQ_TEST_SIGNER: ${{ github.workspace }}/build-pq-signer/test-pq-contracts-sign
+        run: uv run --frozen python scripts/native-registry-epoch-mutations.py --layer gate

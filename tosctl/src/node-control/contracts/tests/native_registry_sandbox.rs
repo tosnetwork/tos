@@ -61,10 +61,20 @@ const ERR_BAD_POLICY: i32 = 2207;
 const ERR_BAD_SIGNATURE: i32 = 2208;
 const ERR_IMMUTABLE_VERSION: i32 = 2211;
 const ERR_TIMELOCK: i32 = 2212;
+/// The identity preimage's object-kind tags of this registry release: Agent 3,
+/// Capability 2.
+const AGENT_IDENTITY_TAG: u8 = 3;
+const CAPABILITY_IDENTITY_TAG: u8 = 2;
 
+/// The frozen release code, or -- for the mutation controls only -- the BOC at
+/// `NATIVE_REGISTRY_CODE_BOC`, a mutant built from an edited source.
 fn code() -> Cell {
+    if let Some(path) = std::env::var_os("NATIVE_REGISTRY_CODE_BOC") {
+        let bytes = std::fs::read(path).expect("mutant registry BOC");
+        return read_single_root_boc(bytes).expect("mutant registry code");
+    }
     let encoded: String =
-        include_str!("../../../../../crypto/smartcont/tos-service-native-registry-v1.boc.base64")
+        include_str!("../../../../../crypto/smartcont/tos-service-native-registry-v2.boc.base64")
             .split_whitespace()
             .collect();
     read_single_root_boc(base64_decode(&encoded).expect("base64 code"))
@@ -494,7 +504,7 @@ impl Fixture {
         identity
             .append_u32(MAGIC_IDENTITY)
             .unwrap()
-            .append_u8(1)
+            .append_u8(AGENT_IDENTITY_TAG)
             .unwrap()
             .append_u256(&[0x44; 32])
             .unwrap()
@@ -616,6 +626,11 @@ impl Fixture {
         (state.get_next_u64().unwrap(), state.get_next_u64().unwrap())
     }
 
+    /// The fixture Agent's current authorization epoch.
+    fn epoch(&self) -> u64 {
+        agent_epoch(&self.state())
+    }
+
     fn send(&mut self, body: Cell) -> SendResult {
         self.send_to(self.registry.clone(), body)
     }
@@ -641,7 +656,7 @@ impl Fixture {
         identity
             .append_u32(MAGIC_IDENTITY)
             .unwrap()
-            .append_u8(1)
+            .append_u8(AGENT_IDENTITY_TAG)
             .unwrap()
             .append_u256(&object_nonce)
             .unwrap()
@@ -816,7 +831,7 @@ impl Fixture {
         identity
             .append_u32(MAGIC_IDENTITY)
             .unwrap()
-            .append_u8(2)
+            .append_u8(CAPABILITY_IDENTITY_TAG)
             .unwrap()
             .append_u256(&object_nonce)
             .unwrap()
@@ -894,6 +909,24 @@ fn state_header(state: &Cell) -> (u8, bool, u64, u64) {
     (kind, tombstone, generation, sequence)
 }
 
+/// The authorization epoch of an Agent state, read at its fixed offset.
+fn agent_epoch(state: &Cell) -> u64 {
+    let mut state = SliceData::load_cell(state.clone()).unwrap();
+    assert_eq!(state.get_next_u32().unwrap(), MAGIC_STATE);
+    assert_eq!(state.get_next_u16().unwrap(), 2, "schema 2");
+    assert_eq!(state.get_next_byte().unwrap(), 1, "an Agent state");
+    state.move_by(1 + 64 + 64 + 256).unwrap();
+    state.get_next_u64().unwrap()
+}
+
+/// `digest:uint256 expected_epoch:uint64`, the payload of a delegation add or
+/// withdrawal.
+fn delegation_payload(digest: &[u8; 32], epoch: u64) -> Cell {
+    let mut payload = BuilderData::new();
+    payload.append_u256(digest).unwrap().append_u64(epoch).unwrap();
+    payload.into_cell().unwrap()
+}
+
 fn capability_position(state: &Cell) -> (u64, u64) {
     let (kind, _, generation, sequence) = state_header(state);
     assert_eq!(kind, 2);
@@ -968,7 +1001,7 @@ fn recovery_survives_delegation_and_completes_with_generation_reset() {
     .expect_success();
 
     let mut delegate_payload = BuilderData::new();
-    delegate_payload.append_u256(&[0x71; 32]).unwrap();
+    delegate_payload.append_u256(&[0x71; 32]).unwrap().append_u64(1).unwrap();
     let delegate = f.build_action(DELEGATE_AGENT, 1, 3, 3, delegate_payload.into_cell().unwrap());
     f.send(submit_body(delegate.clone(), signature_set(&f.old_key, &delegate), empty_signatures()))
         .expect_success();
@@ -1122,7 +1155,7 @@ fn agent_full_lifecycle_replay_revocation_and_terminal_rejection() {
     assert_eq!(f.state().hash(0), updated.hash(0), "exact replay changed state");
 
     let mut delegation_payload = BuilderData::new();
-    delegation_payload.append_u256(&[0xa2; 32]).unwrap();
+    delegation_payload.append_u256(&[0xa2; 32]).unwrap().append_u64(2).unwrap();
     let delegation =
         f.build_action(DELEGATE_AGENT, 1, 3, 21, delegation_payload.into_cell().unwrap());
     f.send(submit_body(
@@ -1145,7 +1178,7 @@ fn agent_full_lifecycle_replay_revocation_and_terminal_rejection() {
     assert_eq!((kind, tombstone, generation, sequence), (1, true, 1, 4));
 
     let mut forbidden_payload = BuilderData::new();
-    forbidden_payload.append_u256(&[0xa3; 32]).unwrap();
+    forbidden_payload.append_u256(&[0xa3; 32]).unwrap().append_u64(3).unwrap();
     let forbidden =
         f.build_action(DELEGATE_AGENT, 1, 5, 23, forbidden_payload.into_cell().unwrap());
     f.send(submit_body(
@@ -1164,20 +1197,20 @@ fn agent_rejects_stale_predecessor_skipped_sequence_wrong_target_and_bad_signatu
     let original_state = f.state();
 
     let mut payload = BuilderData::new();
-    payload.append_u256(&[0xb1; 32]).unwrap();
+    payload.append_u256(&[0xb1; 32]).unwrap().append_u64(1).unwrap();
     let skipped = f.build_action(DELEGATE_AGENT, 1, 3, 30, payload.into_cell().unwrap());
     f.send(submit_body(skipped.clone(), signature_set(&f.old_key, &skipped), empty_signatures()))
         .expect_aborted()
         .expect_exit_code(ERR_BAD_SEQUENCE);
 
     let mut valid_payload = BuilderData::new();
-    valid_payload.append_u256(&[0xb2; 32]).unwrap();
+    valid_payload.append_u256(&[0xb2; 32]).unwrap().append_u64(1).unwrap();
     let valid = f.build_action(DELEGATE_AGENT, 1, 2, 31, valid_payload.into_cell().unwrap());
     f.send(submit_body(valid.clone(), signature_set(&f.old_key, &valid), empty_signatures()))
         .expect_success();
 
     let mut stale_payload = BuilderData::new();
-    stale_payload.append_u256(&[0xb3; 32]).unwrap();
+    stale_payload.append_u256(&[0xb3; 32]).unwrap().append_u64(1).unwrap();
     let stale = action(
         DELEGATE_AGENT,
         1,
@@ -1194,7 +1227,7 @@ fn agent_rejects_stale_predecessor_skipped_sequence_wrong_target_and_bad_signatu
         .expect_exit_code(ERR_BAD_PREDECESSOR);
 
     let mut wrong_target_payload = BuilderData::new();
-    wrong_target_payload.append_u256(&[0xb4; 32]).unwrap();
+    wrong_target_payload.append_u256(&[0xb4; 32]).unwrap().append_u64(1).unwrap();
     let wrong_target = action(
         DELEGATE_AGENT,
         1,
@@ -1216,7 +1249,7 @@ fn agent_rejects_stale_predecessor_skipped_sequence_wrong_target_and_bad_signatu
 
     let attacker = RegistryKey::from_bytes(&[0xb5; 32]);
     let mut unsigned_payload = BuilderData::new();
-    unsigned_payload.append_u256(&[0xb6; 32]).unwrap();
+    unsigned_payload.append_u256(&[0xb6; 32]).unwrap().append_u64(1).unwrap();
     let unsigned = f.build_action(DELEGATE_AGENT, 1, 3, 34, unsigned_payload.into_cell().unwrap());
     f.send(submit_body(unsigned.clone(), signature_set(&attacker, &unsigned), empty_signatures()))
         .expect_aborted()
@@ -1235,7 +1268,7 @@ fn agent_rejects_stale_predecessor_skipped_sequence_wrong_target_and_bad_signatu
         .checked_append_reference(signed_code.into_cell().unwrap())
         .unwrap();
     let mut wrong_network_payload = BuilderData::new();
-    wrong_network_payload.append_u256(&[0xb7; 32]).unwrap();
+    wrong_network_payload.append_u256(&[0xb7; 32]).unwrap().append_u64(1).unwrap();
     let wrong_network = action(
         DELEGATE_AGENT,
         1,
@@ -1256,7 +1289,7 @@ fn agent_rejects_stale_predecessor_skipped_sequence_wrong_target_and_bad_signatu
     .expect_exit_code(ERR_WRONG_NETWORK);
 
     let mut extra_signature_payload = BuilderData::new();
-    extra_signature_payload.append_u256(&[0xb8; 32]).unwrap();
+    extra_signature_payload.append_u256(&[0xb8; 32]).unwrap().append_u64(1).unwrap();
     let extra_signature =
         f.build_action(DELEGATE_AGENT, 1, 3, 36, extra_signature_payload.into_cell().unwrap());
     f.send(submit_body(
@@ -1695,7 +1728,7 @@ impl Fixture {
     /// [`Fixture::install_policy`] for the agent at `address`.
     fn install_policy_at(&mut self, address: &MsgAddressInt, object_id: &[u8; 32], policy: Cell) {
         let mut state = SliceData::load_cell(self.state_at(address)).unwrap();
-        let header = state.get_next_slice(32 + 16 + 8 + 1 + 64 + 64 + 256).unwrap();
+        let header = state.get_next_slice(32 + 16 + 8 + 1 + 64 + 64 + 256 + 64).unwrap();
         state.checked_drain_reference().unwrap();
         let delegations = state.checked_drain_reference().unwrap();
         let recovery = state.checked_drain_reference().unwrap();
@@ -1730,9 +1763,8 @@ impl Fixture {
     }
 
     fn delegate_action(&self, sequence: u64, nonce: u8) -> Cell {
-        let mut payload = BuilderData::new();
-        payload.append_u256(&[nonce; 32]).unwrap();
-        self.build_action(DELEGATE_AGENT, 1, sequence, nonce, payload.into_cell().unwrap())
+        let payload = delegation_payload(&[nonce; 32], self.epoch());
+        self.build_action(DELEGATE_AGENT, 1, sequence, nonce, payload)
     }
 
     /// Deploys a new agent registering `agent_policy`, signed by `authority`.
@@ -1757,7 +1789,7 @@ impl Fixture {
         identity
             .append_u32(MAGIC_IDENTITY)
             .unwrap()
-            .append_u8(1)
+            .append_u8(AGENT_IDENTITY_TAG)
             .unwrap()
             .append_u256(&object_nonce)
             .unwrap()
@@ -1934,7 +1966,7 @@ fn measure_paths(width: usize, next_width: usize) -> PathGas {
     };
     let delegate = {
         let mut payload = BuilderData::new();
-        payload.append_u256(&[0x62; 32]).unwrap();
+        payload.append_u256(&[0x62; 32]).unwrap().append_u64(1).unwrap();
         agent(DELEGATE_AGENT, payload.into_cell().unwrap())
     };
     let revoke_agent = agent(REVOKE_AGENT, BuilderData::new().into_cell().unwrap());
@@ -3086,7 +3118,7 @@ fn a_registry_outside_workchain_zero_registers_nothing() {
         identity
             .append_u32(MAGIC_IDENTITY)
             .unwrap()
-            .append_u8(1)
+            .append_u8(AGENT_IDENTITY_TAG)
             .unwrap()
             .append_u256(&nonce)
             .unwrap()
@@ -3139,6 +3171,9 @@ fn a_registry_outside_workchain_zero_registers_nothing() {
 
 #[path = "served/service_journey.rs"]
 mod service_journey;
+
+#[path = "native_registry/epochs.rs"]
+mod epochs;
 
 /// The public SC-01/SC-02 journeys driven only through the client builders in
 /// `contracts::native_registry` (no hand-built cells), against the release code
@@ -3554,7 +3589,7 @@ mod builder_driven {
         let (result, delegate) = net.agent_action(
             &a,
             NATIVE_KIND_DELEGATE_AGENT,
-            build_native_delegate_payload([0x71; 32]).expect("payload"),
+            build_native_delegate_payload([0x71; 32], 1).expect("payload"),
             &[&a_key],
             &[],
             2,
@@ -3562,12 +3597,24 @@ mod builder_driven {
         assert_address_success(&result, &a.address);
         let after = net.state(&a.address).expect("state");
         assert_eq!((after.generation, after.sequence), (1, 2));
-        let NativeRegistryStateDetail::Agent { delegations, delegation_root, .. } = &after.detail
+        let NativeRegistryStateDetail::Agent {
+            authorization_epoch,
+            live_delegations,
+            admitted_delegations,
+            ..
+        } = &after.detail
         else {
             panic!("agent")
         };
-        assert_eq!(*delegations, 1);
-        assert!(native_dict_contains(delegation_root, &[0x71; 32]).expect("lookup"));
+        assert_eq!((*authorization_epoch, *live_delegations, *admitted_delegations), (1, 1, 1));
+        assert_eq!(
+            native_delegation(&after.detail, &[0x71; 32]).expect("lookup"),
+            Some(NativeDelegationEntry {
+                digest: [0x71; 32],
+                admission_epoch: 1,
+                withdrawn: false
+            })
+        );
         let replay = build_native_submission(
             &net.domain,
             &delegate,
@@ -3736,7 +3783,7 @@ mod builder_driven {
             a.id,
             Some(&after),
             4,
-            build_native_delegate_payload([0x72; 32]).expect("payload"),
+            build_native_delegate_payload([0x72; 32], 1).expect("payload"),
         );
         let late =
             build_native_submission(&net.domain, &late, 1, &signatures(&[&a_key], &late), &[])
@@ -3766,7 +3813,7 @@ mod builder_driven {
             a.id,
             Some(&before),
             2,
-            build_native_delegate_payload([0x73; 32]).expect("payload"),
+            build_native_delegate_payload([0x73; 32], 1).expect("payload"),
         );
         let body =
             build_native_submission(&other, &action, 1, &signatures(&[&a_key], &action), &[])
@@ -3794,7 +3841,7 @@ mod builder_driven {
             a.id,
             Some(&before),
             3,
-            build_native_delegate_payload([0x74; 32]).expect("payload"),
+            build_native_delegate_payload([0x74; 32], 1).expect("payload"),
         );
         let body = build_native_submission(
             &net.domain,
@@ -3813,7 +3860,7 @@ mod builder_driven {
         let (result, _) = net.agent_action(
             &a,
             NATIVE_KIND_DELEGATE_AGENT,
-            build_native_delegate_payload([0x75; 32]).expect("payload"),
+            build_native_delegate_payload([0x75; 32], 1).expect("payload"),
             &[&a_key],
             &[],
             4,
@@ -3826,7 +3873,7 @@ mod builder_driven {
             a.id,
             Some(&before),
             5,
-            build_native_delegate_payload([0x76; 32]).expect("payload"),
+            build_native_delegate_payload([0x76; 32], 1).expect("payload"),
         );
         let body =
             build_native_submission(&net.domain, &action, 1, &signatures(&[&a_key], &action), &[])
@@ -3887,7 +3934,7 @@ mod builder_driven {
             a.id,
             Some(&recovered),
             5,
-            build_native_delegate_payload([0x77; 32]).expect("payload"),
+            build_native_delegate_payload([0x77; 32], 2).expect("payload"),
         );
         let body = build_native_submission(&net.domain, &old, 1, &signatures(&[&a_key], &old), &[])
             .expect("body");

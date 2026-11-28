@@ -49,6 +49,23 @@ pub const NATIVE_REGISTRY_GAS_CEILING: u64 = 800_000;
 /// Exit code of a policy wider than [`NATIVE_REGISTRY_MAX_POLICY_CONTROLLERS`].
 pub const NATIVE_REGISTRY_ERR_POLICY_TOO_WIDE: i32 = 2215;
 
+/// Exit code of a delegation add or withdrawal whose expected epoch is not the
+/// Agent's current authorization epoch.
+pub const NATIVE_REGISTRY_ERR_EPOCH_MISMATCH: i32 = 2216;
+
+/// Exit code of a policy update, recovery completion or tombstone on an Agent
+/// whose authorization epoch is already `u64::MAX`.
+pub const NATIVE_REGISTRY_ERR_EPOCH_EXHAUSTED: i32 = 2217;
+
+/// Exit code of an add or withdrawal of a digest already withdrawn in this epoch.
+pub const NATIVE_REGISTRY_ERR_WITHDRAWN_DIGEST: i32 = 2218;
+
+/// Exit code of an add while the epoch's live or admitted count is full.
+pub const NATIVE_REGISTRY_ERR_CAPACITY_FULL: i32 = 2219;
+
+/// Exit code of a withdrawal of a digest this epoch never admitted.
+pub const NATIVE_REGISTRY_ERR_DIGEST_NOT_LIVE: i32 = 2220;
+
 /// Largest weight one controller may carry.
 pub const NATIVE_REGISTRY_MAX_CONTROLLER_WEIGHT: u32 = 1_000_000;
 
@@ -437,14 +454,24 @@ pub struct NativeRegistryAction {
     pub payload: Cell,
 }
 
+/// The object kind an action kind targets: 1 (Agent) for kinds 1..=6 and 11,
+/// 2 (Capability) for kinds 7..=10.
+pub fn native_action_target_kind(kind: u8) -> Result<u8> {
+    match kind {
+        1..=6 | NATIVE_KIND_WITHDRAW_AGENT_DELEGATION => Ok(1),
+        7..=10 => Ok(2),
+        _ => bail!("unknown native registry action kind"),
+    }
+}
+
 /// Encode the canonical action header with an explicit configured domain.
-/// Kinds1..6 target Agents; kinds7..10 target Capabilities.
+/// Kinds 1..=6 and 11 target Agents; kinds 7..=10 target Capabilities.
 pub fn build_native_action(
     domain: &NativeRegistryDomain,
     action: &NativeRegistryAction,
 ) -> Result<Cell> {
     use anyhow::ensure;
-    ensure!((1..=10).contains(&action.kind), "unknown native registry action kind");
+    let target = native_action_target_kind(action.kind)?;
     ensure!(
         action.generation > 0 && action.sequence > 0,
         "zero native registry generation or sequence"
@@ -464,7 +491,7 @@ pub fn build_native_action(
     out.append_u32(0x4e56_4131)?
         .append_u16(1)?
         .append_u8(action.kind)?
-        .append_u8(if action.kind <= 6 { 1 } else { 2 })?
+        .append_u8(target)?
         .append_u64(action.generation)?
         .append_u64(action.sequence)?
         .append_raw(&action.object_id, 256)?
@@ -492,7 +519,7 @@ pub fn check_native_action_domain(action: &Cell, domain: &NativeRegistryDomain) 
     let kind = s.get_next_byte()?;
     let target = s.get_next_byte()?;
     ensure!(
-        (1..=10).contains(&kind) && target == if kind <= 6 { 1 } else { 2 },
+        native_action_target_kind(kind).ok() == Some(target),
         "native registry target kind mismatch"
     );
     let generation = s.get_next_u64()?;
@@ -569,7 +596,7 @@ mod wire_tests {
     #[test]
     fn unsigned_action_shape_refuses_invalid_fields() -> Result<()> {
         let (domain, action) = fixture();
-        for kind in [0, 11, 255] {
+        for kind in [0, 12, 255] {
             let mut a = action.clone();
             a.kind = kind;
             assert!(
@@ -769,6 +796,14 @@ fn native_identity_domain(domain: &NativeRegistryDomain) -> Result<Cell> {
     b.into_cell()
 }
 
+/// The identity preimage's object-kind tag of an Agent of this registry release.
+/// It is neither the earlier release's Agent tag 1 nor the Capability tag 2, so
+/// an Agent id never equals an earlier-release Agent id for the same inputs and
+/// the data bits alone separate an Agent preimage from a Capability preimage.
+pub const NATIVE_IDENTITY_TAG_AGENT: u8 = 3;
+/// The identity preimage's object-kind tag of a Capability.
+pub const NATIVE_IDENTITY_TAG_CAPABILITY: u8 = 2;
+
 /// Use the existing admission-checked policy builder before deriving an Agent ID.
 pub fn build_native_agent_registration(
     domain: &NativeRegistryDomain,
@@ -780,7 +815,7 @@ pub fn build_native_agent_registration(
     let mut identity = BuilderData::new();
     identity
         .append_u32(0x4e56_4931)?
-        .append_u8(1)?
+        .append_u8(NATIVE_IDENTITY_TAG_AGENT)?
         .append_raw(&object_nonce, 256)?
         .append_raw(policy.repr_hash().as_slice(), 256)?;
     identity.checked_append_reference(native_identity_domain(domain)?)?;
@@ -810,7 +845,7 @@ pub fn build_native_capability_registration(
     let mut identity = BuilderData::new();
     identity
         .append_u32(0x4e56_4931)?
-        .append_u8(2)?
+        .append_u8(NATIVE_IDENTITY_TAG_CAPABILITY)?
         .append_raw(&object_nonce, 256)?
         .append_raw(&owner_agent, 256)?;
     identity.checked_append_reference(native_identity_domain(domain)?)?;
@@ -2061,20 +2096,29 @@ pub const NATIVE_KIND_REGISTER_CAPABILITY: u8 = 7;
 pub const NATIVE_KIND_ADD_CAPABILITY_VERSION: u8 = 8;
 pub const NATIVE_KIND_TRANSFER_CAPABILITY: u8 = 9;
 pub const NATIVE_KIND_REVOKE_CAPABILITY: u8 = 10;
+pub const NATIVE_KIND_WITHDRAW_AGENT_DELEGATION: u8 = 11;
 
-/// Most delegations one Agent may hold; the contract refuses the next one.
+/// Most live delegations one Agent may hold in one authorization epoch; the
+/// contract refuses an add while this many are live.
 pub const NATIVE_REGISTRY_MAX_DELEGATIONS: u16 = 128;
+/// Most delegations one Agent may admit in one authorization epoch, live and
+/// withdrawn together; the contract refuses an add once this many were admitted.
+pub const NATIVE_REGISTRY_MAX_ADMITTED_DELEGATIONS: u16 = 384;
 /// Most versions one Capability may hold; the contract refuses the next one.
 pub const NATIVE_REGISTRY_MAX_VERSIONS: u16 = 256;
 
 const MAGIC_STATE: u32 = 0x4e56_5331;
-const STATE_SCHEMA: u16 = 1;
+/// Schema of both typed state kinds of this registry release. A state of any
+/// other schema is refused, never read as this one.
+pub const NATIVE_REGISTRY_STATE_SCHEMA: u16 = 2;
+const STATE_SCHEMA: u16 = NATIVE_REGISTRY_STATE_SCHEMA;
 
-/// Release BOC of `tos-service-native-registry-v1`, the code every public
-/// registry object runs. `tos-service-native-registry-v1.release.json` pins its
-/// code hash; a test holds this copy to that manifest.
+/// Release BOC of `tos-service-native-registry-v2`, the code the builders and
+/// decoders of this module describe. `tos-service-native-registry-v2.release.json`
+/// pins its code hash; a test holds this copy to that manifest. The earlier
+/// v1 release stays frozen beside it for the networks that run it.
 pub const NATIVE_REGISTRY_RELEASE_CODE_B64: &str =
-    include_str!("../../../../../crypto/smartcont/tos-service-native-registry-v1.boc.base64");
+    include_str!("../../../../../crypto/smartcont/tos-service-native-registry-v2.boc.base64");
 
 /// The release code cell.
 pub fn native_registry_release_code() -> Result<Cell> {
@@ -2102,7 +2146,9 @@ pub fn required_native_purpose(kind: u8) -> Result<u16> {
         NATIVE_KIND_REGISTER_AGENT | NATIVE_KIND_UPDATE_AGENT_POLICY | NATIVE_KIND_REVOKE_AGENT => {
             Ok(PURPOSE_AGENT_CONTROL)
         }
-        NATIVE_KIND_DELEGATE_AGENT => Ok(PURPOSE_DELEGATION),
+        NATIVE_KIND_DELEGATE_AGENT | NATIVE_KIND_WITHDRAW_AGENT_DELEGATION => {
+            Ok(PURPOSE_DELEGATION)
+        }
         NATIVE_KIND_INITIATE_RECOVERY | NATIVE_KIND_COMPLETE_RECOVERY => Ok(PURPOSE_RECOVERY),
         NATIVE_KIND_REGISTER_CAPABILITY..=NATIVE_KIND_REVOKE_CAPABILITY => {
             Ok(PURPOSE_CAPABILITY_CONTROL)
@@ -2172,12 +2218,27 @@ pub fn build_native_update_policy_payload(next: &NativePolicy) -> Result<Cell> {
     b.into_cell()
 }
 
-/// Payload of a delegation: a nonzero 256-bit delegation id.
-pub fn build_native_delegate_payload(delegation: [u8; 32]) -> Result<Cell> {
-    anyhow::ensure!(delegation != [0; 32], "zero native registry delegation");
+fn native_delegation_payload(digest: [u8; 32], expected_epoch: u64) -> Result<Cell> {
+    anyhow::ensure!(digest != [0; 32], "zero native registry delegation");
+    anyhow::ensure!(expected_epoch != 0, "zero native registry authorization epoch");
     let mut b = BuilderData::new();
-    b.append_raw(&delegation, 256)?;
+    b.append_raw(&digest, 256)?.append_u64(expected_epoch)?;
     b.into_cell()
+}
+
+/// Payload of a delegation add: a nonzero 256-bit digest and the Agent's
+/// current authorization epoch, which the action signature binds.
+pub fn build_native_delegate_payload(digest: [u8; 32], expected_epoch: u64) -> Result<Cell> {
+    native_delegation_payload(digest, expected_epoch)
+}
+
+/// Payload of a delegation withdrawal: the live digest and the Agent's current
+/// authorization epoch.
+pub fn build_native_withdraw_delegation_payload(
+    digest: [u8; 32],
+    expected_epoch: u64,
+) -> Result<Cell> {
+    native_delegation_payload(digest, expected_epoch)
 }
 
 /// Payload of a recovery initiation: the unix time after which it may complete
@@ -2393,13 +2454,30 @@ pub struct NativePendingRecovery {
     pub policy: Cell,
 }
 
+/// One stored delegation of an Agent's current epoch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeDelegationEntry {
+    pub digest: [u8; 32],
+    /// The epoch the digest was admitted in; a decoded state guarantees it is
+    /// the Agent's current authorization epoch.
+    pub admission_epoch: u64,
+    pub withdrawn: bool,
+}
+
 /// Kind-specific part of a stored registry object.
 #[derive(Clone, Debug)]
 pub enum NativeRegistryStateDetail {
     Agent {
         policy: Cell,
-        delegations: u16,
+        /// The current authorization epoch, strictly positive.
+        authorization_epoch: u64,
+        /// Live digests of the current epoch.
+        live_delegations: u16,
+        /// Digests admitted in the current epoch, live and withdrawn.
+        admitted_delegations: u16,
         delegation_root: Option<Cell>,
+        /// Every entry of the current epoch in ascending digest order.
+        delegation_entries: Vec<NativeDelegationEntry>,
         recovery: Option<NativePendingRecovery>,
     },
     Capability {
@@ -2422,6 +2500,111 @@ pub struct NativeRegistryState {
     pub detail: NativeRegistryStateDetail,
 }
 
+/// Every cell reachable from `root`, counted and checked ordinary, at most `max`.
+fn require_ordinary_tree(root: &Cell, max: usize, what: &str) -> Result<()> {
+    use anyhow::ensure;
+    use chain_block::CellType;
+    let mut stack = vec![root.clone()];
+    let mut seen = 0usize;
+    while let Some(cell) = stack.pop() {
+        seen = seen.checked_add(1).ok_or_else(|| anyhow!("{what} cell count overflows"))?;
+        ensure!(seen <= max, "{what} has more than {max} cells");
+        ensure!(cell.cell_type() == CellType::Ordinary && cell.level() == 0, "{what} exotic cell");
+        for index in 0..cell.references_count() {
+            stack.push(cell.reference(index)?);
+        }
+    }
+    Ok(())
+}
+
+/// Most cells a delegation dictionary of [`NATIVE_REGISTRY_MAX_ADMITTED_DELEGATIONS`]
+/// leaves can have: one per leaf and one per fork.
+const MAX_DELEGATION_DICT_CELLS: usize = 2 * NATIVE_REGISTRY_MAX_ADMITTED_DELEGATIONS as usize;
+
+/// Decode and validate an Agent's delegation wrapper against its current epoch:
+/// ordinary cells only, counts within bounds and equal to the entries, nonzero
+/// unique keys, every leaf exactly `admission_epoch:uint64 withdrawn:Bool` with
+/// no reference and an admission epoch equal to the current one.
+fn decode_delegations(
+    cell: Cell,
+    epoch: u64,
+) -> Result<(u16, u16, Option<Cell>, Vec<NativeDelegationEntry>)> {
+    use anyhow::ensure;
+    use chain_block::{CellType, HashmapE, HashmapType, SliceData};
+    ensure!(
+        cell.cell_type() == CellType::Ordinary && cell.level() == 0,
+        "native registry delegations exotic cell"
+    );
+    let mut s = SliceData::load_cell(cell)?;
+    let live = s.get_next_u16()?;
+    let admitted = s.get_next_u16()?;
+    let root = if s.get_next_bit()? { Some(s.checked_drain_reference()?) } else { None };
+    ensure!(
+        s.remaining_bits() == 0 && s.remaining_references() == 0,
+        "native registry delegations trailing data"
+    );
+    ensure!(
+        live <= NATIVE_REGISTRY_MAX_DELEGATIONS
+            && admitted <= NATIVE_REGISTRY_MAX_ADMITTED_DELEGATIONS
+            && live <= admitted,
+        "native registry delegation counts out of bounds"
+    );
+    let mut entries = Vec::new();
+    if let Some(root) = &root {
+        require_ordinary_tree(root, MAX_DELEGATION_DICT_CELLS, "native registry delegations")?;
+        let map = HashmapE::with_hashmap(256, Some(root.clone()));
+        let limit = usize::from(NATIVE_REGISTRY_MAX_ADMITTED_DELEGATIONS);
+        ensure!(
+            HashmapType::count(&map, limit.saturating_add(1))? <= limit,
+            "native registry delegations exceed the bound"
+        );
+        let mut failure: Option<anyhow::Error> = None;
+        HashmapType::iterate_slices(&map, |mut key, mut value| {
+            let parsed = (|| -> Result<NativeDelegationEntry> {
+                let digest = next_bytes32(&mut key, "delegation digest")?;
+                ensure!(key.remaining_bits() == 0, "native registry delegation key width");
+                ensure!(digest != [0; 32], "zero native registry delegation digest");
+                let admission_epoch = value.get_next_u64()?;
+                let withdrawn = value.get_next_bit()?;
+                ensure!(
+                    value.remaining_bits() == 0 && value.remaining_references() == 0,
+                    "native registry delegation leaf shape"
+                );
+                ensure!(
+                    admission_epoch == epoch,
+                    "native registry delegation admitted in another epoch"
+                );
+                Ok(NativeDelegationEntry { digest, admission_epoch, withdrawn })
+            })();
+            match parsed {
+                Ok(entry) => {
+                    entries.push(entry);
+                    Ok(true)
+                }
+                Err(error) => {
+                    failure = Some(error);
+                    Ok(false)
+                }
+            }
+        })?;
+        if let Some(error) = failure {
+            return Err(error);
+        }
+    }
+    entries.sort_by_key(|entry| entry.digest);
+    ensure!(
+        entries.windows(2).all(|pair| pair[0].digest != pair[1].digest),
+        "duplicate native registry delegation digest"
+    );
+    let live_entries = entries.iter().filter(|entry| !entry.withdrawn).count();
+    ensure!(
+        entries.len() == usize::from(admitted) && live_entries == usize::from(live),
+        "native registry delegation counts differ from the entries"
+    );
+    ensure!(root.is_some() || admitted == 0, "native registry delegation root missing");
+    Ok((live, admitted, root, entries))
+}
+
 fn decode_counted_dict(cell: Cell, what: &str) -> Result<(u16, Option<Cell>)> {
     use anyhow::ensure;
     use chain_block::SliceData;
@@ -2436,6 +2619,10 @@ fn decode_counted_dict(cell: Cell, what: &str) -> Result<(u16, Option<Cell>)> {
 pub fn decode_native_registry_state(state: &Cell) -> Result<NativeRegistryState> {
     use anyhow::ensure;
     use chain_block::SliceData;
+    ensure!(
+        state.cell_type() == chain_block::CellType::Ordinary && state.level() == 0,
+        "native registry state exotic cell"
+    );
     let mut s = SliceData::load_cell(state.clone())?;
     ensure!(
         s.get_next_u32()? == MAGIC_STATE && s.get_next_u16()? == STATE_SCHEMA,
@@ -2448,9 +2635,11 @@ pub fn decode_native_registry_state(state: &Cell) -> Result<NativeRegistryState>
     let last_action = next_bytes32(&mut s, "last action")?;
     let detail = match object_kind {
         1 => {
+            let authorization_epoch = s.get_next_u64()?;
+            ensure!(authorization_epoch != 0, "zero native registry authorization epoch");
             let policy = s.checked_drain_reference()?;
-            let (delegations, delegation_root) =
-                decode_counted_dict(s.checked_drain_reference()?, "native registry delegations")?;
+            let (live_delegations, admitted_delegations, delegation_root, delegation_entries) =
+                decode_delegations(s.checked_drain_reference()?, authorization_epoch)?;
             let mut r = SliceData::load_cell(s.checked_drain_reference()?)?;
             let recovery = if r.get_next_bit()? {
                 let initiation = next_bytes32(&mut r, "recovery initiation")?;
@@ -2465,7 +2654,15 @@ pub fn decode_native_registry_state(state: &Cell) -> Result<NativeRegistryState>
                 r.remaining_bits() == 0 && r.remaining_references() == 0,
                 "native registry recovery trailing data"
             );
-            NativeRegistryStateDetail::Agent { policy, delegations, delegation_root, recovery }
+            NativeRegistryStateDetail::Agent {
+                policy,
+                authorization_epoch,
+                live_delegations,
+                admitted_delegations,
+                delegation_root,
+                delegation_entries,
+                recovery,
+            }
         }
         2 => {
             let owner = next_bytes32(&mut s, "capability owner")?;
@@ -2568,7 +2765,27 @@ pub fn verify_native_registry_account(
     Ok(object)
 }
 
-/// Whether a 256-bit key is present in a stored delegation or version dictionary.
+/// The stored delegation `digest` of a decoded Agent state, `None` when the
+/// current epoch never admitted it. Only a state decoded by
+/// [`decode_native_registry_state`] reaches this, so the entry's admission
+/// epoch is the Agent's current one.
+pub fn native_delegation(
+    detail: &NativeRegistryStateDetail,
+    digest: &[u8; 32],
+) -> Result<Option<NativeDelegationEntry>> {
+    match detail {
+        NativeRegistryStateDetail::Agent { delegation_entries, .. } => Ok(delegation_entries
+            .binary_search_by_key(digest, |entry| entry.digest)
+            .ok()
+            .and_then(|index| delegation_entries.get(index).copied())),
+        NativeRegistryStateDetail::Capability { .. } => {
+            bail!("a Capability holds no delegations")
+        }
+    }
+}
+
+/// Whether a 256-bit key is present in a stored version dictionary. Delegations
+/// are read through [`native_delegation`], which also reports their status.
 pub fn native_dict_contains(root: &Option<Cell>, key: &[u8; 32]) -> Result<bool> {
     use chain_block::{HashmapE, SliceData};
     let map = HashmapE::with_hashmap(256, root.clone());
@@ -2614,9 +2831,9 @@ pub fn next_native_position(
     current: Option<&NativeRegistryState>,
     kind: u8,
 ) -> Result<(u64, u64, [u8; 32])> {
+    let target = native_action_target_kind(kind)
+        .map_err(|_| anyhow!("unknown native registry action kind {kind}"))?;
     use anyhow::ensure;
-    ensure!((1..=10).contains(&kind), "unknown native registry action kind {kind}");
-    let target = if kind <= NATIVE_KIND_REVOKE_AGENT { 1 } else { 2 };
     let registration = matches!(kind, NATIVE_KIND_REGISTER_AGENT | NATIVE_KIND_REGISTER_CAPABILITY);
     match current {
         None => {
@@ -2680,7 +2897,7 @@ mod lifecycle_builder_tests {
     fn release_code_matches_the_release_manifest() -> Result<()> {
         use sha2::{Digest, Sha256};
         let manifest: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../../crypto/smartcont/tos-service-native-registry-v1.release.json"
+            "../../../../../crypto/smartcont/tos-service-native-registry-v2.release.json"
         ))?;
         let code = native_registry_release_code()?;
         assert_eq!(
@@ -2724,9 +2941,15 @@ mod lifecycle_builder_tests {
         assert_eq!(s.checked_drain_reference()?, build_policy(&p)?);
         assert!(s.remaining_bits() == 0 && s.remaining_references() == 0);
 
-        let mut s = SliceData::load_cell(build_native_delegate_payload([7; 32])?)?;
-        assert_eq!(s.get_next_bytes(32)?, vec![7; 32]);
-        assert_eq!(s.remaining_bits(), 0);
+        for payload in [
+            build_native_delegate_payload([7; 32], 3)?,
+            build_native_withdraw_delegation_payload([7; 32], 3)?,
+        ] {
+            let mut s = SliceData::load_cell(payload)?;
+            assert_eq!(s.get_next_bytes(32)?, vec![7; 32]);
+            assert_eq!(s.get_next_u64()?, 3);
+            assert!(s.remaining_bits() == 0 && s.remaining_references() == 0);
+        }
 
         let mut s = SliceData::load_cell(build_native_initiate_recovery_payload(99, &p)?)?;
         assert_eq!(s.get_next_u64()?, 99);
@@ -2770,7 +2993,10 @@ mod lifecycle_builder_tests {
 
     #[test]
     fn payloads_refuse_zero_identities_and_self_transfer() {
-        assert!(build_native_delegate_payload([0; 32]).is_err());
+        assert!(build_native_delegate_payload([0; 32], 1).is_err());
+        assert!(build_native_delegate_payload([7; 32], 0).is_err());
+        assert!(build_native_withdraw_delegation_payload([0; 32], 1).is_err());
+        assert!(build_native_withdraw_delegation_payload([7; 32], 0).is_err());
         assert!(build_native_complete_recovery_payload([0; 32]).is_err());
         assert!(build_native_initiate_recovery_payload(0, &policy(&[(1, 1, 15)], 1, 1)).is_err());
         assert!(build_native_add_version_payload([0; 32], b"1", [5; 32]).is_err());
@@ -2841,23 +3067,239 @@ mod lifecycle_builder_tests {
     }
 
     fn agent_state(tombstone: bool, generation: u64, sequence: u64) -> Result<Cell> {
-        let p = build_policy(&policy(&[(1, 1, 15)], 1, 1))?;
         let mut delegations = BuilderData::new();
-        delegations.append_u16(0)?.append_bit_zero()?;
+        delegations.append_u16(0)?.append_u16(0)?.append_bit_zero()?;
+        agent_state_with(tombstone, generation, sequence, 1, STATE_SCHEMA, delegations.into_cell()?)
+    }
+
+    fn agent_state_with(
+        tombstone: bool,
+        generation: u64,
+        sequence: u64,
+        epoch: u64,
+        schema: u16,
+        delegations: Cell,
+    ) -> Result<Cell> {
+        let p = build_policy(&policy(&[(1, 1, 15)], 1, 1))?;
         let mut recovery = BuilderData::new();
         recovery.append_bit_zero()?;
         let mut b = BuilderData::new();
         b.append_u32(MAGIC_STATE)?
-            .append_u16(1)?
+            .append_u16(schema)?
             .append_u8(1)?
             .append_bit_bool(tombstone)?
             .append_u64(generation)?
             .append_u64(sequence)?
-            .append_raw(&[9; 32], 256)?;
+            .append_raw(&[9; 32], 256)?
+            .append_u64(epoch)?;
         b.checked_append_reference(p)?;
-        b.checked_append_reference(delegations.into_cell()?)?;
+        b.checked_append_reference(delegations)?;
         b.checked_append_reference(recovery.into_cell()?)?;
-        Ok(b.into_cell()?)
+        b.into_cell()
+    }
+
+    /// A delegation wrapper `live admitted entries` built the way the contract
+    /// stores it, from `(digest byte, admission epoch, withdrawn)` leaves.
+    fn wrapper(live: u16, admitted: u16, leaves: &[([u8; 32], BuilderData)]) -> Result<Cell> {
+        use chain_block::{HashmapE, HashmapType};
+        let mut map = HashmapE::with_bit_len(256);
+        for (digest, value) in leaves {
+            map.set_builder(SliceData::from_raw(digest.to_vec(), 256), value)?;
+        }
+        let mut b = BuilderData::new();
+        b.append_u16(live)?.append_u16(admitted)?;
+        map.write_hashmap_data(&mut b)?;
+        b.into_cell()
+    }
+
+    fn leaf(epoch: u64, withdrawn: bool) -> Result<BuilderData> {
+        let mut b = BuilderData::new();
+        b.append_u64(epoch)?.append_bit_bool(withdrawn)?;
+        Ok(b)
+    }
+
+    fn digest(index: u16) -> [u8; 32] {
+        let mut d = [0; 32];
+        d[0] = 0x80;
+        d[30..].copy_from_slice(&index.to_be_bytes());
+        d
+    }
+
+    /// The strict reader admits exactly the shapes the contract writes and
+    /// refuses each kind of malformed delegation state on its own.
+    #[test]
+    fn delegation_reader_refuses_every_malformed_shape() -> Result<()> {
+        let refuse = |cell: Cell, wanted: &str| {
+            let error = decode_native_registry_state(&cell).expect_err(wanted).to_string();
+            assert!(error.contains(wanted), "{wanted}: {error}");
+        };
+        // Accepted: two live and one withdrawn digest at epoch 5.
+        let good = wrapper(
+            2,
+            3,
+            &[
+                (digest(1), leaf(5, false)?),
+                (digest(2), leaf(5, true)?),
+                (digest(3), leaf(5, false)?),
+            ],
+        )?;
+        let state =
+            decode_native_registry_state(&agent_state_with(false, 1, 4, 5, 2, good.clone())?)?;
+        let NativeRegistryStateDetail::Agent {
+            authorization_epoch,
+            live_delegations,
+            admitted_delegations,
+            ref delegation_entries,
+            ..
+        } = state.detail
+        else {
+            bail!("agent detail expected");
+        };
+        assert_eq!((authorization_epoch, live_delegations, admitted_delegations), (5, 2, 3));
+        assert_eq!(delegation_entries.len(), 3);
+        assert_eq!(
+            native_delegation(&state.detail, &digest(2))?,
+            Some(NativeDelegationEntry { digest: digest(2), admission_epoch: 5, withdrawn: true })
+        );
+        assert_eq!(native_delegation(&state.detail, &digest(9))?, None);
+
+        // An admission epoch other than the current one.
+        let stale = wrapper(1, 1, &[(digest(1), leaf(4, false)?)])?;
+        refuse(agent_state_with(false, 1, 4, 5, 2, stale)?, "admitted in another epoch");
+        // Counts that differ from the entries, admitted below live, and beyond the bounds.
+        let entries = [(digest(1), leaf(5, false)?), (digest(2), leaf(5, true)?)];
+        refuse(
+            agent_state_with(false, 1, 4, 5, 2, wrapper(2, 2, &entries)?)?,
+            "differ from the entries",
+        );
+        refuse(
+            agent_state_with(false, 1, 4, 5, 2, wrapper(1, 3, &entries)?)?,
+            "differ from the entries",
+        );
+        refuse(agent_state_with(false, 1, 4, 5, 2, wrapper(2, 1, &entries)?)?, "out of bounds");
+        refuse(agent_state_with(false, 1, 4, 5, 2, wrapper(129, 129, &entries)?)?, "out of bounds");
+        refuse(agent_state_with(false, 1, 4, 5, 2, wrapper(0, 385, &entries)?)?, "out of bounds");
+        // More than 384 entries, whatever the counts claim.
+        let mut many = Vec::new();
+        for index in 0..385 {
+            many.push((digest(index), leaf(5, true)?));
+        }
+        refuse(
+            agent_state_with(false, 1, 4, 5, 2, wrapper(0, 384, &many)?)?,
+            "native registry delegations",
+        );
+        // A zero digest key.
+        refuse(
+            agent_state_with(false, 1, 4, 5, 2, wrapper(1, 1, &[([0; 32], leaf(5, false)?)])?)?,
+            "zero native registry delegation digest",
+        );
+        // A leaf missing its status bit, with a trailing bit, or with a reference.
+        let mut short = BuilderData::new();
+        short.append_u64(5)?;
+        refuse(agent_state_with(false, 1, 4, 5, 2, wrapper(1, 1, &[(digest(1), short)])?)?, "");
+        let mut long = leaf(5, false)?;
+        long.append_bit_zero()?;
+        refuse(
+            agent_state_with(false, 1, 4, 5, 2, wrapper(1, 1, &[(digest(1), long)])?)?,
+            "leaf shape",
+        );
+        let mut with_ref = leaf(5, false)?;
+        with_ref.checked_append_reference(Cell::default())?;
+        refuse(
+            agent_state_with(false, 1, 4, 5, 2, wrapper(1, 1, &[(digest(1), with_ref)])?)?,
+            "leaf shape",
+        );
+        // Wrapper trailing data, counts without a dictionary, epoch zero, the
+        // earlier schema and a future one.
+        let mut trailing = BuilderData::new();
+        trailing.append_u16(0)?.append_u16(0)?.append_bit_zero()?.append_bit_zero()?;
+        refuse(
+            agent_state_with(false, 1, 4, 5, 2, trailing.into_cell()?)?,
+            "delegations trailing data",
+        );
+        refuse(
+            agent_state_with(false, 1, 4, 5, 2, wrapper(0, 1, &[])?)?,
+            "differ from the entries",
+        );
+        refuse(
+            agent_state_with(false, 1, 4, 0, 2, wrapper(0, 0, &[])?)?,
+            "zero native registry authorization epoch",
+        );
+        for schema in [1, 3] {
+            refuse(agent_state_with(false, 1, 4, 5, schema, good.clone())?, "tag or schema");
+        }
+        Ok(())
+    }
+
+    /// A Capability state keeps its bit layout; only schema 2 is read, and the
+    /// owner bits are never taken for an Agent epoch.
+    #[test]
+    fn capability_reader_requires_schema_two_with_the_unchanged_layout() -> Result<()> {
+        let capability = |schema: u16| -> Result<Cell> {
+            let mut versions = BuilderData::new();
+            versions.append_u16(0)?.append_bit_zero()?;
+            let mut b = BuilderData::new();
+            b.append_u32(MAGIC_STATE)?
+                .append_u16(schema)?
+                .append_u8(2)?
+                .append_bit_zero()?
+                .append_u64(1)?
+                .append_u64(2)?
+                .append_raw(&[9; 32], 256)?
+                .append_raw(&[7; 32], 256)?;
+            b.checked_append_reference(versions.into_cell()?)?;
+            b.into_cell()
+        };
+        let state = decode_native_registry_state(&capability(2)?)?;
+        let NativeRegistryStateDetail::Capability { owner, versions, .. } = state.detail else {
+            bail!("capability detail expected");
+        };
+        assert_eq!((owner, versions, state.generation, state.sequence), ([7; 32], 0, 1, 2));
+        assert!(decode_native_registry_state(&capability(1)?).is_err());
+        Ok(())
+    }
+
+    /// Agent identities use tag 3, Capability identities tag 2; an Agent id
+    /// differs from the id the same inputs give under tag 1 or tag 2.
+    #[test]
+    fn identity_tags_separate_agent_releases_and_kinds() -> Result<()> {
+        let d = NativeRegistryDomain {
+            genesis_root: [1; 32],
+            genesis_file: [2; 32],
+            network_tag: [3; 32],
+            runtime_code_hash: [4; 32],
+        };
+        let p = policy(&[(1, 1, 15)], 1, 1);
+        let registration = build_native_agent_registration(&d, [5; 32], &p)?;
+        let with_tag = |tag: u8| -> Result<[u8; 32]> {
+            let mut identity = BuilderData::new();
+            identity
+                .append_u32(0x4e56_4931)?
+                .append_u8(tag)?
+                .append_raw(&[5; 32], 256)?
+                .append_raw(build_policy(&p)?.repr_hash().as_slice(), 256)?;
+            identity.checked_append_reference(native_identity_domain(&d)?)?;
+            Ok(*identity.into_cell()?.repr_hash().as_array())
+        };
+        assert_eq!(registration.object_id, with_tag(3)?, "tag 3 derives the Agent id");
+        assert_ne!(registration.object_id, with_tag(1)?);
+        assert_ne!(registration.object_id, with_tag(2)?);
+        assert_eq!(NATIVE_IDENTITY_TAG_AGENT, 3);
+        assert_eq!(NATIVE_IDENTITY_TAG_CAPABILITY, 2);
+        let capability =
+            build_native_capability_registration(&d, [5; 32], [6; 32], b"1.0.0", [7; 32])?;
+        let mut identity = BuilderData::new();
+        identity
+            .append_u32(0x4e56_4931)?
+            .append_u8(2)?
+            .append_raw(&[5; 32], 256)?
+            .append_raw(&[6; 32], 256)?;
+        identity.checked_append_reference(native_identity_domain(&d)?)?;
+        let mut details = BuilderData::new();
+        details.append_raw(&Sha256::digest(b"1.0.0"), 256)?.append_raw(&[7; 32], 256)?;
+        identity.checked_append_reference(details.into_cell()?)?;
+        assert_eq!(capability.object_id, *identity.into_cell()?.repr_hash().as_array());
+        Ok(())
     }
 
     #[test]
@@ -2890,7 +3332,7 @@ mod lifecycle_builder_tests {
             network_tag: [3; 32],
             runtime_code_hash: [4; 32],
         };
-        for kind in 1..=10u8 {
+        for kind in 1..=11u8 {
             let action = build_native_action(
                 &d,
                 &NativeRegistryAction {

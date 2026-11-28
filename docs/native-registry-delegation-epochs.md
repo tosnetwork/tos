@@ -1,7 +1,10 @@
 # Native registry delegation withdrawal and authorization epochs
 
-Status: **design for non-author review; no contract or client implementation**.
-This does not authorize deployment, a network reset or changing existing Agents.
+Status: **design approved; slice 1 implemented** (the contract as release v2, the
+tosctl builders, strict reader and CLI, the sandbox tests, the local Gate C
+scripts; section 9 records its measurements). The ai-repository callers are the
+next slice. This does not authorize deployment, a network reset or changing
+existing Agents.
 
 Source pins: tos `fabd9ffe4238a61e16184cecf6020770953e19a4`; ai
 `77447f22fb225c3f164403bc9e411ff13067d109`. Requirements are ai
@@ -869,3 +872,89 @@ Tos additions: `assembly/nix/tosctl/inputs.json`,
 Deployment-record selection is the active `spec/deployments/*.json` glob;
 archived records retain their original provenance. Separate-branch nativewallet
 transport files and the inspected pin are listed above, not claimed to be main.
+
+## 9. Slice 1 implementation record
+
+Release: `tos-service-native-registry-v2` is built from
+`crypto/smartcont/native-registry-code.fc` and frozen as
+`crypto/smartcont/tos-service-native-registry-v2.{boc.base64,release.json}`
+(`scripts/build-`/`test-tos-service-native-registry-v2.sh`). The v1 release keeps
+its code hash `d3bb66d0...b28a`, BOC and size; its source is preserved byte for byte
+(apart from a header note, which does not reach the code) as
+`crypto/smartcont/native-registry-v1-code.fc`, so the v1 build stays reproducible.
+The C++ embed (`with_tvm_code("native-registry")`) still embeds v1, so the
+December v1 default is unchanged. tosctl's builders, strict reader and
+`agent native-registry action` CLI, and the local Gate C scripts, target v2.
+
+Error mapping as implemented: an add of a digest stored as withdrawn and a
+withdrawal of a digest stored as withdrawn both refuse with **2218**; a withdrawal
+of a digest absent from the current epoch refuses with **2220**; an add of a live
+digest keeps **2210**. The payload, epoch, membership and capacity checks of an
+add or withdrawal run before its signatures are verified; nothing is saved on any
+refusal.
+
+Gas, Rust executor, 2,000,000-gas transaction limit, every value at or below the
+800,000 ceiling. Populations are seeded in the contract's exact layout; the bump
+rows hold 128 live / 384 admitted entries; "withdraw" is the worst of all 128
+positions of a 128 / 384 set, withdrawn in turn.
+
+| Path | 1 key, hashed | 1 key, spine | 8 keys, hashed | 8 keys, spine |
+| --- | ---: | ---: | ---: | ---: |
+| add 127 -> 128 live | 31,601 | 27,851 | 88,686 | 84,936 |
+| add 383 -> 384 admitted | 32,851 | 28,476 | 89,936 | 85,561 |
+| refused add: live full (128/128) | 13,828 | 13,228 | 13,828 | 13,228 |
+| refused add: admitted full (127/384) | 14,028 | 13,328 | 14,028 | 13,328 |
+| refused add: withdrawn digest | 13,728 | 18,628 | 13,728 | 18,628 |
+| refused add: duplicate live | 14,124 | 38,624 | 14,124 | 38,624 |
+| refused add: stale epoch | 12,019 | 12,019 | 12,019 | 12,019 |
+| withdraw (worst position) | 33,468 | 185,968 | 90,553 | 243,053 |
+| update_agent_policy | 34,436 | 34,436 | 155,545 | 155,545 |
+| initiate_recovery | 34,926 | 34,926 | 156,455 | 156,455 |
+| complete_recovery | 26,376 | 26,376 | 83,881 | 83,881 |
+| revoke_agent (tombstone) | 25,441 | 25,441 | 82,526 | 82,526 |
+| register_agent | 29,034 | | 92,137 | |
+
+Existing eight-controller paths (`every_policy_path_fits_the_gas_ceiling_at_the_supported_width`),
+v1 design-pin value in brackets: register 92,137 (92,005); delegate 83,811
+(82,352); revoke 82,526 (82,025); update 176,695 (175,444); initiate recovery
+177,605 (177,113); complete recovery 83,881 (83,390); Capability authorization
+81,203-84,325.
+
+Native engine: the 1,046 transactions the epoch suite runs were recorded with
+`NATIVE_REGISTRY_TRACE_DIR` and replayed through `libemulator` with
+`scripts/replay-token-bridge-trace.py`: 0 differ.
+
+Message size (relayer external message, eight signatures): add and withdrawal
+20,716 B each; the existing widest paths are update 52,498 B, initiate recovery
+52,506 B, transfer 41,279 B and registration 36,742 B. The fixture maximum and the
+generated genesis' ConfigParam 43 `max_ext_msg_size` are both 65,535 B.
+
+Storage (eight-controller Agent, generated genesis ConfigParam 18: bit price 0,
+cell price 135 per 2^16 s; ConfigParam 21 basechain: freeze_due_limit
+100,000,000, delete_due_limit 1,000,000,000 nanotomi):
+
+| Agent account | Cells | Bits | Rent per year (nanotomi) | Unpaid rent reaches freeze_due_limit after |
+| --- | ---: | ---: | ---: | ---: |
+| one live delegation | 170 | 122,090 | 11,043,567 | ~285.6 M s |
+| 128 / 384, hashed keys | 936 | 246,178 | 60,804,581 | ~51.9 M s |
+| 128 / 384, spine keys | 688 | 141,486 | 44,693,965 | ~70.6 M s |
+| after one bump | 169 | 121,758 | | |
+
+A bump releases the whole dictionary: the account drops back to 169 cells.
+Under the sandbox's own prices an Agent holding 1,000 nanotomi aged 30 days owes
+421,810 nanotomi, stays active and withdraws; aged 50 years it owes 256,600,525,
+which is past freeze_due_limit: the storage phase freezes it and the withdrawal
+runs no code. Recommendation from these numbers: keep at least 0.1 TOS on an
+Agent that may hold a full set (about 1.6 years of rent at the hashed bound) and
+1 TOS for long-lived Agents; this is a funding floor, not a protocol rule.
+
+Sensitivity controls: `scripts/native-registry-epoch-mutations.py` applies each
+mutant and requires the named test to fail with the named assertion: 22 contract
+mutants (each epoch bump omitted; a bump on add, withdrawal or initiation; MAX
+wrapped or saturated; the overflow check before the exact replay; either set kept
+on a bump; expected_epoch ignored; withdrawn re-add; a capacity check on
+withdrawal; each bound weakened; withdrawal changing the admitted count or
+emitting an out action; Agent tag 3 to 1 and 3 to 2; Capability tag 2 to 3;
+Capability schema 1), 7 strict-reader mutants (admission epoch, count equality,
+count bounds, leaf shape, schema 1, Agent tag 3 to 1 and 3 to 2) and 3 Gate C
+builder mutants (Agent tag 3 to 1 and 3 to 2, Capability tag 2 to 3).

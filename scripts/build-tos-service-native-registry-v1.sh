@@ -27,7 +27,7 @@ trap 'rm -rf "$BUILD_DIR"' EXIT
 
 "$FUNC_BIN" -W "$OUTPUT" -AP -o "$BUILD_DIR/native-registry-v1.fif" \
   "$REPO_ROOT/crypto/smartcont/stdlib.fc" \
-  "$REPO_ROOT/crypto/smartcont/native-registry-code.fc"
+  "$REPO_ROOT/crypto/smartcont/native-registry-v1-code.fc"
 FIFTPATH="$REPO_ROOT/crypto/fift/lib" "$FIFT_BIN" \
   "$BUILD_DIR/native-registry-v1.fif"
 

@@ -49,6 +49,10 @@ MAGIC_DATA = 0x4E564431
 MAGIC_ACTION = 0x4E564131
 MAGIC_STATE = 0x4E565331
 MAGIC_IDENTITY = 0x4E564931
+# The identity preimage's object-kind tags of the v2 registry: Agent 3, Capability 2.
+AGENT_IDENTITY_TAG = 3
+CAPABILITY_IDENTITY_TAG = 2
+STATE_SCHEMA = 2
 OP_SUBMIT = 0x4E560001
 OP_AUTHORIZE_CAPABILITY = 0x4E560002
 
@@ -177,7 +181,7 @@ def native_state(data: Cell) -> Cell:
 def state_view(data: Cell) -> dict:
     state = native_state(data)
     value = state.begin_parse()
-    if value.load_uint(32) != MAGIC_STATE or value.load_uint(16) != 1:
+    if value.load_uint(32) != MAGIC_STATE or value.load_uint(16) != STATE_SCHEMA:
         raise RuntimeError("unexpected Native state")
     kind = value.load_uint(8)
     result = {
@@ -191,6 +195,8 @@ def state_view(data: Cell) -> dict:
     }
     if kind == 2:
         result["owner_id"] = "agent_" + value.load_bytes(32).hex()
+    else:
+        result["authorization_epoch"] = value.load_uint(64)
     return result
 
 
@@ -371,7 +377,7 @@ def agent_identity(
     return (
         Builder()
         .store_uint(MAGIC_IDENTITY, 32)
-        .store_uint(1, 8)
+        .store_uint(AGENT_IDENTITY_TAG, 8)
         .store_bytes(nonce)
         .store_bytes(initial_policy.hash)
         .store_ref(identity_domain(root, file, network))
@@ -409,7 +415,7 @@ def capability_identity(
     return (
         Builder()
         .store_uint(MAGIC_IDENTITY, 32)
-        .store_uint(2, 8)
+        .store_uint(CAPABILITY_IDENTITY_TAG, 8)
         .store_bytes(nonce)
         .store_bytes(owner)
         .store_ref(identity_domain(root, file, network))
@@ -453,7 +459,7 @@ def main() -> int:
 
     code_bytes = base64.b64decode(
         b"".join(
-            (REPO / "crypto/smartcont/tos-service-native-registry-v1.boc.base64")
+            (REPO / "crypto/smartcont/tos-service-native-registry-v2.boc.base64")
             .read_bytes()
             .split()
         ),

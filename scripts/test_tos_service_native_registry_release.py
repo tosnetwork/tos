@@ -53,6 +53,13 @@ class ReleasedHash(unittest.TestCase):
         release.require_code_hash(actual, expected)
         release.require_code_hash(actual.upper(), expected)
 
+    def test_the_frozen_v1_release_is_unchanged_beside_v2(self):
+        v1 = release.release_code_hash(release.V1_RELEASE_MANIFEST)
+        self.assertEqual(v1, "d3bb66d0011a1f362dd0be8408ed688f4e740d096a0e2dc2a79fc0ffc628b28a")
+        actual = guard.boc_root_hash(release.frozen_code_bytes(release.V1_FROZEN_CODE_BASE64)).hex()
+        self.assertEqual(actual, v1)
+        self.assertNotEqual(v1, release.release_code_hash())
+
     def test_another_artifact_is_refused(self):
         expected = release.release_code_hash()
         with self.assertRaisesRegex(RuntimeError, "frozen code hash mismatch"):

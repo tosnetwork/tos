@@ -60,7 +60,7 @@ def main():
     code = gate.Cell.one_from_boc(
         base64.b64decode(
             b"".join(
-                (REPO / "crypto/smartcont/tos-service-native-registry-v1.boc.base64")
+                (REPO / "crypto/smartcont/tos-service-native-registry-v2.boc.base64")
                 .read_bytes()
                 .split()
             )
