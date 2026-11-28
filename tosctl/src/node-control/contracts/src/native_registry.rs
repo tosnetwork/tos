@@ -3231,6 +3231,50 @@ mod lifecycle_builder_tests {
         Ok(())
     }
 
+    /// The strict reader walks the deepest legal delegation dictionary -- 384
+    /// keys on the longest shared prefixes 256-bit keys allow, 128 live -- on
+    /// the default test thread stack in a debug build. The walk's depth is
+    /// bounded by the key length, not by the input, so no state can make it
+    /// deeper than this.
+    #[test]
+    fn delegation_reader_walks_the_deepest_legal_dictionary() -> Result<()> {
+        let spine = |index: usize| -> [u8; 32] {
+            let mut key = [0u8; 32];
+            if index < 256 {
+                let bit = 255 - index;
+                key[bit / 8] = 0x80 >> (bit % 8);
+            } else {
+                let j = index - 255;
+                key[0] = 0x80;
+                key[30] = (j >> 8) as u8;
+                key[31] = j as u8;
+            }
+            key
+        };
+        let mut leaves = Vec::new();
+        for index in 0..usize::from(NATIVE_REGISTRY_MAX_ADMITTED_DELEGATIONS) {
+            leaves.push((spine(index), leaf(3, index >= 128)?));
+        }
+        let cell = agent_state_with(false, 1, 9, 3, 2, wrapper(128, 384, &leaves)?)?;
+        let state = decode_native_registry_state(&cell)?;
+        let NativeRegistryStateDetail::Agent {
+            live_delegations,
+            admitted_delegations,
+            delegation_entries,
+            ..
+        } = &state.detail
+        else {
+            bail!("agent detail expected");
+        };
+        assert_eq!(
+            (*live_delegations, *admitted_delegations, delegation_entries.len()),
+            (128, 384, 384)
+        );
+        assert_eq!(native_delegation(&state.detail, &spine(0))?.map(|e| e.withdrawn), Some(false));
+        assert_eq!(native_delegation(&state.detail, &spine(383))?.map(|e| e.withdrawn), Some(true));
+        Ok(())
+    }
+
     /// A Capability state keeps its bit layout; only schema 2 is read, and the
     /// owner bits are never taken for an Agent epoch.
     #[test]

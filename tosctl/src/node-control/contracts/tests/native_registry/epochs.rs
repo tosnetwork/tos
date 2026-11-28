@@ -275,6 +275,24 @@ impl Fixture {
     }
 }
 
+/// Runs a test body that executes the registry over deep-spine dictionaries on
+/// a thread with an explicit 64 MiB stack. The executor's dictionary insertion
+/// recurses once per label along a key, so its depth is bounded by the 256-bit
+/// key length, not by the input; the deepest legal spine still exceeds the
+/// default 2 MiB test thread in an unoptimized build only, where every frame
+/// is several times larger. A global stack override would hide real
+/// recursion elsewhere, so only these bodies get the larger stack.
+fn on_deep_stack(body: fn()) {
+    let worker = std::thread::Builder::new()
+        .name(std::thread::current().name().unwrap_or("deep-stack").to_owned())
+        .stack_size(64 << 20)
+        .spawn(body)
+        .expect("spawn the deep-stack test thread");
+    if let Err(panic) = worker.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
+
 fn out_messages(result: &SendResult, address: &MsgAddressInt) -> usize {
     let transaction =
         result.transactions_for(address).into_iter().last().expect("a transaction on the account");
@@ -510,6 +528,10 @@ fn each_bound_refuses_independently() {
 /// a recovery completion, clears the set and admits again.
 #[test]
 fn withdrawal_at_every_position_needs_no_capacity() {
+    on_deep_stack(withdrawal_at_every_position_needs_no_capacity_body);
+}
+
+fn withdrawal_at_every_position_needs_no_capacity_body() {
     for shape in [Shape::Hashed, Shape::Spine] {
         let mut f = Fixture::new();
         let entries = population(shape, 128, 384);
@@ -772,6 +794,10 @@ fn refs(keys: &[RegistryKey]) -> Vec<&RegistryKey> {
 /// 128 / 384 set. Prints one row per path.
 #[test]
 fn epoch_paths_fit_the_gas_ceiling() {
+    on_deep_stack(epoch_paths_fit_the_gas_ceiling_body);
+}
+
+fn epoch_paths_fit_the_gas_ceiling_body() {
     for width in [1, MAX_WIDTH] {
         for shape in [Shape::Hashed, Shape::Spine] {
             let row = |path: &str, gas: Gas| {
@@ -986,6 +1012,10 @@ fn genesis_config() -> chain_block::ConfigParams {
 /// and a frozen Agent refuses the withdrawal.
 #[test]
 fn storage_rent_at_the_bound_and_the_frozen_refusal() {
+    on_deep_stack(storage_rent_at_the_bound_and_the_frozen_refusal_body);
+}
+
+fn storage_rent_at_the_bound_and_the_frozen_refusal_body() {
     use tos_executor::BlockchainConfig;
     let genesis = genesis_config();
     let genesis_prices = BlockchainConfig::with_config(genesis.clone()).expect("genesis executor");
