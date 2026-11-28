@@ -18,8 +18,8 @@ The tos_commit must be in local history. A checkout without it (a shallow
 clone) fails, because a provenance check that cannot run must not pass.
 --allow-missing-tos-commit is for a local shallow checkout only: with it, an
 absent commit is reported as a NOTE and the artifact is bound by the rebuild
-alone. The flag is refused when CI or GITHUB_ACTIONS is "true"; CI checks out
-full history instead.
+alone. The flag is refused when CI or GITHUB_ACTIONS is set to any non-empty
+value other than false, 0, no or off; CI checks out full history instead.
 
 compiler.source_commit is recorded provenance: only its format is checked, as
 nothing in a built executable proves which commit produced it.
@@ -279,8 +279,17 @@ def check_release(
 ALLOW_MISSING_COMMIT = "--allow-missing-tos-commit"
 
 
+# Values that mark a CI variable as explicitly off. CI runners set CI to "true",
+# "1" or another non-empty value, so any other non-empty value means CI.
+CI_OFF_VALUES = frozenset({"false", "0", "no", "off"})
+
+
 def in_ci(environ: dict[str, str]) -> bool:
-    return any(environ.get(name, "").lower() == "true" for name in ("CI", "GITHUB_ACTIONS"))
+    for name in ("CI", "GITHUB_ACTIONS"):
+        value = environ.get(name, "").strip().lower()
+        if value and value not in CI_OFF_VALUES:
+            return True
+    return False
 
 
 def main(argv: list[str] | None = None, environ: dict[str, str] | None = None) -> int:

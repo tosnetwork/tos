@@ -106,16 +106,37 @@ class Provenance(unittest.TestCase):
         boc, output = self.repo / "a.boc", self.repo / "build.txt"
         boc.write_bytes(b"not a release")
         output.write_text("")
+
+        def run(environ: dict[str, str]) -> tuple[int, str]:
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors), contextlib.redirect_stdout(io.StringIO()):
+                code = release.main(
+                    [release.ALLOW_MISSING_COMMIT, str(boc), str(output), "func"], environ
+                )
+            return code, errors.getvalue()
+
+        # CI runners set CI to "true", "1" or another non-empty value, in any case.
         for variable in ("CI", "GITHUB_ACTIONS"):
-            with self.subTest(variable=variable):
-                errors = io.StringIO()
-                with contextlib.redirect_stderr(errors):
-                    code = release.main(
-                        [release.ALLOW_MISSING_COMMIT, str(boc), str(output), "func"],
-                        {variable: "true"},
-                    )
-                self.assertEqual(code, 1)
-                self.assertIn("refused in CI", errors.getvalue())
+            for value in ("true", "TRUE", "True", "1", "yes", "on", " true ", "woodpecker"):
+                with self.subTest(variable=variable, value=value):
+                    code, errors = run({variable: value})
+                    self.assertEqual(code, 1)
+                    self.assertIn("refused in CI", errors)
+        # An unset, empty or explicitly false variable is a local run.
+        for environ in (
+            {},
+            {"CI": ""},
+            {"CI": " "},
+            {"CI": "false"},
+            {"CI": "FALSE"},
+            {"CI": "0"},
+            {"CI": "no"},
+            {"CI": "off"},
+            {"GITHUB_ACTIONS": "false"},
+        ):
+            with self.subTest(environ=environ):
+                _, errors = run(environ)
+                self.assertNotIn("refused in CI", errors)
 
     def test_an_object_that_is_not_a_commit_is_refused(self):
         tree = git(self.repo, "rev-parse", "HEAD^{tree}")
