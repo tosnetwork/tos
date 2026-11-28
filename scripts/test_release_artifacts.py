@@ -1463,6 +1463,22 @@ def gsl_source_problems(
     return problems
 
 
+def appimage_gsl_check_step(workflow: str, start: int) -> str:
+    """The text of the workflow step that starts at `start`.
+
+    A step runs until the next line at the steps' own indentation or less that
+    is not a comment, so keys after a blank line still belong to it.
+    """
+    lines = workflow[start:].splitlines(keepends=True)
+    end = 1
+    while end < len(lines):
+        body = lines[end].lstrip(" ")
+        if body.strip() and not body.startswith("#") and len(lines[end]) - len(body) <= 4:
+            break
+        end += 1
+    return "".join(lines[:end])
+
+
 def appimage_gsl_problems(workflow_name: str, workflow: str, bundler: str) -> list[str]:
     """Why an AppImage build could bundle a GSL other than the published source.
 
@@ -1482,7 +1498,15 @@ def appimage_gsl_problems(workflow_name: str, workflow: str, bundler: str) -> li
     bundle = workflow.find("        ./create-appimages.sh ")
     if not 0 <= install < check < bundle:
         problems.append(f"{workflow_name} does not check the GSL package before it bundles GSL")
-    step = workflow[check : workflow.find("\n\n", check)] if check >= 0 else ""
+    step = appimage_gsl_check_step(workflow, check) if check >= 0 else ""
+    # The step is its name and its script only: any other step key, such as
+    # continue-on-error or if, could let a mismatch through or skip the check.
+    for line in step.splitlines()[1:]:
+        body = line.lstrip(" ")
+        indent = len(line) - len(body)
+        if not body or body.startswith("#") or indent >= 8 or line == "      run: |":
+            continue
+        problems.append(f"{workflow_name} gives the GSL check step {body!r}")
     for line in (
         f"        version={version}\n",
         "        installed=$(dpkg-query -W -f '${source:Version}' libgsl-dev)\n",
@@ -1922,6 +1946,18 @@ class NodeBinaryReleaseTest(unittest.TestCase):
                     after_bundling, step + after_bundling
                 ),
             }
+            # A step key that lets the job go on past a failed check, or skips
+            # the check, neutralises it wherever it sits in the step.
+            run_key = check + "      run: |\n"
+            step_end = step.rstrip("\n") + "\n"
+            for key in ("continue-on-error: true", "if: false", "if: ${{ false }}"):
+                mutants[f"{key} before run"] = workflow.replace(
+                    run_key, f"{check}      {key}\n      run: |\n"
+                )
+                mutants[f"{key} after run"] = workflow.replace(step_end, f"{step_end}      {key}\n")
+                mutants[f"{key} after a blank line"] = workflow.replace(
+                    step_end, f"{step_end}\n      {key}\n"
+                )
             for label, mutant in mutants.items():
                 with self.subTest(workflow=name, mutant=label):
                     self.assertNotEqual(mutant, workflow)
