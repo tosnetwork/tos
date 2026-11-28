@@ -478,6 +478,15 @@ void reply_budget_exhaustion() {
       closed++;
     }
   }
+  if (replies != adnl::ExtQueryFailurePolicy::kMaxRepliesPerConnection) {
+    // Investigation only: which queries were answered, and how the rest ended.
+    for (size_t index = 0; index < flood.size(); index++) {
+      double elapsed = flood[index]->elapsed();
+      std::lock_guard lock(flood[index]->mutex);
+      std::printf("LOSS_TRACE slot=%zu elapsed=%.6f %s\n", index, elapsed,
+                  flood[index]->result.is_ok() ? "answered" : flood[index]->result.error().to_string().c_str());
+    }
+  }
   require(replies == adnl::ExtQueryFailurePolicy::kMaxRepliesPerConnection,
           "failure answers exceeded or fell short of the per-connection budget: " + std::to_string(replies));
   require(closed == flood.size() - replies, "a flooded query was neither answered nor failed by the close");

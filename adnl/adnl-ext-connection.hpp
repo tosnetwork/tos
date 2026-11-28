@@ -373,12 +373,15 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
 
   void alarm() override {
     if (output_deadline_ && output_deadline_.is_in_past()) {
+      LOG(DEBUG) << "ADNL_EXT_CLOSE output_deadline output_left=" << buffered_fd_.ready_for_flush_write();
       stop();
       return;
     }
     if (closing_) {
       if (closing_deadline_.is_in_past()) {
         LOG(INFO) << "ADNL external connection did not finish closing within " << kClosingSeconds << " s";
+        LOG(DEBUG) << "ADNL_EXT_CLOSE closing_deadline read_eof=" << read_eof_ << " write_shut=" << write_shut_
+                   << " output_left=" << buffered_fd_.ready_for_flush_write();
         stop();
       } else {
         alarm_timestamp() = closing_deadline_;

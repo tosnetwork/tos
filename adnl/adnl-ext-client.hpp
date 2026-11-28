@@ -87,6 +87,7 @@ class AdnlExtClientImpl : public AdnlExtClient {
   }
   void conn_stopped(td::actor::ActorId<AdnlExtConnection> conn) {
     if (!conn_.empty() && conn_.get() == conn) {
+      LOG(DEBUG) << "ADNL_EXT_QUERY client_conn_stopped pending_queries=" << out_queries_.size();
       callback_->on_stop_ready();
       conn_ = {};
       for (auto &q : out_queries_) {

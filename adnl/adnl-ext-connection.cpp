@@ -329,6 +329,9 @@ void AdnlExtConnection::loop() {
     TRY_STATUS(buffered_fd_.flush_write());
     account_output();
     if (td::can_close(buffered_fd_)) {
+      LOG(DEBUG) << "ADNL_EXT_CLOSE loop_peer_closed client=" << is_client_
+                 << " input_left=" << buffered_fd_.input_buffer().size()
+                 << " output_left=" << buffered_fd_.ready_for_flush_write();
       stop();
     }
     return td::Status::OK();
@@ -343,6 +346,8 @@ void AdnlExtConnection::loop() {
     }
     // Every other error closes at once; answers already queued get one flush.
     buffered_fd_.flush_write().ignore();
+    LOG(DEBUG) << "ADNL_EXT_CLOSE loop_error client=" << is_client_ << " status=" << status
+               << " output_left=" << buffered_fd_.ready_for_flush_write();
     if (status.code() == ErrorCode::notready) {
       LOG(INFO) << "Closing external connection: " << status;
     } else {
@@ -356,6 +361,8 @@ void AdnlExtConnection::loop() {
 
 void AdnlExtConnection::begin_closing(const td::Status &reason) {
   LOG(INFO) << "Closing external connection: " << reason;
+  LOG(DEBUG) << "ADNL_EXT_CLOSE begin client=" << is_client_ << " output_queued=" << buffered_fd_.ready_for_flush_write()
+             << " input_held=" << buffered_fd_.input_buffer().size() << " can_close=" << td::can_close(buffered_fd_);
   closing_ = true;
   stop_read_ = true;
   closing_deadline_ = td::Timestamp::in(kClosingSeconds);
@@ -386,6 +393,8 @@ void AdnlExtConnection::closing_loop() {
       account_input();
       if (r_read.is_error()) {
         // A reset: nothing more can be delivered to this peer.
+        LOG(DEBUG) << "ADNL_EXT_CLOSE closing_read_error status=" << r_read.error()
+                   << " output_left=" << buffered_fd_.ready_for_flush_write();
         stop();
         return;
       }
@@ -425,14 +434,21 @@ void AdnlExtConnection::closing_loop() {
   auto r_written = buffered_fd_.flush_write();
   account_output();
   if (r_written.is_error()) {
+    LOG(DEBUG) << "ADNL_EXT_CLOSE closing_write_error status=" << r_written.error()
+               << " output_left=" << buffered_fd_.ready_for_flush_write();
     stop();
     return;
   }
+  LOG(DEBUG) << "ADNL_EXT_CLOSE pass read_eof=" << read_eof_ << " write_shut=" << write_shut_
+             << " written=" << r_written.ok() << " output_left=" << buffered_fd_.ready_for_flush_write()
+             << " can_close=" << td::can_close(buffered_fd_) << " discard_pending=" << discard_pending;
   if (!write_shut_ && buffered_fd_.ready_for_flush_write() == 0) {
     shutdown_write(buffered_fd_);
     write_shut_ = true;
+    LOG(DEBUG) << "ADNL_EXT_CLOSE shutdown_write";
   }
   if (write_shut_ && read_eof_) {
+    LOG(DEBUG) << "ADNL_EXT_CLOSE closed_in_order";
     stop();
     return;
   }

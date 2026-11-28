@@ -97,12 +97,44 @@ jobs:
     # GNU tooling; macos-known-failure lists the tests whose preconditions do
     # not hold on macOS. Serial, as on a three-core runner parallel tests
     # contend for time-bounded steps.
-    - name: Run Tests
+    # INVESTIGATION BRANCH ONLY, never for main: repeat the reply-budget case
+    # of test-adnl-ext-query-refusal with its debug trace until it fails, first
+    # alone and then next to CPU load, and keep the failing trace.
+    - name: Repeat the ADNL refusal test until it fails
       env:
         TMPDIR: /private/tmp
       run: |
-        cd build
-        ctest --output-on-failure --timeout 1800 -LE 'linux-only|gnu-tools|macos-known-failure'
+        bin=$(find build -name test-adnl-ext-query-refusal -type f -perm -u+x | head -1)
+        test -n "$bin"
+        mkdir -p loss-trace
+        run_loop() {
+          for i in $(seq 1 "$2"); do
+            if ! "$bin" reply-budget trace > loss-trace/last.txt 2>&1; then
+              cp loss-trace/last.txt "loss-trace/failure-$1-$i.txt"
+              echo "FAILED in $1 at iteration $i"
+              grep -E "LOSS_TRACE|ADNL_EXT_CLOSE|client_conn_stopped|server_reject|dropped_while_closing|closed: accepted|REFUSAL_FAILURE" loss-trace/last.txt | tail -200
+              return 1
+            fi
+          done
+          echo "no failure in $1 after $2 runs"
+        }
+        rc=0
+        run_loop alone 1500 || rc=1
+        if [ "$rc" = 0 ]; then
+          for j in 1 2 3; do (while :; do :; done) & done
+          run_loop loaded 1500 || rc=1
+          kill $(jobs -p) 2>/dev/null || true
+        fi
+        exit $rc
+
+    - name: Keep the failing trace
+      if: ${{ always() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: adnl-refusal-loss-trace
+        path: loss-trace
+        if-no-files-found: ignore
+        retention-days: 14
 
     - name: Run node data tools tests
       env:
