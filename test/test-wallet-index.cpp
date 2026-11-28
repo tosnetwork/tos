@@ -1561,9 +1561,12 @@ TEST(WalletIndexQueue, AStopEndsACheckpointAlreadyWaiting) {
     acknowledged = queue.wait_worker_checkpoint_for_test(kQueueTestWatchdog);
     checkpoint_returned.signal();
   });
-  // Lets the checkpoint start waiting before the stop. A stop that lands first
-  // takes the immediate refusal instead; both must return false at once.
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  // The stop must land while the checkpoint is waiting: a stop that landed
+  // first would take the immediate refusal and pass without the wait ever
+  // seeing a stop. The worker is held inside the item, so it cannot
+  // acknowledge the pending request before the stop.
+  ASSERT_TRUE(
+      within_watchdog([&](std::chrono::milliseconds limit) { return queue.wait_checkpoint_pending_for_test(limit); }));
   queue.request_stop();
   // The worker is held inside the item, so only the stop can end the wait,
   // long before the checkpoint's own limit.
